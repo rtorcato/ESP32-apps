@@ -231,6 +231,120 @@ static void drawWeather() {
 }
 
 // ── network ──────────────────────────────────────────────────────────────
+// "wifi FAILED" on its own is useless -- it can't tell a wrong password from an
+// invisible AP. The disconnect reason code separates those immediately.
+static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    uint8_t r = info.wifi_sta_disconnected.reason;
+    const char *hint = "";
+    switch (r) {
+      case WIFI_REASON_NO_AP_FOUND:
+        hint = " (AP not visible -- wrong SSID, or 5GHz-only: the C6 is 2.4GHz only)";
+        break;
+      case WIFI_REASON_AUTH_FAIL:
+      case WIFI_REASON_HANDSHAKE_TIMEOUT:
+      case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        hint = " (auth rejected -- wrong password)";
+        break;
+      default:
+        break;
+    }
+    // Auto-reconnect retries forever, so throttle by time. Deduping on "reason
+    // changed" is not enough: a failing retry alternates between two codes
+    // (201 then 36), so every line looks like a change and nothing is
+    // suppressed.
+    static uint32_t lastLog = 0;
+    if (lastLog != 0 && millis() - lastLog < 10000) return;
+    lastLog = millis();
+    Serial.printf("wifi disconnect reason %u%s\n", r, hint);
+  }
+}
+
+// Run only when the connect attempt has already failed. Says whether the
+// configured SSID is even on the air, which is the fork in the diagnosis.
+static void diagnoseWiFi() {
+  // Stop the retry loop first: a scan started while a connect is in flight
+  // returns -2 (scan failed) instead of a list, which is a useless diagnostic.
+  WiFi.disconnect(true);
+  delay(300);
+
+  Serial.println("scanning 2.4GHz (a 5GHz-only SSID cannot appear here):");
+  int n = WiFi.scanNetworks();
+  if (n < 0) {
+    Serial.printf("scan failed (%d)\n", n);
+    return;
+  }
+  bool found = false;
+  for (int i = 0; i < n; i++) {
+    bool match = (WiFi.SSID(i) == WIFI_SSID);
+    found |= match;
+    Serial.printf("  %-24s ch%-3d %4d dBm %-5s%s\n", WiFi.SSID(i).c_str(), WiFi.channel(i),
+                  WiFi.RSSI(i), WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "open" : "enc",
+                  match ? "  <-- target" : "");
+  }
+  Serial.printf("target \"%s\": %s  (%d APs seen)\n", WIFI_SSID,
+                found ? "FOUND, so the password is the problem"
+                      : "NOT FOUND -- wrong name, or it's a 5GHz-only SSID",
+                n);
+  WiFi.scanDelete();
+}
+
+// Associated but nothing works: separate "no DNS" from "traffic blocked" from
+// "TLS problem". A guest VLAN with a portal or a restrictive firewall hands out
+// a DHCP lease and then drops everything, which looks identical to a broken
+// app until you test the layers separately.
+//
+// ponytail: lives here rather than lib/board/ because desk-clock is the only
+// app using it today. Promote it to lib/board/netdiag.h the moment a second
+// networked app needs it -- unifi-status and notifier both will.
+static void diagnoseNet() {
+  Serial.printf("ip %s  gw %s  dns %s  rssi %d\n", WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str(),
+                WiFi.RSSI());
+
+  IPAddress addr;
+  bool dns = WiFi.hostByName("api.open-meteo.com", addr);
+  Serial.printf("dns  api.open-meteo.com: %s %s\n", dns ? "ok" : "FAILED",
+                dns ? addr.toString().c_str() : "");
+
+  WiFiClient c;
+  bool gw = c.connect(WiFi.gatewayIP(), 53, 3000);
+  Serial.printf("tcp  gateway:53 -> %s\n", gw ? "ok" : "refused/blocked");
+  c.stop();
+
+  if (dns) {
+    WiFiClient t;
+    bool tcp = t.connect(addr, 443, 5000);
+    Serial.printf("tcp  %s:443 -> %s\n", addr.toString().c_str(),
+                  tcp ? "ok" : "BLOCKED or no route out");
+    t.stop();
+
+    // The decisive test. A captive portal accepts TCP for any destination so it
+    // can serve a redirect, then closes TLS because it cannot MITM it -- which
+    // looks exactly like "TCP ok, TLS EOF". On plain HTTP it shows its hand.
+    WiFiClient h;
+    if (h.connect(addr, 80, 5000)) {
+      h.print("GET / HTTP/1.1\r\nHost: api.open-meteo.com\r\nConnection: close\r\n\r\n");
+      uint32_t t0 = millis();
+      while (!h.available() && millis() - t0 < 5000) delay(10);
+      Serial.printf("http status: %s\n", h.readStringUntil('\n').c_str());
+      while (h.available()) {
+        String l = h.readStringUntil('\n');
+        if (l.length() < 2) break;
+        if (l.startsWith("Location:") || l.startsWith("location:")) {
+          Serial.printf("redirected to: %s   <-- captive portal\n", l.c_str());
+          break;
+        }
+      }
+    }
+    h.stop();
+  }
+
+  // Rules out the other cause of a failed handshake: TLS wants ~40KB of
+  // contiguous heap, and a fragmented heap fails in a way that looks similar.
+  Serial.printf("heap free %u  largest block %u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+
 static bool fetchWeather() {
   if (WiFi.status() != WL_CONNECTED) return false;
 
@@ -347,6 +461,7 @@ void setup() {
 
   field(X_STATUS, Y_STATUS, 26, 1, RGB565_GREY, "wifi...");
   WiFi.mode(WIFI_STA);
+  WiFi.onEvent(onWiFiEvent);
   // The core defaults to _persistent = true, which writes the SSID and PSK into
   // NVS as well as having them compiled into the app partition. This keeps the
   // credential out of NVS (WIFI_STORAGE_RAM) -- one copy instead of two. It does
@@ -366,9 +481,13 @@ void setup() {
     bool synced = false;
     for (int i = 0; i < 40 && !(synced = getLocalTime(&t, 250)); i++) {}
     Serial.printf("ntp %s\n", synced ? "ok" : "FAILED");
+    // Associated but no time means traffic is being dropped, not that the app
+    // is broken. Find out where before blaming the code.
+    if (!synced) diagnoseNet();
   } else {
     Serial.println("wifi FAILED - check lib/board/secrets.h");
     field(X_STATUS, Y_STATUS, 26, 1, RGB565_RED, "no wifi");
+    diagnoseWiFi();
   }
 
   // Logged here rather than inside selfCheck(): USB CDC needs ~2s to enumerate,

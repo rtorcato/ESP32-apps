@@ -72,6 +72,32 @@ selfcheck ok
 wx ok -4.0C snow
 ```
 
+## Don't use a guest network
+
+This app needs **NTP (UDP 123)** and **HTTPS out**. A UniFi *Guest* network
+intercepts everything until portal auth, so the board associates, gets a DHCP
+lease, and then nothing works — which looks like a broken app and isn't.
+
+The failure is confusing on purpose: a captive portal accepts TCP to *any*
+destination so it can serve a redirect, so a plain TCP test to port 443
+**succeeds**, and only the TLS handshake fails with `SSL - The connection
+indicated an EOF`. On plain HTTP it shows itself:
+
+```
+tcp  188.40.99.226:443 -> ok
+http status: HTTP/1.1 302 Moved Temporarily
+redirected to: http://10.0.10.1:8880/guest/s/default/?ap=...   <-- captive portal
+```
+
+Use a **dedicated IoT WLAN** instead — no portal, WPA2, on its own VLAN. That's
+also what [SECURITY.md](../../../SECURITY.md) recommends for a device that could
+be stolen, so the two concerns point the same way.
+
+`diagnoseNet()` runs automatically when NTP fails and prints the DNS result,
+gateway reachability, a TCP probe, the portal check and free heap. It exists
+because "ntp FAILED" on its own can't tell a portal from a firewall from a
+fragmented heap.
+
 ## Tunables
 
 | Constant | Default | Why you'd change it |
