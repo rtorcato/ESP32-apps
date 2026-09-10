@@ -61,9 +61,13 @@ wishlist can speak Zigbee or Thread natively.
 Apps that use Wi-Fi need credentials first. `secrets.h` is gitignored:
 
 ```sh
+cd esp32-c6-lcd-1.47          # all paths below are relative to here
 cp lib/board/secrets.h.example lib/board/secrets.h && $EDITOR lib/board/secrets.h
 ~/.platformio-venv/bin/pio run -e desk-clock -t upload
 ```
+
+[`lib/board/secrets.h.example`](lib/board/secrets.h.example) is the tracked
+template; `secrets.h` beside it is gitignored and shared by every app here.
 
 **TLS needs a bigger app partition.** The default 4MB table splits into two OTA
 slots and leaves ~1.31MB for the app — WiFi + TLS + ArduinoJson + Arduino_GFX

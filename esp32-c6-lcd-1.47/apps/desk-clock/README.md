@@ -35,13 +35,19 @@ was luck worth checking rather than assuming.
 
 Two things to set first.
 
-**1. Wi-Fi credentials.** Copy the example and fill it in — `secrets.h` is
-gitignored, so it never gets committed:
+**1. Wi-Fi credentials.** Paths below are relative to the **device** directory
+(`esp32-c6-lcd-1.47/`), which is also where `pio` has to run from:
 
 ```sh
-cp lib/board/secrets.h.example lib/board/secrets.h
+cd esp32-c6-lcd-1.47
+cp lib/board/secrets.h.example lib/board/secrets.h   # skip if it already exists
 $EDITOR lib/board/secrets.h
 ```
+
+The template is
+[`lib/board/secrets.h.example`](../../lib/board/secrets.h.example) — tracked in
+git. Your filled-in `secrets.h` sits beside it and is gitignored, so it never
+gets committed. It's shared by every app on this board, not just this one.
 
 **2. Your location and timezone.** The defaults at the top of
 [`src/main.cpp`](src/main.cpp) are **Toronto** — change them if that's wrong:
