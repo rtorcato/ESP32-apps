@@ -1,13 +1,35 @@
 # desk-clock — **built**
 
-<img src="preview.svg" alt="desk-clock preview" width="172">
-
-NTP clock with current weather and a three-day forecast. Time on top, current
-conditions in the middle, forecast columns, date footer. Backlight dims
+NTP clock with current weather and a three-day forecast. Backlight dims
 overnight, and the RGB LED tints by temperature.
 
 Weather comes from [open-meteo](https://open-meteo.com) — **no API key needed**,
 which is why it's the right source for this.
+
+## Both orientations
+
+One source, two envs. Portrait stacks the blocks; landscape splits clock left,
+weather right.
+
+| `desk-clock` — 172×320 | `desk-clock-h` — 320×172 |
+|---|---|
+| <img src="preview.svg" alt="desk-clock portrait" width="172"> | <img src="preview-h.svg" alt="desk-clock landscape" width="320"> |
+
+```sh
+~/.platformio-venv/bin/pio run -e desk-clock   -t upload   # vertical
+~/.platformio-venv/bin/pio run -e desk-clock-h -t upload   # horizontal
+```
+
+Orientation is a build flag (`-DBOARD_LANDSCAPE`), which `board.h` turns into a
+rotation plus swapped `LCD_W`/`LCD_H`. Inside this app it touches exactly two
+places — the layout constant block and the rules in `drawChrome()`. No drawing
+or fetching code is orientation-aware, which is the point: adding an orientation
+shouldn't mean auditing the whole app.
+
+**The offsets already worked.** `(34, 0, 34, 0)` in `board.h` is correct in all
+four rotations, not just portrait, because the driver selects a different
+offset pair per rotation and 240 − 172 − 34 = 34 makes the panel symmetric. That
+was luck worth checking rather than assuming.
 
 ## Run it
 
@@ -33,9 +55,7 @@ static const char *PLACE = "TORONTO";
 Use a real POSIX TZ string, not a fixed UTC offset — that's what makes DST
 automatic instead of a twice-yearly reflash.
 
-```sh
-~/.platformio-venv/bin/pio run -e desk-clock -t upload
-```
+Then flash whichever orientation you want (see above).
 
 On boot the serial log tells you where you stand:
 
@@ -86,13 +106,22 @@ Four things that weren't obvious from the plan:
   `setup()`.
 - **The JSON filter is mandatory, not an optimization.** open-meteo's full
   response will not fit in this heap alongside the display buffers.
+- **A 14-char box at size 2 is 168px and overruns the 172px panel.** The date
+  footer did exactly that — the text still centred fine so it looked correct,
+  but the erase rect was clipping. The layout bounds assert in `selfCheck()`
+  caught it. This is the failure mode that looks fine until a longer string
+  shows up.
 
 ## Self-check
 
-`selfCheck()` asserts the WMO weather-code → label map and that `"14:32"` fits
-the panel width. That map is the only non-trivial pure logic here and the only
-part that can be silently wrong on screen. A failed assert panics the chip, which
-is loud and obvious. It prints `selfcheck ok` when it passes.
+`selfCheck()` asserts two things: the WMO weather-code → label map, and that
+every layout box fits **the orientation that was compiled** — time, date, status
+strip, three forecast columns, and the footer. Those bounds asserts are what make
+a second orientation safe to add; a bad constant panics the chip at boot rather
+than quietly drawing off the edge. It prints `selfcheck ok` when it passes.
+
+Both orientations are verified on hardware: `selfcheck ok` from a
+`desk-clock-h` flash.
 
 ## Not done
 

@@ -78,6 +78,38 @@ Add an app by creating `apps/<name>/src/main.cpp` and appending to
 build_src_filter = -<*> +<<name>/>
 ```
 
+## Orientation
+
+The panel works either way up, so **most apps should ship both**. It's a build
+flag, not a fork:
+
+```ini
+[env:<name>]                                    ; vertical, 172x320
+build_src_filter = -<*> +<<name>/>
+
+[env:<name>-h]                                  ; horizontal, 320x172
+build_src_filter = -<*> +<<name>/>
+build_flags = ${env.build_flags} -DBOARD_LANDSCAPE
+```
+
+`board.h` turns that flag into a rotation and swaps `LCD_W`/`LCD_H`, so **write
+layouts against `LCD_W`/`LCD_H`, never against literal 172/320**. Keep the
+orientation-dependent coordinates in one constant block per app — see
+[desk-clock](apps/desk-clock/src/main.cpp), where orientation touches only that
+block and the rules in `drawChrome()`.
+
+Two things worth knowing:
+
+- **`(34, 0, 34, 0)` is correct in all four rotations**, not just portrait. The
+  driver picks a different offset pair per rotation, and 240 − 172 − 34 = 34
+  makes the panel symmetric, so both column offsets are the same number.
+- **Assert your layout bounds** in the app's self-check. A rotated layout that
+  overruns the panel edge draws silently wrong; an assert panics at boot instead.
+  This is how the date footer's 4px overrun got caught.
+
+Each orientation gets its own preview: `preview.svg` (vertical) and
+`preview-h.svg` (horizontal).
+
 ## Apps
 
 Each app README has a `preview.svg` wireframe drawn at the panel's real 172×320,
@@ -90,7 +122,7 @@ so what you see is what actually fits.
 | [wan-watchdog](apps/wan-watchdog/) | Idea | ISP flap log that survives reboots |
 | [protect-doorbell](apps/protect-doorbell/) | Idea | UniFi Protect ring + motion alerts |
 | [poe-cycle](apps/poe-cycle/) | Idea | Switch port view + power-cycle a wedged PoE device |
-| [desk-clock](apps/desk-clock/) | **Built** | NTP clock + open-meteo weather and forecast |
+| [desk-clock](apps/desk-clock/) | **Built** (v + h) | NTP clock + open-meteo weather and forecast |
 | [mac-mini](apps/mac-mini/) | Idea | Mac mini stats + sleep/wake button |
 | [ticker](apps/ticker/) | Idea | Scrolling stock/crypto price list |
 | [wifi-scanner](apps/wifi-scanner/) | Idea | Live ranked list of nearby APs |

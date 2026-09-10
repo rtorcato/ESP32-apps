@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 172" width="640" height="344" role="img" aria-label="desk-clock landscape: clock and date on the left, weather and forecast on the right">
+  <!-- 320x172 landscape (env: desk-clock-h, -DBOARD_LANDSCAPE). Coordinates
+       match the layout block in src/main.cpp; textLength pins the 6*size advance. -->
+  <rect width="320" height="172" fill="#000"/>
+
+  <!-- split at x=170 -->
+  <line x1="170" y1="12" x2="170" y2="160" stroke="#a9a9a9" stroke-width="1"/>
+
+  <!-- ── left: clock, date, status ───────────────────────────────── -->
+  <!-- Y_TIME 18, size 5 -> 30x40, X_TIME 12 -->
+  <text x="12" y="50" font-family="monospace" font-size="40" fill="#f8fcf8"
+        textLength="150" lengthAdjust="spacing">14:32</text>
+  <!-- Y_SECS 64, size 2 -->
+  <text x="12" y="77" font-family="monospace" font-size="16" fill="#696969"
+        textLength="24" lengthAdjust="spacing">07</text>
+  <!-- Y_DATE 92, size 2, 13-char box centered -->
+  <text x="30" y="105" font-family="monospace" font-size="16" fill="#f8fcf8"
+        textLength="120" lengthAdjust="spacing">Wed 10 Sep</text>
+
+  <!-- Y_STATUS 132 / Y_STALE 148, size 1 -->
+  <text x="12" y="139" font-family="monospace" font-size="8" fill="#808080"
+        textLength="102" lengthAdjust="spacing">TORCATO-5G -48dBm</text>
+  <text x="12" y="155" font-family="monospace" font-size="8" fill="#696969"
+        textLength="54" lengthAdjust="spacing">wx 4m ago</text>
+
+  <!-- ── right: weather ──────────────────────────────────────────── -->
+  <!-- Y_PLACE 14, X_COL2 182 -->
+  <text x="182" y="21" font-family="monospace" font-size="8" fill="#808080"
+        textLength="42" lengthAdjust="spacing">TORONTO</text>
+
+  <!-- Y_TEMP 28, size 4 -> 24x32 -->
+  <text x="182" y="54" font-family="monospace" font-size="32" fill="#00ffff"
+        textLength="48" lengthAdjust="spacing">-4</text>
+  <circle cx="235" cy="33" r="2" fill="none" stroke="#00ffff" stroke-width="1"/>
+
+  <!-- Y_META 28/42/56, right-aligned to LCD_W-8 = 312 -->
+  <text x="264" y="35" font-family="monospace" font-size="8" fill="#808080"
+        textLength="48" lengthAdjust="spacing">feels -9</text>
+  <text x="288" y="49" font-family="monospace" font-size="8" fill="#00ffff"
+        textLength="24" lengthAdjust="spacing">snow</text>
+  <text x="270" y="63" font-family="monospace" font-size="8" fill="#808080"
+        textLength="42" lengthAdjust="spacing">78% hum</text>
+
+  <line x1="182" y1="86" x2="312" y2="86" stroke="#a9a9a9" stroke-width="1"/>
+
+  <!-- Forecast: X_FC0 182, FC_PITCH 46, FC_CHARS 7 (42px box), centered -->
+  <g font-family="monospace" font-size="8">
+    <text x="194" y="103" fill="#808080" textLength="18" lengthAdjust="spacing">Thu</text>
+    <text x="240" y="103" fill="#808080" textLength="18" lengthAdjust="spacing">Fri</text>
+    <text x="286" y="103" fill="#808080" textLength="18" lengthAdjust="spacing">Sat</text>
+
+    <text x="188" y="119" fill="#f8fcf8" textLength="30" lengthAdjust="spacing">-2/-8</text>
+    <text x="237" y="119" fill="#f8fcf8" textLength="24" lengthAdjust="spacing">1/-4</text>
+    <text x="283" y="119" fill="#f8fcf8" textLength="24" lengthAdjust="spacing">3/-1</text>
+
+    <text x="191" y="135" fill="#00ffff" textLength="24" lengthAdjust="spacing">snow</text>
+    <text x="231" y="135" fill="#d3d3d3" textLength="36" lengthAdjust="spacing">cloudy</text>
+    <text x="280" y="135" fill="#ffa500" textLength="30" lengthAdjust="spacing">clear</text>
+  </g>
+</svg>

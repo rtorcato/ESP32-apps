@@ -11,9 +11,15 @@ almost no code with a clock for an 800×480 RGB-parallel panel.
   lib/board/         pin definitions for that board
   apps/<app>/
     README.md        the idea: what it does, why this board, the hard parts
-    preview.svg      layout wireframe at the panel's real pixel size
+    preview.svg      layout wireframe at the panel's real pixel size (vertical)
+    preview-h.svg    the horizontal layout, where the app supports both
     src/main.cpp     only once the app is actually built
 ```
+
+Where a panel works either way up, **an app should ship both orientations** —
+one source, a `-DBOARD_LANDSCAPE` build flag, and a second `<app>-h` env. Write
+layouts against the board's `LCD_W`/`LCD_H` rather than literal dimensions and
+that stays cheap. Each orientation gets its own preview.
 
 Most `apps/*` directories are **ideas only** — a README and a preview, no code.
 That is deliberate: the list is a menu to pick from later, not a backlog of

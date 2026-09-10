@@ -1,9 +1,13 @@
-// desk-clock: NTP clock + open-meteo weather on the 172x320 panel.
+// desk-clock: NTP clock + open-meteo weather.
 //
-// Layout is three stacked blocks (time / current / forecast) plus a date
-// footer. All coordinates are fixed at compile time so every redraw erases an
-// exact box -- there is no fillScreen() in loop(), which is what stops the
-// large digits from flickering.
+// Builds in either orientation from one source:
+//   pio run -e desk-clock     172x320 portrait -- three stacked blocks
+//   pio run -e desk-clock-h   320x172 landscape -- clock left, weather right
+//
+// All coordinates are fixed at compile time so every redraw erases an exact
+// box -- there is no fillScreen() in loop(), which is what stops the large
+// digits from flickering. Orientation lives entirely in the layout block and
+// drawChrome(); no drawing or fetching code is orientation-aware.
 #include <board.h>
 #include <secrets.h>
 
@@ -100,8 +104,39 @@ static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size,
 static void degree(int16_t x, int16_t y, uint16_t fg) { gfx->drawCircle(x, y, 2, fg); }
 
 // ── layout ───────────────────────────────────────────────────────────────
-// y-coordinates in one place so the blocks can be nudged without hunting.
+// The only orientation-dependent part of the app: coordinates here, and the
+// rules drawn in drawChrome(). Everything below reads these constants, so
+// adding an orientation never touches the drawing or fetching logic.
+//
+// FC_PITCH is the horizontal step between forecast columns; FC_CHARS is how
+// many characters fit in one, which caps the labels wmoLabel() may return.
+#ifdef BOARD_LANDSCAPE
+// 320x172: clock and date on the left, weather on the right, split at x=170.
 enum : int16_t {
+  X_COL2 = 182,
+  Y_TIME = 18,
+  Y_SECS = 64,
+  Y_DATE = 92,
+  Y_STATUS = 132,
+  Y_STALE = 148,
+  Y_PLACE = 14,
+  Y_TEMP = 28,
+  Y_META = 28,
+  Y_FCDAY = 96,
+  Y_FCTMP = 112,
+  Y_FCCND = 128,
+  FC_PITCH = 46,
+  FC_CHARS = 7,
+};
+static const int16_t X_TIME = 12;
+static const int16_t X_SECS = 12;
+static const int16_t X_DATE = 12;
+static const int16_t X_STATUS = 12;
+static const int16_t X_FC0 = X_COL2;
+#else
+// 172x320: three stacked blocks (time / current / forecast) plus a date footer.
+enum : int16_t {
+  X_COL2 = 8,
   Y_TIME = 24,   // size 5 -> 40 tall
   Y_SECS = 70,   // size 2 -> 16 tall
   Y_RULE1 = 96,
@@ -116,16 +151,27 @@ enum : int16_t {
   Y_DATE = 228,  // size 2
   Y_STATUS = 296,
   Y_STALE = 308,
+  FC_PITCH = 52,
+  FC_CHARS = 8,
 };
 static const int16_t X_TIME = (LCD_W - GW(5) * 5) / 2;  // 5 glyphs: "14:32"
 static const int16_t X_SECS = (LCD_W - GW(2) * 2) / 2;
+static const int16_t X_DATE = 8;
+static const int16_t X_STATUS = 8;
+static const int16_t X_FC0 = 8;
+#endif
 
 static void drawChrome() {
   gfx->fillScreen(RGB565_BLACK);
+#ifdef BOARD_LANDSCAPE
+  gfx->drawFastVLine(170, 12, LCD_H - 24, RGB565_DARKGREY);
+  gfx->drawFastHLine(X_COL2, Y_FCDAY - 10, LCD_W - X_COL2 - 8, RGB565_DARKGREY);
+#else
   gfx->drawFastHLine(12, Y_RULE1, LCD_W - 24, RGB565_DARKGREY);
   gfx->drawFastHLine(12, Y_RULE2, LCD_W - 24, RGB565_DARKGREY);
   gfx->drawFastHLine(12, Y_RULE3, LCD_W - 24, RGB565_DARKGREY);
-  field(8, Y_PLACE, 12, 1, RGB565_GREY, PLACE);
+#endif
+  field(X_COL2, Y_PLACE, 12, 1, RGB565_GREY, PLACE);
 }
 
 // Only repaints what changed -- the minute block once a minute, seconds once a
@@ -151,7 +197,9 @@ static void drawDate(const struct tm &t) {
   char d[18];
   strftime(d, sizeof d, "%a %d %b", &t);
   if (strcmp(d, last) == 0) return;
-  field(8, Y_DATE, 14, 2, RGB565_WHITE, d, true);
+  // 13 not 14: at size 2 a 14-char box is 168px, which overruns the 172px
+  // portrait panel and clips the erase rect.
+  field(X_DATE, Y_DATE, 13, 2, RGB565_WHITE, d, true);
   strcpy(last, d);
 }
 
@@ -159,13 +207,13 @@ static void drawWeather() {
   char buf[16];
 
   if (!wx.valid) {
-    field(8, Y_TEMP, 6, 4, RGB565_DIMGREY, "--");
+    field(X_COL2, Y_TEMP, 6, 4, RGB565_DIMGREY, "--");
     return;
   }
 
   snprintf(buf, sizeof buf, "%d", (int)lroundf(wx.temp));
-  field(8, Y_TEMP, 4, 4, wmoColor(wx.code), buf);
-  degree(8 + GW(4) * strlen(buf) + 5, Y_TEMP + 5, wmoColor(wx.code));
+  field(X_COL2, Y_TEMP, 4, 4, wmoColor(wx.code), buf);
+  degree(X_COL2 + GW(4) * strlen(buf) + 5, Y_TEMP + 5, wmoColor(wx.code));
 
   snprintf(buf, sizeof buf, "feels %d", (int)lroundf(wx.feels));
   fieldRight(LCD_W - 8, Y_META, 12, 1, RGB565_GREY, buf);
@@ -173,13 +221,12 @@ static void drawWeather() {
   snprintf(buf, sizeof buf, "%d%% hum", wx.humidity);
   fieldRight(LCD_W - 8, Y_META + 28, 12, 1, RGB565_GREY, buf);
 
-  // Three forecast columns across 172px.
   for (int i = 0; i < 3; i++) {
-    int16_t x = 8 + i * 52;
-    field(x, Y_FCDAY, 8, 1, RGB565_GREY, wx.day[i], true);
+    int16_t x = X_FC0 + i * FC_PITCH;
+    field(x, Y_FCDAY, FC_CHARS, 1, RGB565_GREY, wx.day[i], true);
     snprintf(buf, sizeof buf, "%d/%d", wx.hi[i], wx.lo[i]);
-    field(x, Y_FCTMP, 8, 1, RGB565_WHITE, buf, true);
-    field(x, Y_FCCND, 8, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
+    field(x, Y_FCTMP, FC_CHARS, 1, RGB565_WHITE, buf, true);
+    field(x, Y_FCCND, FC_CHARS, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
   }
 }
 
@@ -273,7 +320,15 @@ static void selfCheck() {
   assert(strcmp(wmoLabel(99), "storm") == 0);
   assert(strcmp(wmoLabel(-1), "?") == 0);
   assert(strcmp(wmoLabel(1234), "?") == 0);
-  assert(X_TIME >= 0 && X_TIME + GW(5) * 5 <= LCD_W);  // "14:32" must fit
+  // Layout must fit whichever orientation was compiled. These are what catch a
+  // bad landscape/portrait constant at boot instead of on the panel.
+  assert(X_TIME >= 0 && X_TIME + GW(5) * 5 <= LCD_W);   // "14:32"
+  assert(X_DATE + GW(2) * 13 <= LCD_W);                 // date footer
+  assert(X_STATUS + GW(1) * 26 <= LCD_W);               // status strip
+  assert(X_FC0 + 3 * FC_PITCH <= LCD_W);                // three forecast columns
+  assert(Y_STALE + GH(1) <= LCD_H);                     // footer is on-screen
+  assert(strlen(wmoLabel(51)) <= FC_CHARS);             // "drizzle" -- longest label
+  assert(strlen(wmoLabel(80)) <= FC_CHARS);             // "showers"
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
@@ -290,7 +345,7 @@ void setup() {
   backlight(BL_DAY);
   drawChrome();
 
-  field(8, Y_STATUS, 26, 1, RGB565_GREY, "wifi...");
+  field(X_STATUS, Y_STATUS, 26, 1, RGB565_GREY, "wifi...");
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -299,7 +354,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
-    field(8, Y_STATUS, 26, 1, RGB565_GREY, "ntp...");
+    field(X_STATUS, Y_STATUS, 26, 1, RGB565_GREY, "ntp...");
     configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
     // Wait for a real time, not 1970, before drawing a clock.
     struct tm t;
@@ -308,7 +363,7 @@ void setup() {
     Serial.printf("ntp %s\n", synced ? "ok" : "FAILED");
   } else {
     Serial.println("wifi FAILED - check lib/board/secrets.h");
-    field(8, Y_STATUS, 26, 1, RGB565_RED, "no wifi");
+    field(X_STATUS, Y_STATUS, 26, 1, RGB565_RED, "no wifi");
   }
 
   // Logged here rather than inside selfCheck(): USB CDC needs ~2s to enumerate,
@@ -356,7 +411,7 @@ void loop() {
     snprintf(stale, sizeof stale, "wx unavailable");
   }
   if (strcmp(stale, lastStale) != 0) {
-    field(8, Y_STALE, 26, 1, wx.valid ? RGB565_DIMGREY : RGB565_RED, stale);
+    field(X_STATUS, Y_STALE, 26, 1, wx.valid ? RGB565_DIMGREY : RGB565_RED, stale);
     strcpy(lastStale, stale);
   }
 
@@ -371,7 +426,7 @@ void loop() {
     snprintf(net, sizeof net, "wifi down, retrying");
   }
   if (strcmp(net, lastNet) != 0) {
-    field(8, Y_STATUS, 26, 1,
+    field(X_STATUS, Y_STATUS, 26, 1,
           WiFi.status() == WL_CONNECTED ? RGB565_GREY : RGB565_RED, net);
     strcpy(lastNet, net);
   }
