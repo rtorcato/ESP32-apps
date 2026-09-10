@@ -8,12 +8,15 @@
 // box -- there is no fillScreen() in loop(), which is what stops the large
 // digits from flickering. Orientation lives entirely in the layout block and
 // drawChrome(); no drawing or fetching code is orientation-aware.
+//
+// Short-press BOOT toggles light/dark; the choice persists in NVS.
 #include <board.h>
 #include <secrets.h>
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <assert.h>
 #include <time.h>
@@ -25,6 +28,7 @@ static const float LAT = 43.6532f, LON = -79.3832f;
 static const char *PLACE = "TORONTO";
 
 static const uint32_t WX_PERIOD_MS = 15UL * 60 * 1000;  // open-meteo is free; don't hammer it
+static const uint32_t WX_RETRY_MS = 60UL * 1000;        // but retry sooner while it's failing
 static const uint8_t BL_DAY = 200, BL_NIGHT = 50;       // ponytail: tune these by eye, in the dark
 static const uint8_t NIGHT_FROM = 23, NIGHT_TO = 7;
 
@@ -34,7 +38,33 @@ static const uint8_t NIGHT_FROM = 23, NIGHT_TO = 7;
 #define GW(size) (6 * (size))
 #define GH(size) (8 * (size))
 
+static const uint8_t COLS1 = LCD_W / GW(1);  // chars per line at size 1
+
 static Arduino_GFX *gfx;
+static Preferences prefs;
+
+// ── theme ────────────────────────────────────────────────────────────────
+// Weather accent colours have to be per-theme, not global: cyan on white is
+// unreadable, and so is navy on black.
+struct Theme {
+  uint16_t bg, fg, dim, muted, rule;
+  uint16_t snow, rain, sun, storm, neutral;
+  uint16_t warn, bad, good;
+};
+
+static const Theme DARK = {
+    RGB565_BLACK,    RGB565_WHITE,   RGB565_DIMGREY, RGB565_GREY,     RGB565_DARKGREY,
+    RGB565_CYAN,     RGB565_SKYBLUE, RGB565_ORANGE,  RGB565_RED,      RGB565_LIGHTGREY,
+    RGB565_ORANGE,   RGB565_RED,     RGB565_GREEN,
+};
+
+static const Theme LIGHT = {
+    RGB565_WHITESMOKE, RGB565_BLACK,     RGB565_SILVER,    RGB565_DARKSLATEGREY, RGB565_SILVER,
+    RGB565_DARKCYAN,   RGB565_STEELBLUE, RGB565_DARKORANGE, RGB565_MAROON,       RGB565_DARKSLATEGREY,
+    RGB565_SADDLEBROWN, RGB565_MAROON,   RGB565_DARKGREEN,
+};
+
+static const Theme *theme = &DARK;
 
 // ── weather state ────────────────────────────────────────────────────────
 struct Weather {
@@ -67,11 +97,11 @@ static const char *wmoLabel(int code) {
 
 static uint16_t wmoColor(int code) {
   switch (code) {
-    case 0: case 1: return RGB565_ORANGE;
-    case 71: case 73: case 75: case 77: case 85: case 86: return RGB565_CYAN;
-    case 61: case 63: case 65: case 80: case 81: case 82: return RGB565_SKYBLUE;
-    case 95: case 96: case 99: return RGB565_RED;
-    default: return RGB565_LIGHTGREY;
+    case 0: case 1: return theme->sun;
+    case 71: case 73: case 75: case 77: case 85: case 86: return theme->snow;
+    case 61: case 63: case 65: case 80: case 81: case 82: return theme->rain;
+    case 95: case 96: case 99: return theme->storm;
+    default: return theme->neutral;
   }
 }
 
@@ -81,7 +111,7 @@ static uint16_t wmoColor(int code) {
 static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg,
                   const char *s, bool center = false) {
   int16_t w = GW(size) * chars;
-  gfx->fillRect(x, y, w, GH(size), RGB565_BLACK);
+  gfx->fillRect(x, y, w, GH(size), theme->bg);
   int16_t tx = center ? x + (w - (int16_t)(GW(size) * strlen(s))) / 2 : x;
   gfx->setTextSize(size);
   gfx->setTextColor(fg);
@@ -92,8 +122,7 @@ static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg
 static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size,
                        uint16_t fg, const char *s) {
   int16_t w = GW(size) * chars;
-  int16_t x = right - w;
-  gfx->fillRect(x, y, w, GH(size), RGB565_BLACK);
+  gfx->fillRect(right - w, y, w, GH(size), theme->bg);
   gfx->setTextSize(size);
   gfx->setTextColor(fg);
   gfx->setCursor(right - (int16_t)(GW(size) * strlen(s)), y);
@@ -161,53 +190,68 @@ static const int16_t X_STATUS = 8;
 static const int16_t X_FC0 = 8;
 #endif
 
+// Redraw caches. Held at file scope so a theme change can invalidate them in
+// one place -- otherwise a toggle repaints the background and leaves the old
+// text colour behind.
+static char cHM[6], cSS[3], cDate[18], cStatus[34], cStale[34], cStatusKey[40];
+
+static void invalidateCache() {
+  cHM[0] = cSS[0] = cDate[0] = cStatus[0] = cStale[0] = cStatusKey[0] = '\0';
+}
+
 static void drawChrome() {
-  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillScreen(theme->bg);
 #ifdef BOARD_LANDSCAPE
-  gfx->drawFastVLine(170, 12, LCD_H - 24, RGB565_DARKGREY);
-  gfx->drawFastHLine(X_COL2, Y_FCDAY - 10, LCD_W - X_COL2 - 8, RGB565_DARKGREY);
+  gfx->drawFastVLine(170, 12, LCD_H - 24, theme->rule);
+  gfx->drawFastHLine(X_COL2, Y_FCDAY - 10, LCD_W - X_COL2 - 8, theme->rule);
 #else
-  gfx->drawFastHLine(12, Y_RULE1, LCD_W - 24, RGB565_DARKGREY);
-  gfx->drawFastHLine(12, Y_RULE2, LCD_W - 24, RGB565_DARKGREY);
-  gfx->drawFastHLine(12, Y_RULE3, LCD_W - 24, RGB565_DARKGREY);
+  gfx->drawFastHLine(12, Y_RULE1, LCD_W - 24, theme->rule);
+  gfx->drawFastHLine(12, Y_RULE2, LCD_W - 24, theme->rule);
+  gfx->drawFastHLine(12, Y_RULE3, LCD_W - 24, theme->rule);
 #endif
-  field(X_COL2, Y_PLACE, 12, 1, RGB565_GREY, PLACE);
+  field(X_COL2, Y_PLACE, 12, 1, theme->muted, PLACE);
 }
 
 // Only repaints what changed -- the minute block once a minute, seconds once a
 // second. Repainting the whole screen here is what makes big digits flicker.
 static void drawClock(const struct tm &t) {
-  static char lastHM[6] = "", lastSS[3] = "";
   char hm[6], ss[3];
   strftime(hm, sizeof hm, "%H:%M", &t);
   strftime(ss, sizeof ss, "%S", &t);
-
-  if (strcmp(hm, lastHM) != 0) {
-    field(X_TIME, Y_TIME, 5, 5, RGB565_WHITE, hm);
-    strcpy(lastHM, hm);
+  if (strcmp(hm, cHM) != 0) {
+    field(X_TIME, Y_TIME, 5, 5, theme->fg, hm);
+    strcpy(cHM, hm);
   }
-  if (strcmp(ss, lastSS) != 0) {
-    field(X_SECS, Y_SECS, 2, 2, RGB565_DIMGREY, ss);
-    strcpy(lastSS, ss);
+  if (strcmp(ss, cSS) != 0) {
+    field(X_SECS, Y_SECS, 2, 2, theme->dim, ss);
+    strcpy(cSS, ss);
   }
 }
 
 static void drawDate(const struct tm &t) {
-  static char last[18] = "";
   char d[18];
   strftime(d, sizeof d, "%a %d %b", &t);
-  if (strcmp(d, last) == 0) return;
+  if (strcmp(d, cDate) == 0) return;
   // 13 not 14: at size 2 a 14-char box is 168px, which overruns the 172px
   // portrait panel and clips the erase rect.
-  field(X_DATE, Y_DATE, 13, 2, RGB565_WHITE, d, true);
-  strcpy(last, d);
+  field(X_DATE, Y_DATE, 13, 2, theme->fg, d, true);
+  strcpy(cDate, d);
 }
 
 static void drawWeather() {
   char buf[16];
 
   if (!wx.valid) {
-    field(X_COL2, Y_TEMP, 6, 4, RGB565_DIMGREY, "--");
+    field(X_COL2, Y_TEMP, 6, 4, theme->dim, "--");
+    fieldRight(LCD_W - 8, Y_META, 12, 1, theme->warn, "no weather");
+    fieldRight(LCD_W - 8, Y_META + 14, 12, 1, theme->dim, "");
+    fieldRight(LCD_W - 8, Y_META + 28, 12, 1, theme->dim, "");
+    for (int i = 0; i < 3; i++) {
+      int16_t x = X_FC0 + i * FC_PITCH;
+      field(x, Y_FCDAY, FC_CHARS, 1, theme->dim, "--", true);
+      field(x, Y_FCTMP, FC_CHARS, 1, theme->dim, "", true);
+      field(x, Y_FCCND, FC_CHARS, 1, theme->dim, "", true);
+    }
     return;
   }
 
@@ -216,18 +260,111 @@ static void drawWeather() {
   degree(X_COL2 + GW(4) * strlen(buf) + 5, Y_TEMP + 5, wmoColor(wx.code));
 
   snprintf(buf, sizeof buf, "feels %d", (int)lroundf(wx.feels));
-  fieldRight(LCD_W - 8, Y_META, 12, 1, RGB565_GREY, buf);
+  fieldRight(LCD_W - 8, Y_META, 12, 1, theme->muted, buf);
   fieldRight(LCD_W - 8, Y_META + 14, 12, 1, wmoColor(wx.code), wmoLabel(wx.code));
   snprintf(buf, sizeof buf, "%d%% hum", wx.humidity);
-  fieldRight(LCD_W - 8, Y_META + 28, 12, 1, RGB565_GREY, buf);
+  fieldRight(LCD_W - 8, Y_META + 28, 12, 1, theme->muted, buf);
 
   for (int i = 0; i < 3; i++) {
     int16_t x = X_FC0 + i * FC_PITCH;
-    field(x, Y_FCDAY, FC_CHARS, 1, RGB565_GREY, wx.day[i], true);
+    field(x, Y_FCDAY, FC_CHARS, 1, theme->muted, wx.day[i], true);
     snprintf(buf, sizeof buf, "%d/%d", wx.hi[i], wx.lo[i]);
-    field(x, Y_FCTMP, FC_CHARS, 1, RGB565_WHITE, buf, true);
+    field(x, Y_FCTMP, FC_CHARS, 1, theme->fg, buf, true);
     field(x, Y_FCCND, FC_CHARS, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
   }
+}
+
+// ── offline screen ───────────────────────────────────────────────────────
+// A clock with no time is a blank panel, which reads as "broken" rather than
+// "not connected". When there is no time at all this takes over the screen and
+// says what is wrong and what to do about it. Once time exists we go back to
+// the normal layout and only the weather block degrades.
+static uint8_t lastDisconnectReason = 0;
+
+// Reason codes are the whole diagnosis, and a bare number sends you to a
+// header file. Only the ones that actually mean something different are named.
+static const char *reasonName(uint8_t r) {
+  switch (r) {
+    case WIFI_REASON_AUTH_EXPIRE:             return "AUTH_EXPIRE";
+    case WIFI_REASON_ASSOC_LEAVE:             return "ASSOC_LEAVE (we left)";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:  return "4WAY_TIMEOUT (password)";
+    case WIFI_REASON_MISSING_ACKS:            return "MISSING_ACKS (weak link)";
+    case WIFI_REASON_STA_LEAVING:             return "STA_LEAVING (we left)";
+    case WIFI_REASON_TIMEOUT:                 return "TIMEOUT";
+    case WIFI_REASON_AUTH_FAIL:               return "AUTH_FAIL (password)";
+    case WIFI_REASON_NO_AP_FOUND:             return "NO_AP_FOUND";
+    case WIFI_REASON_ASSOC_FAIL:              return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:       return "HANDSHAKE_TIMEOUT (password)";
+    case WIFI_REASON_CONNECTION_FAIL:         return "CONNECTION_FAIL";
+    default:                                  return "?";
+  }
+}
+
+// Only these mean "the credential is wrong". MISSING_ACKS, TIMEOUT and the
+// LEAVE codes are RF or teardown, and blaming the password for those sent me
+// looking in the wrong place once already.
+static bool reasonIsAuth(uint8_t r) {
+  return r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_HANDSHAKE_TIMEOUT ||
+         r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT;
+}
+
+static void panelLine(uint8_t row, uint16_t fg, const char *s) {
+  field(8, 62 + row * 11, COLS1 - 2, 1, fg, s);
+}
+
+static void drawOfflinePanel(const char *title, uint16_t titleColor, const char *const *lines,
+                             uint8_t n) {
+  gfx->fillScreen(theme->bg);
+  field(8, 24, COLS1 - 2, 3, titleColor, title);
+  gfx->drawFastHLine(8, 54, LCD_W - 16, theme->rule);
+  for (uint8_t i = 0; i < n; i++) panelLine(i, theme->muted, lines[i]);
+}
+
+static void drawNoWifi() {
+  uint8_t r = lastDisconnectReason;
+  char ssid[34], why[34];
+  snprintf(ssid, sizeof ssid, "SSID %s", WIFI_SSID);
+  snprintf(why, sizeof why, "%u %s", r, reasonName(r));
+
+  // The advice has to match the reason, or the screen sends you to the wrong
+  // place -- which is exactly the mistake the scan heuristic used to make.
+  const char *a1, *a2, *a3;
+  if (r == WIFI_REASON_NO_AP_FOUND) {
+    a1 = "Not on the air. Check";
+    a2 = "the name -- this board";
+    a3 = "is 2.4GHz only.";
+  } else if (reasonIsAuth(r)) {
+    a1 = "Handshake refused.";
+    a2 = "Check WIFI_PASS, and";
+    a3 = "AP PMF / 802.11r.";
+  } else {
+    a1 = "Link too weak or too";
+    a2 = "noisy. Move closer,";
+    a3 = "don't cup the antenna.";
+  }
+
+  const char *lines[] = {ssid, why, "", a1, a2, a3, "", "retrying..."};
+  drawOfflinePanel("NO WIFI", theme->bad, lines, sizeof lines / sizeof lines[0]);
+}
+
+static void drawNoTime() {
+  char ssid[34], ip[34], rssi[34];
+  snprintf(ssid, sizeof ssid, "on %s", WiFi.SSID().c_str());
+  snprintf(ip, sizeof ip, "ip %s", WiFi.localIP().toString().c_str());
+  snprintf(rssi, sizeof rssi, "signal %d dBm", WiFi.RSSI());
+  const char *lines[] = {ssid,
+                         ip,
+                         rssi,
+                         "",
+                         "Wi-Fi is up but NTP",
+                         "is blocked. A guest",
+                         "network's captive",
+                         "portal does exactly",
+                         "this. Use an IoT SSID",
+                         "with no portal.",
+                         "",
+                         "retrying..."};
+  drawOfflinePanel("NO CLOCK", theme->warn, lines, sizeof lines / sizeof lines[0]);
 }
 
 // ── network ──────────────────────────────────────────────────────────────
@@ -236,6 +373,12 @@ static void drawWeather() {
 static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
     uint8_t r = info.wifi_sta_disconnected.reason;
+    // Don't let our own teardown overwrite the meaningful reason: diagnoseWiFi()
+    // calls WiFi.disconnect() before scanning, and the resulting ASSOC_LEAVE
+    // masked the real HANDSHAKE_TIMEOUT that had just occurred.
+    if (r != 0 && r != WIFI_REASON_ASSOC_LEAVE && r != WIFI_REASON_STA_LEAVING) {
+      lastDisconnectReason = r;
+    }
     const char *hint = "";
     switch (r) {
       case WIFI_REASON_NO_AP_FOUND:
@@ -244,7 +387,10 @@ static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
       case WIFI_REASON_AUTH_FAIL:
       case WIFI_REASON_HANDSHAKE_TIMEOUT:
       case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
-        hint = " (auth rejected -- wrong password)";
+        // Not only the password. With a correct PSK and a strong signal, the
+        // 4-way handshake also times out when the AP has PMF *required* or
+        // 802.11r fast roaming on -- both known to break ESP32 PSK clients.
+        hint = " (PSK mismatch, or AP has PMF-required / 802.11r on)";
         break;
       default:
         break;
@@ -256,7 +402,32 @@ static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     static uint32_t lastLog = 0;
     if (lastLog != 0 && millis() - lastLog < 10000) return;
     lastLog = millis();
-    Serial.printf("wifi disconnect reason %u%s\n", r, hint);
+    Serial.printf("wifi disconnect reason %u %s%s\n", r, reasonName(r), hint);
+  }
+}
+
+// HANDSHAKE_TIMEOUT is not only "wrong password" -- it is also what you get
+// when the auth mode can't be negotiated (WPA3-only, enterprise, or a WPA2/WPA3
+// transition AP with PMF required). So the scan has to report the actual mode,
+// not just "encrypted".
+static const char *authName(wifi_auth_mode_t a) {
+  switch (a) {
+    case WIFI_AUTH_OPEN:                     return "open";
+    case WIFI_AUTH_WEP:                      return "WEP";
+    case WIFI_AUTH_WPA_PSK:                  return "WPA-PSK";
+    case WIFI_AUTH_WPA2_PSK:                 return "WPA2-PSK";
+    case WIFI_AUTH_WPA_WPA2_PSK:             return "WPA/WPA2-PSK";
+    case WIFI_AUTH_WPA3_PSK:                 return "WPA3-PSK";
+    case WIFI_AUTH_WPA2_WPA3_PSK:            return "WPA2/WPA3-PSK";
+    case WIFI_AUTH_WPA3_EXT_PSK:             return "WPA3-ext-PSK";
+    case WIFI_AUTH_WPA3_EXT_PSK_MIXED_MODE:  return "WPA3-ext-mixed";
+    case WIFI_AUTH_OWE:                      return "OWE";
+    case WIFI_AUTH_WAPI_PSK:                 return "WAPI-PSK";
+    case WIFI_AUTH_ENTERPRISE:               return "ENTERPRISE (802.1X!)";
+    case WIFI_AUTH_WPA3_ENTERPRISE:          return "WPA3-ENTERPRISE (802.1X!)";
+    case WIFI_AUTH_WPA2_WPA3_ENTERPRISE:     return "WPA2/WPA3-ENT (802.1X!)";
+    case WIFI_AUTH_WPA3_ENT_192:             return "WPA3-ENT-192 (802.1X!)";
+    default:                                 return "?";
   }
 }
 
@@ -278,15 +449,23 @@ static void diagnoseWiFi() {
   for (int i = 0; i < n; i++) {
     bool match = (WiFi.SSID(i) == WIFI_SSID);
     found |= match;
-    Serial.printf("  %-24s ch%-3d %4d dBm %-5s%s\n", WiFi.SSID(i).c_str(), WiFi.channel(i),
-                  WiFi.RSSI(i), WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "open" : "enc",
+    Serial.printf("  %-24s ch%-3d %4d dBm %-26s%s\n", WiFi.SSID(i).c_str(), WiFi.channel(i),
+                  WiFi.RSSI(i), authName(WiFi.encryptionType(i)),
                   match ? "  <-- target" : "");
   }
-  Serial.printf("target \"%s\": %s  (%d APs seen)\n", WIFI_SSID,
-                found ? "FOUND, so the password is the problem"
-                      : "NOT FOUND -- wrong name, or it's a 5GHz-only SSID",
-                n);
+  // Don't over-claim here: "found" only rules out the name. Whether it's the
+  // password or the link is the reason code's job, not the scan's.
+  if (!found) {
+    Serial.printf("target \"%s\": NOT FOUND -- wrong name, or 5GHz-only (%d APs)\n", WIFI_SSID, n);
+  } else {
+    Serial.printf("target \"%s\": on the air. last reason %u %s -> %s (%d APs)\n", WIFI_SSID,
+                  lastDisconnectReason, reasonName(lastDisconnectReason),
+                  reasonIsAuth(lastDisconnectReason) ? "check the password"
+                                                     : "RF/link, not the password",
+                  n);
+  }
   WiFi.scanDelete();
+  WiFi.begin(WIFI_SSID, WIFI_PASS);  // scanning tore the connection down
 }
 
 // Associated but nothing works: separate "no DNS" from "traffic blocked" from
@@ -319,9 +498,9 @@ static void diagnoseNet() {
                   tcp ? "ok" : "BLOCKED or no route out");
     t.stop();
 
-    // The decisive test. A captive portal accepts TCP for any destination so it
-    // can serve a redirect, then closes TLS because it cannot MITM it -- which
-    // looks exactly like "TCP ok, TLS EOF". On plain HTTP it shows its hand.
+    // The decisive test. A captive portal accepts TCP to *any* destination so
+    // it can serve a redirect, then closes TLS because it cannot MITM it --
+    // which looks exactly like "TCP ok, TLS EOF". On plain HTTP it shows itself.
     WiFiClient h;
     if (h.connect(addr, 80, 5000)) {
       h.print("GET / HTTP/1.1\r\nHost: api.open-meteo.com\r\nConnection: close\r\n\r\n");
@@ -381,12 +560,27 @@ static bool fetchWeather() {
   filter["daily"]["temperature_2m_max"] = true;
   filter["daily"]["temperature_2m_min"] = true;
 
-  JsonDocument doc;
-  DeserializationError err =
-      deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  // Read into a String rather than deserializing straight from the stream: the
+  // response is well under 2KB, and holding it means a parse failure can show
+  // what actually arrived instead of leaving you guessing.
+  String body = http.getString();
   http.end();
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
   if (err) {
-    Serial.printf("wx json %s\n", err.c_str());
+    Serial.printf("wx json %s -- body[0..200]: %s\n", err.c_str(), body.substring(0, 200).c_str());
+    return false;
+  }
+
+  // Validate before trusting it. A 200 with a body that isn't open-meteo (a
+  // portal page, a proxy error) deserializes fine and filters down to nothing,
+  // and the `| default` operators below then happily produce "0.0C ?" as if it
+  // were real weather. Seen exactly that once.
+  if (!doc["current"]["weather_code"].is<int>() ||
+      !doc["current"]["temperature_2m"].is<float>()) {
+    Serial.printf("wx payload has no usable 'current' -- body[0..240]: %s\n",
+                  body.substring(0, 240).c_str());
     return false;
   }
 
@@ -421,6 +615,32 @@ static void ledByTemp(float c) {
   else                 led(22, 5, 0);
 }
 
+// ── theme + button ───────────────────────────────────────────────────────
+static void applyTheme(bool light, bool persist) {
+  theme = light ? &LIGHT : &DARK;
+  if (persist) prefs.putBool("light", light);
+  invalidateCache();
+  Serial.printf("theme %s\n", light ? "light" : "dark");
+}
+
+// One button, so: short press toggles the theme. Long press is left free for
+// whatever the next feature needs.
+static bool pollButtonShortPress() {
+  static bool wasDown = false;
+  static uint32_t downAt = 0;
+  bool down = digitalRead(BTN_BOOT) == LOW;  // active low
+
+  if (down && !wasDown) {
+    downAt = millis();
+    wasDown = true;
+  } else if (!down && wasDown) {
+    wasDown = false;
+    uint32_t held = millis() - downAt;
+    return held > 40 && held < 800;  // 40ms debounce, 800ms = not a long press
+  }
+  return false;
+}
+
 // ── self-check ───────────────────────────────────────────────────────────
 // One runnable check, per the repo's habit. Covers the code->label map, which
 // is the only logic here that can be wrong without being obvious on screen.
@@ -434,6 +654,7 @@ static void selfCheck() {
   assert(strcmp(wmoLabel(99), "storm") == 0);
   assert(strcmp(wmoLabel(-1), "?") == 0);
   assert(strcmp(wmoLabel(1234), "?") == 0);
+
   // Layout must fit whichever orientation was compiled. These are what catch a
   // bad landscape/portrait constant at boot instead of on the panel.
   assert(X_TIME >= 0 && X_TIME + GW(5) * 5 <= LCD_W);   // "14:32"
@@ -443,9 +664,17 @@ static void selfCheck() {
   assert(Y_STALE + GH(1) <= LCD_H);                     // footer is on-screen
   assert(strlen(wmoLabel(51)) <= FC_CHARS);             // "drizzle" -- longest label
   assert(strlen(wmoLabel(80)) <= FC_CHARS);             // "showers"
+
+  // The offline panel writes COLS1-2 chars per line, and its longest line must
+  // fit. 22 is the longest literal in drawNoTime().
+  assert(COLS1 >= 24);
+  assert(8 + GW(3) * 8 <= LCD_W);  // "NO CLOCK" title at size 3
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
+enum class State { Boot, NoWifi, NoTime, Running };
+static State state = State::Boot;
+
 void setup() {
   Serial.begin(115200);
   // Native USB CDC: anything printed in the first few hundred ms is lost while
@@ -454,12 +683,17 @@ void setup() {
   delay(300);
   selfCheck();
 
+  pinMode(BTN_BOOT, INPUT_PULLUP);
+  prefs.begin("deskclock", false);
+  theme = prefs.getBool("light", false) ? &LIGHT : &DARK;
+
   gfx = boardDisplay();
   gfx->begin();
   backlight(BL_DAY);
-  drawChrome();
 
-  field(X_STATUS, Y_STATUS, 26, 1, RGB565_GREY, "wifi...");
+  const char *boot[] = {"connecting to wifi", WIFI_SSID};
+  drawOfflinePanel("STARTING", theme->muted, boot, 2);
+
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(onWiFiEvent);
   // The core defaults to _persistent = true, which writes the SSID and PSK into
@@ -469,14 +703,15 @@ void setup() {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) delay(250);
+  // 20s, not 10: on a congested 2.4GHz channel at marginal signal the
+  // association can take several attempts, and a short window reports a
+  // failure that would have succeeded.
+  for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
-    field(X_STATUS, Y_STATUS, 26, 1, RGB565_GREY, "ntp...");
     configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
-    // Wait for a real time, not 1970, before drawing a clock.
     struct tm t;
     bool synced = false;
     for (int i = 0; i < 40 && !(synced = getLocalTime(&t, 250)); i++) {}
@@ -486,7 +721,6 @@ void setup() {
     if (!synced) diagnoseNet();
   } else {
     Serial.println("wifi FAILED - check lib/board/secrets.h");
-    field(X_STATUS, Y_STATUS, 26, 1, RGB565_RED, "no wifi");
     diagnoseWiFi();
   }
 
@@ -494,14 +728,42 @@ void setup() {
   // so anything printed at the top of setup() is never seen. The asserts still
   // run first, where they can abort before anything is drawn.
   Serial.println("selfcheck ok");
+
+  // Build-freshness check. PlatformIO caches objects, and a stale build that
+  // still holds an old credential is indistinguishable from a wrong password.
+  // FNV-1a is a non-reversible checksum -- it proves the binary matches the
+  // file on disk without putting the secret anywhere.
+  uint32_t h = 2166136261u;
+  for (const char *p = WIFI_PASS; *p; p++) h = (h ^ (uint8_t)*p) * 16777619u;
+  Serial.printf("cred check: ssid=\"%s\" passlen=%u fnv1a=%08x\n", WIFI_SSID,
+                (unsigned)strlen(WIFI_PASS), h);
 }
 
 void loop() {
   static uint32_t lastWx = 0;
   static int lastMinute = -1;
 
+  if (pollButtonShortPress()) {
+    applyTheme(theme == &DARK, true);
+    state = State::Boot;  // force the full redraw below
+  }
+
   struct tm t;
-  if (getLocalTime(&t, 100)) {
+  bool haveTime = getLocalTime(&t, 100);
+  State want = (WiFi.status() != WL_CONNECTED) ? State::NoWifi
+               : !haveTime                     ? State::NoTime
+                                               : State::Running;
+
+  if (want != state) {
+    state = want;
+    invalidateCache();
+    if (state == State::Running) {
+      drawChrome();
+      drawWeather();
+    }
+  }
+
+  if (state == State::Running) {
     drawClock(t);
     drawDate(t);
 
@@ -510,50 +772,60 @@ void loop() {
       bool night = (t.tm_hour >= NIGHT_FROM || t.tm_hour < NIGHT_TO);
       backlight(night ? BL_NIGHT : BL_DAY);
     }
+
+    // Staleness has to be visible: a frozen panel showing nice weather is worse
+    // than one that admits it lost the network.
+    char stale[34];
+    if (wx.valid) {
+      snprintf(stale, sizeof stale, "wx %lum ago", (millis() - wx.fetchedAt) / 60000);
+    } else {
+      snprintf(stale, sizeof stale, "no weather - see serial");
+    }
+    if (strcmp(stale, cStale) != 0) {
+      field(X_STATUS, Y_STALE, 26, 1, wx.valid ? theme->dim : theme->warn, stale);
+      strcpy(cStale, stale);
+    }
+
+    char net[34];
+    snprintf(net, sizeof net, "%s %ddBm", WiFi.SSID().c_str(), WiFi.RSSI());
+    if (strcmp(net, cStatus) != 0) {
+      field(X_STATUS, Y_STATUS, 26, 1, theme->muted, net);
+      strcpy(cStatus, net);
+    }
+  } else {
+    // Offline panels: repaint only when their content actually changes, then
+    // tick one "for Ns" line so it's visibly alive rather than frozen.
+    char key[40];
+    snprintf(key, sizeof key, "%d-%u-%d", (int)state, lastDisconnectReason,
+             state == State::NoTime ? WiFi.RSSI() / 5 : 0);
+    if (strcmp(key, cStatusKey) != 0) {
+      strcpy(cStatusKey, key);
+      if (state == State::NoWifi) {
+        drawNoWifi();
+      } else if (state == State::NoTime) {
+        drawNoTime();
+      }
+    }
+    char up[34];
+    snprintf(up, sizeof up, "for %lus   BOOT=theme", millis() / 1000);
+    if (strcmp(up, cStale) != 0) {
+      panelLine(13, theme->dim, up);
+      strcpy(cStale, up);
+    }
+    led(0, 0, 0);
   }
 
   // ponytail: this GET blocks for a second or two on a single-core chip, but
   // the clock reads the RTC rather than counting ticks, so the seconds just
   // jump and self-correct. Not worth a task for a 15-minute poll.
-  if (lastWx == 0 || millis() - lastWx > WX_PERIOD_MS) {
+  uint32_t period = wx.valid ? WX_PERIOD_MS : WX_RETRY_MS;
+  if (state != State::NoWifi && (lastWx == 0 || millis() - lastWx > period)) {
     lastWx = millis();
     if (fetchWeather()) {
-      drawWeather();
+      if (state == State::Running) drawWeather();
       ledByTemp(wx.temp);
-    } else if (!wx.valid) {
-      drawWeather();
     }
   }
 
-  // Staleness has to be visible: a frozen panel showing nice weather is worse
-  // than one that admits it lost the network.
-  static char lastStale[26] = "";
-  char stale[26];
-  if (wx.valid) {
-    snprintf(stale, sizeof stale, "wx %lum ago", (millis() - wx.fetchedAt) / 60000);
-  } else {
-    snprintf(stale, sizeof stale, "wx unavailable");
-  }
-  if (strcmp(stale, lastStale) != 0) {
-    field(X_STATUS, Y_STALE, 26, 1, wx.valid ? RGB565_DIMGREY : RGB565_RED, stale);
-    strcpy(lastStale, stale);
-  }
-
-  static char lastNet[26] = "";
-  char net[26];
-  if (WiFi.status() == WL_CONNECTED) {
-    snprintf(net, sizeof net, "%s %ddBm", WiFi.SSID().c_str(), WiFi.RSSI());
-  } else {
-    // No manual reconnect here: setAutoReconnect() already retries, and calling
-    // WiFi.reconnect() from a 250ms loop just spams
-    // "sta is connecting, return error" while a connect is already in flight.
-    snprintf(net, sizeof net, "wifi down, retrying");
-  }
-  if (strcmp(net, lastNet) != 0) {
-    field(X_STATUS, Y_STATUS, 26, 1,
-          WiFi.status() == WL_CONNECTED ? RGB565_GREY : RGB565_RED, net);
-    strcpy(lastNet, net);
-  }
-
-  delay(250);
+  delay(100);
 }
