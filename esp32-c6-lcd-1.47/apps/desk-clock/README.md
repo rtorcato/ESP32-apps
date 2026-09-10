@@ -6,30 +6,41 @@ overnight, and the RGB LED tints by temperature.
 Weather comes from [open-meteo](https://open-meteo.com) — **no API key needed**,
 which is why it's the right source for this.
 
-## Both orientations
+## The button does everything
 
-One source, two envs. Portrait stacks the blocks; landscape splits clock left,
-weather right.
+| Press | Action |
+|---|---|
+| **Short** | Cycle four modes: dark portrait → light portrait → dark landscape → light landscape |
+| **Long** (1.2s) | Blank the panel. Any press brings it back. |
 
-| `desk-clock` — 172×320 | `desk-clock-h` — 320×172 |
+The mode persists in NVS, so it survives reboots and power cuts. No reflash
+needed to change orientation or theme.
+
+| Portrait — 172×320 | Landscape — 320×172 |
 |---|---|
 | <img src="preview.svg" alt="desk-clock portrait" width="172"> | <img src="preview-h.svg" alt="desk-clock landscape" width="320"> |
 
-```sh
-~/.platformio-venv/bin/pio run -e desk-clock   -t upload   # vertical
-~/.platformio-venv/bin/pio run -e desk-clock-h -t upload   # horizontal
-```
-
-Orientation is a build flag (`-DBOARD_LANDSCAPE`), which `board.h` turns into a
-rotation plus swapped `LCD_W`/`LCD_H`. Inside this app it touches exactly two
-places — the layout constant block and the rules in `drawChrome()`. No drawing
-or fetching code is orientation-aware, which is the point: adding an orientation
-shouldn't mean auditing the whole app.
+Orientation is **runtime**, not a build flag, because one button cycling four
+modes is more discoverable than splitting theme and orientation across short and
+long press. All coordinates live in a `Layout` struct picked at runtime, so the
+dirty rects stay exact and `selfCheck()` asserts **both** layouts at boot —
+stronger coverage than when only the compiled one existed.
 
 **The offsets already worked.** `(34, 0, 34, 0)` in `board.h` is correct in all
-four rotations, not just portrait, because the driver selects a different
-offset pair per rotation and 240 − 172 − 34 = 34 makes the panel symmetric. That
-was luck worth checking rather than assuming.
+four rotations, not just portrait, because the driver selects a different offset
+pair per rotation and 240 − 172 − 34 = 34 makes the panel symmetric. Worth
+checking rather than assuming — it's what makes runtime rotation safe.
+
+### Why long press doesn't really power off
+
+It blanks the display (backlight to 0 plus ST7789 `SLPIN`) and leaves the app
+running. True deep sleep is possible, but **the button could not wake it**: BOOT
+is GPIO9, and the C6's RTC-capable pins are GPIO0–7 (`SOC_RTCIO_PIN_COUNT == 8`),
+so only RESET or a timer could bring it back. On a permanently USB-powered clock
+that's a worse interface for no meaningful power saving.
+
+Keeping the app alive also means time and weather are already current when the
+screen returns, instead of showing a stale clock while it re-syncs.
 
 ## Run it
 
@@ -61,7 +72,9 @@ static const char *PLACE = "TORONTO";
 Use a real POSIX TZ string, not a fixed UTC offset — that's what makes DST
 automatic instead of a twice-yearly reflash.
 
-Then flash whichever orientation you want (see above).
+```sh
+~/.platformio-venv/bin/pio run -e desk-clock -t upload
+```
 
 On boot the serial log tells you where you stand:
 

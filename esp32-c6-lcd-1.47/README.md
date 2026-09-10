@@ -88,23 +88,27 @@ build_src_filter = -<*> +<<name>/>
 
 ## Orientation
 
-The panel works either way up, so **most apps should ship both**. It's a build
-flag, not a fork:
+The panel works either way up, so **most apps should support both**. There are
+two ways, and the runtime one is usually better:
+
+**Runtime (preferred).** Keep coordinates in a `Layout` struct, pick one at
+runtime, and call `gfx->setRotation(0 or 1)`. One button press changes
+orientation with no reflash, and the self-check can assert *both* layouts.
+[desk-clock](apps/desk-clock/src/main.cpp) does this — short-press BOOT cycles
+dark/light × portrait/landscape.
+
+**Compile-time.** For an app with a fixed layout, build with
+`-DBOARD_LANDSCAPE` and add a `-h` env:
 
 ```ini
-[env:<name>]                                    ; vertical, 172x320
-build_src_filter = -<*> +<<name>/>
-
-[env:<name>-h]                                  ; horizontal, 320x172
+[env:<name>-h]
 build_src_filter = -<*> +<<name>/>
 build_flags = ${env.build_flags} -DBOARD_LANDSCAPE
 ```
 
-`board.h` turns that flag into a rotation and swaps `LCD_W`/`LCD_H`, so **write
-layouts against `LCD_W`/`LCD_H`, never against literal 172/320**. Keep the
-orientation-dependent coordinates in one constant block per app — see
-[desk-clock](apps/desk-clock/src/main.cpp), where orientation touches only that
-block and the rules in `drawChrome()`.
+`board.h` turns that flag into a rotation and swaps `LCD_W`/`LCD_H`. Either way,
+**write layouts against the logical width/height, never against literal
+172/320**.
 
 Two things worth knowing:
 
@@ -130,7 +134,7 @@ so what you see is what actually fits.
 | [wan-watchdog](apps/wan-watchdog/) | Idea | ISP flap log that survives reboots |
 | [protect-doorbell](apps/protect-doorbell/) | Idea | UniFi Protect ring + motion alerts |
 | [poe-cycle](apps/poe-cycle/) | Idea | Switch port view + power-cycle a wedged PoE device |
-| [desk-clock](apps/desk-clock/) | **Built** (v + h) | NTP clock + open-meteo weather and forecast |
+| [desk-clock](apps/desk-clock/) | **Built** (v+h, runtime) | NTP clock + open-meteo weather and forecast |
 | [mac-mini](apps/mac-mini/) | Idea | Mac mini stats + sleep/wake button |
 | [ticker](apps/ticker/) | Idea | Scrolling stock/crypto price list |
 | [wifi-scanner](apps/wifi-scanner/) | Idea | Live ranked list of nearby APs |

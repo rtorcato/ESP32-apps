@@ -1,15 +1,17 @@
 // desk-clock: NTP clock + open-meteo weather.
 //
-// Builds in either orientation from one source:
-//   pio run -e desk-clock     172x320 portrait -- three stacked blocks
-//   pio run -e desk-clock-h   320x172 landscape -- clock left, weather right
+// The one button does both jobs:
+//   short press -- cycle four display modes, persisted in NVS:
+//                  dark portrait -> light portrait -> dark landscape -> light landscape
+//   long press  -- blank the panel; any press brings it back
 //
-// All coordinates are fixed at compile time so every redraw erases an exact
-// box -- there is no fillScreen() in loop(), which is what stops the large
-// digits from flickering. Orientation lives entirely in the layout block and
-// drawChrome(); no drawing or fetching code is orientation-aware.
+// Orientation is runtime rather than a build flag because one button cycling
+// four modes is more discoverable than splitting theme and orientation across
+// short/long press, and the panel's offsets are correct in all four rotations.
 //
-// Short-press BOOT toggles light/dark; the choice persists in NVS.
+// All coordinates come from a Layout struct chosen at runtime, so every redraw
+// still erases an exact box -- there is no fillScreen() in loop(), which is
+// what stops the large digits from flickering.
 #include <board.h>
 #include <secrets.h>
 
@@ -33,12 +35,10 @@ static const uint8_t BL_DAY = 200, BL_NIGHT = 50;       // ponytail: tune these 
 static const uint8_t NIGHT_FROM = 23, NIGHT_TO = 7;
 
 // The built-in 6x8 font scales by integer size, so a glyph is exactly
-// 6*size wide and 8*size tall. That exactness is why the dirty rects below
-// can be hardcoded.
+// 6*size wide and 8*size tall. That exactness is why the dirty rects can be
+// precomputed per layout.
 #define GW(size) (6 * (size))
 #define GH(size) (8 * (size))
-
-static const uint8_t COLS1 = LCD_W / GW(1);  // chars per line at size 1
 
 static Arduino_GFX *gfx;
 static Preferences prefs;
@@ -53,18 +53,76 @@ struct Theme {
 };
 
 static const Theme DARK = {
-    RGB565_BLACK,    RGB565_WHITE,   RGB565_DIMGREY, RGB565_GREY,     RGB565_DARKGREY,
-    RGB565_CYAN,     RGB565_SKYBLUE, RGB565_ORANGE,  RGB565_RED,      RGB565_LIGHTGREY,
-    RGB565_ORANGE,   RGB565_RED,     RGB565_GREEN,
+    RGB565_BLACK, RGB565_WHITE,   RGB565_DIMGREY, RGB565_GREY, RGB565_DARKGREY,
+    RGB565_CYAN,  RGB565_SKYBLUE, RGB565_ORANGE,  RGB565_RED,  RGB565_LIGHTGREY,
+    RGB565_ORANGE, RGB565_RED,    RGB565_GREEN,
 };
 
 static const Theme LIGHT = {
-    RGB565_WHITESMOKE, RGB565_BLACK,     RGB565_SILVER,    RGB565_DARKSLATEGREY, RGB565_SILVER,
-    RGB565_DARKCYAN,   RGB565_STEELBLUE, RGB565_DARKORANGE, RGB565_MAROON,       RGB565_DARKSLATEGREY,
-    RGB565_SADDLEBROWN, RGB565_MAROON,   RGB565_DARKGREEN,
+    RGB565_WHITESMOKE,  RGB565_BLACK,     RGB565_SILVER,     RGB565_DARKSLATEGREY,
+    RGB565_SILVER,      RGB565_DARKCYAN,  RGB565_STEELBLUE,  RGB565_DARKORANGE,
+    RGB565_MAROON,      RGB565_DARKSLATEGREY, RGB565_SADDLEBROWN, RGB565_MAROON,
+    RGB565_DARKGREEN,
 };
 
+// ── layout ───────────────────────────────────────────────────────────────
+// The only orientation-dependent data in the app. Everything below reads these
+// fields, so nothing else has to know which way up the panel is.
+//
+// fcPitch is the horizontal step between forecast columns; fcChars is how many
+// characters fit in one, which caps the labels wmoLabel() may return.
+struct Layout {
+  bool landscape;
+  int16_t w, h;
+  int16_t xTime, yTime;
+  int16_t xSecs, ySecs;
+  int16_t xDate, yDate;
+  int16_t xStatus, yStatus, yStale;
+  int16_t xCol2, yPlace, yTemp, yMeta;
+  int16_t xFc0, yFcDay, yFcTmp, yFcCnd, fcPitch;
+  uint8_t fcChars;
+  int16_t rule1, rule2, rule3;  // portrait: three h-rules. landscape: unused.
+};
+
+// 172x320: three stacked blocks (time / current / forecast) plus a date footer.
+static const Layout PORTRAIT = {
+    /*landscape*/ false, /*w,h*/ 172, 320,
+    /*time*/ (172 - GW(5) * 5) / 2, 24,
+    /*secs*/ (172 - GW(2) * 2) / 2, 70,
+    /*date*/ 8, 228,
+    /*status*/ 8, 296, 308,
+    /*col2*/ 8, 106, 120, 120,
+    /*fc*/ 8, 172, 186, 200, 52,
+    /*fcChars*/ 8,
+    /*rules*/ 96, 162, 216,
+};
+
+// 320x172: clock and date on the left, weather on the right, split at x=170.
+static const Layout LANDSCAPE = {
+    /*landscape*/ true, /*w,h*/ 320, 172,
+    /*time*/ 12, 18,
+    /*secs*/ 12, 64,
+    /*date*/ 12, 92,
+    /*status*/ 12, 132, 148,
+    /*col2*/ 182, 14, 28, 28,
+    /*fc*/ 182, 96, 112, 128, 46,
+    /*fcChars*/ 7,
+    /*rules*/ 0, 0, 0,
+};
+
+// mode bit 0 = light, bit 1 = landscape. One button cycles 0..3.
+static uint8_t mode = 0;
 static const Theme *theme = &DARK;
+static const Layout *L = &PORTRAIT;
+
+static const char *modeName(uint8_t m) {
+  switch (m & 3) {
+    case 0:  return "dark portrait";
+    case 1:  return "light portrait";
+    case 2:  return "dark landscape";
+    default: return "light landscape";
+  }
+}
 
 // ── weather state ────────────────────────────────────────────────────────
 struct Weather {
@@ -132,68 +190,10 @@ static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size,
 // The 6x8 font has no reliable degree glyph, so draw it as a ring.
 static void degree(int16_t x, int16_t y, uint16_t fg) { gfx->drawCircle(x, y, 2, fg); }
 
-// ── layout ───────────────────────────────────────────────────────────────
-// The only orientation-dependent part of the app: coordinates here, and the
-// rules drawn in drawChrome(). Everything below reads these constants, so
-// adding an orientation never touches the drawing or fetching logic.
-//
-// FC_PITCH is the horizontal step between forecast columns; FC_CHARS is how
-// many characters fit in one, which caps the labels wmoLabel() may return.
-#ifdef BOARD_LANDSCAPE
-// 320x172: clock and date on the left, weather on the right, split at x=170.
-enum : int16_t {
-  X_COL2 = 182,
-  Y_TIME = 18,
-  Y_SECS = 64,
-  Y_DATE = 92,
-  Y_STATUS = 132,
-  Y_STALE = 148,
-  Y_PLACE = 14,
-  Y_TEMP = 28,
-  Y_META = 28,
-  Y_FCDAY = 96,
-  Y_FCTMP = 112,
-  Y_FCCND = 128,
-  FC_PITCH = 46,
-  FC_CHARS = 7,
-};
-static const int16_t X_TIME = 12;
-static const int16_t X_SECS = 12;
-static const int16_t X_DATE = 12;
-static const int16_t X_STATUS = 12;
-static const int16_t X_FC0 = X_COL2;
-#else
-// 172x320: three stacked blocks (time / current / forecast) plus a date footer.
-enum : int16_t {
-  X_COL2 = 8,
-  Y_TIME = 24,   // size 5 -> 40 tall
-  Y_SECS = 70,   // size 2 -> 16 tall
-  Y_RULE1 = 96,
-  Y_PLACE = 106,
-  Y_TEMP = 120,  // size 4 -> 32 tall
-  Y_META = 120,  // right column, size 1, 3 rows
-  Y_RULE2 = 162,
-  Y_FCDAY = 172,
-  Y_FCTMP = 186,
-  Y_FCCND = 200,
-  Y_RULE3 = 216,
-  Y_DATE = 228,  // size 2
-  Y_STATUS = 296,
-  Y_STALE = 308,
-  FC_PITCH = 52,
-  FC_CHARS = 8,
-};
-static const int16_t X_TIME = (LCD_W - GW(5) * 5) / 2;  // 5 glyphs: "14:32"
-static const int16_t X_SECS = (LCD_W - GW(2) * 2) / 2;
-static const int16_t X_DATE = 8;
-static const int16_t X_STATUS = 8;
-static const int16_t X_FC0 = 8;
-#endif
-
-// Redraw caches. Held at file scope so a theme change can invalidate them in
-// one place -- otherwise a toggle repaints the background and leaves the old
-// text colour behind.
-static char cHM[6], cSS[3], cDate[18], cStatus[34], cStale[34], cStatusKey[40];
+// Redraw caches. Held at file scope so a mode change can invalidate them in one
+// place -- otherwise a toggle repaints the background and leaves the old text
+// colour, or the old orientation's coordinates, behind.
+static char cHM[6], cSS[3], cDate[18], cStatus[34], cStale[34], cStatusKey[48];
 
 static void invalidateCache() {
   cHM[0] = cSS[0] = cDate[0] = cStatus[0] = cStale[0] = cStatusKey[0] = '\0';
@@ -201,15 +201,15 @@ static void invalidateCache() {
 
 static void drawChrome() {
   gfx->fillScreen(theme->bg);
-#ifdef BOARD_LANDSCAPE
-  gfx->drawFastVLine(170, 12, LCD_H - 24, theme->rule);
-  gfx->drawFastHLine(X_COL2, Y_FCDAY - 10, LCD_W - X_COL2 - 8, theme->rule);
-#else
-  gfx->drawFastHLine(12, Y_RULE1, LCD_W - 24, theme->rule);
-  gfx->drawFastHLine(12, Y_RULE2, LCD_W - 24, theme->rule);
-  gfx->drawFastHLine(12, Y_RULE3, LCD_W - 24, theme->rule);
-#endif
-  field(X_COL2, Y_PLACE, 12, 1, theme->muted, PLACE);
+  if (L->landscape) {
+    gfx->drawFastVLine(170, 12, L->h - 24, theme->rule);
+    gfx->drawFastHLine(L->xCol2, L->yFcDay - 10, L->w - L->xCol2 - 8, theme->rule);
+  } else {
+    gfx->drawFastHLine(12, L->rule1, L->w - 24, theme->rule);
+    gfx->drawFastHLine(12, L->rule2, L->w - 24, theme->rule);
+    gfx->drawFastHLine(12, L->rule3, L->w - 24, theme->rule);
+  }
+  field(L->xCol2, L->yPlace, 12, 1, theme->muted, PLACE);
 }
 
 // Only repaints what changed -- the minute block once a minute, seconds once a
@@ -219,11 +219,11 @@ static void drawClock(const struct tm &t) {
   strftime(hm, sizeof hm, "%H:%M", &t);
   strftime(ss, sizeof ss, "%S", &t);
   if (strcmp(hm, cHM) != 0) {
-    field(X_TIME, Y_TIME, 5, 5, theme->fg, hm);
+    field(L->xTime, L->yTime, 5, 5, theme->fg, hm);
     strcpy(cHM, hm);
   }
   if (strcmp(ss, cSS) != 0) {
-    field(X_SECS, Y_SECS, 2, 2, theme->dim, ss);
+    field(L->xSecs, L->ySecs, 2, 2, theme->dim, ss);
     strcpy(cSS, ss);
   }
 }
@@ -234,7 +234,7 @@ static void drawDate(const struct tm &t) {
   if (strcmp(d, cDate) == 0) return;
   // 13 not 14: at size 2 a 14-char box is 168px, which overruns the 172px
   // portrait panel and clips the erase rect.
-  field(X_DATE, Y_DATE, 13, 2, theme->fg, d, true);
+  field(L->xDate, L->yDate, 13, 2, theme->fg, d, true);
   strcpy(cDate, d);
 }
 
@@ -242,35 +242,35 @@ static void drawWeather() {
   char buf[16];
 
   if (!wx.valid) {
-    field(X_COL2, Y_TEMP, 6, 4, theme->dim, "--");
-    fieldRight(LCD_W - 8, Y_META, 12, 1, theme->warn, "no weather");
-    fieldRight(LCD_W - 8, Y_META + 14, 12, 1, theme->dim, "");
-    fieldRight(LCD_W - 8, Y_META + 28, 12, 1, theme->dim, "");
+    field(L->xCol2, L->yTemp, 6, 4, theme->dim, "--");
+    fieldRight(L->w - 8, L->yMeta, 12, 1, theme->warn, "no weather");
+    fieldRight(L->w - 8, L->yMeta + 14, 12, 1, theme->dim, "");
+    fieldRight(L->w - 8, L->yMeta + 28, 12, 1, theme->dim, "");
     for (int i = 0; i < 3; i++) {
-      int16_t x = X_FC0 + i * FC_PITCH;
-      field(x, Y_FCDAY, FC_CHARS, 1, theme->dim, "--", true);
-      field(x, Y_FCTMP, FC_CHARS, 1, theme->dim, "", true);
-      field(x, Y_FCCND, FC_CHARS, 1, theme->dim, "", true);
+      int16_t x = L->xFc0 + i * L->fcPitch;
+      field(x, L->yFcDay, L->fcChars, 1, theme->dim, "--", true);
+      field(x, L->yFcTmp, L->fcChars, 1, theme->dim, "", true);
+      field(x, L->yFcCnd, L->fcChars, 1, theme->dim, "", true);
     }
     return;
   }
 
   snprintf(buf, sizeof buf, "%d", (int)lroundf(wx.temp));
-  field(X_COL2, Y_TEMP, 4, 4, wmoColor(wx.code), buf);
-  degree(X_COL2 + GW(4) * strlen(buf) + 5, Y_TEMP + 5, wmoColor(wx.code));
+  field(L->xCol2, L->yTemp, 4, 4, wmoColor(wx.code), buf);
+  degree(L->xCol2 + GW(4) * strlen(buf) + 5, L->yTemp + 5, wmoColor(wx.code));
 
   snprintf(buf, sizeof buf, "feels %d", (int)lroundf(wx.feels));
-  fieldRight(LCD_W - 8, Y_META, 12, 1, theme->muted, buf);
-  fieldRight(LCD_W - 8, Y_META + 14, 12, 1, wmoColor(wx.code), wmoLabel(wx.code));
+  fieldRight(L->w - 8, L->yMeta, 12, 1, theme->muted, buf);
+  fieldRight(L->w - 8, L->yMeta + 14, 12, 1, wmoColor(wx.code), wmoLabel(wx.code));
   snprintf(buf, sizeof buf, "%d%% hum", wx.humidity);
-  fieldRight(LCD_W - 8, Y_META + 28, 12, 1, theme->muted, buf);
+  fieldRight(L->w - 8, L->yMeta + 28, 12, 1, theme->muted, buf);
 
   for (int i = 0; i < 3; i++) {
-    int16_t x = X_FC0 + i * FC_PITCH;
-    field(x, Y_FCDAY, FC_CHARS, 1, theme->muted, wx.day[i], true);
+    int16_t x = L->xFc0 + i * L->fcPitch;
+    field(x, L->yFcDay, L->fcChars, 1, theme->muted, wx.day[i], true);
     snprintf(buf, sizeof buf, "%d/%d", wx.hi[i], wx.lo[i]);
-    field(x, Y_FCTMP, FC_CHARS, 1, theme->fg, buf, true);
-    field(x, Y_FCCND, FC_CHARS, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
+    field(x, L->yFcTmp, L->fcChars, 1, theme->fg, buf, true);
+    field(x, L->yFcCnd, L->fcChars, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
   }
 }
 
@@ -282,52 +282,56 @@ static void drawWeather() {
 static uint8_t lastDisconnectReason = 0;
 
 // Reason codes are the whole diagnosis, and a bare number sends you to a
-// header file. Only the ones that actually mean something different are named.
+// header file. Only the ones that mean something different are named.
 static const char *reasonName(uint8_t r) {
   switch (r) {
-    case WIFI_REASON_AUTH_EXPIRE:             return "AUTH_EXPIRE";
-    case WIFI_REASON_ASSOC_LEAVE:             return "ASSOC_LEAVE (we left)";
-    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:  return "4WAY_TIMEOUT (password)";
-    case WIFI_REASON_MISSING_ACKS:            return "MISSING_ACKS (weak link)";
-    case WIFI_REASON_STA_LEAVING:             return "STA_LEAVING (we left)";
-    case WIFI_REASON_TIMEOUT:                 return "TIMEOUT";
-    case WIFI_REASON_AUTH_FAIL:               return "AUTH_FAIL (password)";
-    case WIFI_REASON_NO_AP_FOUND:             return "NO_AP_FOUND";
-    case WIFI_REASON_ASSOC_FAIL:              return "ASSOC_FAIL";
-    case WIFI_REASON_HANDSHAKE_TIMEOUT:       return "HANDSHAKE_TIMEOUT (password)";
-    case WIFI_REASON_CONNECTION_FAIL:         return "CONNECTION_FAIL";
-    default:                                  return "?";
+    case WIFI_REASON_AUTH_EXPIRE:            return "AUTH_EXPIRE";
+    case WIFI_REASON_ASSOC_LEAVE:            return "ASSOC_LEAVE (we left)";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4WAY_TIMEOUT";
+    case WIFI_REASON_MISSING_ACKS:           return "MISSING_ACKS (weak link)";
+    case WIFI_REASON_STA_LEAVING:            return "STA_LEAVING (we left)";
+    case WIFI_REASON_TIMEOUT:                return "TIMEOUT";
+    case WIFI_REASON_AUTH_FAIL:              return "AUTH_FAIL";
+    case WIFI_REASON_NO_AP_FOUND:            return "NO_AP_FOUND";
+    case WIFI_REASON_ASSOC_FAIL:             return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:      return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL:        return "CONNECTION_FAIL";
+    default:                                 return "?";
   }
 }
 
-// Only these mean "the credential is wrong". MISSING_ACKS, TIMEOUT and the
-// LEAVE codes are RF or teardown, and blaming the password for those sent me
-// looking in the wrong place once already.
+// Only these point at the credential. MISSING_ACKS, TIMEOUT and the LEAVE codes
+// are RF or teardown -- blaming the password for those sent me looking in the
+// wrong place twice. Even these are not conclusive: a correct PSK also times
+// out when the AP has PMF required or 802.11r on, or simply needs a retry.
 static bool reasonIsAuth(uint8_t r) {
   return r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_HANDSHAKE_TIMEOUT ||
          r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT;
 }
 
 static void panelLine(uint8_t row, uint16_t fg, const char *s) {
-  field(8, 62 + row * 11, COLS1 - 2, 1, fg, s);
+  field(8, 62 + row * 11, (L->w / GW(1)) - 2, 1, fg, s);
 }
 
 static void drawOfflinePanel(const char *title, uint16_t titleColor, const char *const *lines,
                              uint8_t n) {
   gfx->fillScreen(theme->bg);
-  field(8, 24, COLS1 - 2, 3, titleColor, title);
-  gfx->drawFastHLine(8, 54, LCD_W - 16, theme->rule);
-  for (uint8_t i = 0; i < n; i++) panelLine(i, theme->muted, lines[i]);
+  field(8, 24, (L->w / GW(1)) - 2, 3, titleColor, title);
+  gfx->drawFastHLine(8, 54, L->w - 16, theme->rule);
+  // Landscape is only 172px tall, so fewer rows fit than portrait. Clip rather
+  // than drawing off the bottom edge.
+  uint8_t maxRows = (L->h - 62 - 16) / 11;
+  for (uint8_t i = 0; i < n && i < maxRows; i++) panelLine(i, theme->muted, lines[i]);
 }
 
 static void drawNoWifi() {
   uint8_t r = lastDisconnectReason;
-  char ssid[34], why[34];
+  char ssid[40], why[40];
   snprintf(ssid, sizeof ssid, "SSID %s", WIFI_SSID);
   snprintf(why, sizeof why, "%u %s", r, reasonName(r));
 
   // The advice has to match the reason, or the screen sends you to the wrong
-  // place -- which is exactly the mistake the scan heuristic used to make.
+  // place -- which is exactly the mistake I made reading these by hand.
   const char *a1, *a2, *a3;
   if (r == WIFI_REASON_NO_AP_FOUND) {
     a1 = "Not on the air. Check";
@@ -335,8 +339,8 @@ static void drawNoWifi() {
     a3 = "is 2.4GHz only.";
   } else if (reasonIsAuth(r)) {
     a1 = "Handshake refused.";
-    a2 = "Check WIFI_PASS, and";
-    a3 = "AP PMF / 802.11r.";
+    a2 = "Often just needs a";
+    a3 = "retry. Else check PSK.";
   } else {
     a1 = "Link too weak or too";
     a2 = "noisy. Move closer,";
@@ -348,7 +352,7 @@ static void drawNoWifi() {
 }
 
 static void drawNoTime() {
-  char ssid[34], ip[34], rssi[34];
+  char ssid[40], ip[40], rssi[40];
   snprintf(ssid, sizeof ssid, "on %s", WiFi.SSID().c_str());
   snprintf(ip, sizeof ip, "ip %s", WiFi.localIP().toString().c_str());
   snprintf(rssi, sizeof rssi, "signal %d dBm", WiFi.RSSI());
@@ -368,8 +372,6 @@ static void drawNoTime() {
 }
 
 // ── network ──────────────────────────────────────────────────────────────
-// "wifi FAILED" on its own is useless -- it can't tell a wrong password from an
-// invisible AP. The disconnect reason code separates those immediately.
 static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
     uint8_t r = info.wifi_sta_disconnected.reason;
@@ -380,25 +382,17 @@ static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
       lastDisconnectReason = r;
     }
     const char *hint = "";
-    switch (r) {
-      case WIFI_REASON_NO_AP_FOUND:
-        hint = " (AP not visible -- wrong SSID, or 5GHz-only: the C6 is 2.4GHz only)";
-        break;
-      case WIFI_REASON_AUTH_FAIL:
-      case WIFI_REASON_HANDSHAKE_TIMEOUT:
-      case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
-        // Not only the password. With a correct PSK and a strong signal, the
-        // 4-way handshake also times out when the AP has PMF *required* or
-        // 802.11r fast roaming on -- both known to break ESP32 PSK clients.
-        hint = " (PSK mismatch, or AP has PMF-required / 802.11r on)";
-        break;
-      default:
-        break;
+    if (r == WIFI_REASON_NO_AP_FOUND) {
+      hint = " (not visible -- wrong SSID, or 5GHz-only: the C6 is 2.4GHz only)";
+    } else if (reasonIsAuth(r)) {
+      // Not only the password. With a correct PSK and a strong signal this also
+      // happens on the first attempt and succeeds on the next, which is exactly
+      // what a too-short connect window looks like.
+      hint = " (retry, PSK, or AP PMF-required / 802.11r)";
     }
     // Auto-reconnect retries forever, so throttle by time. Deduping on "reason
     // changed" is not enough: a failing retry alternates between two codes
-    // (201 then 36), so every line looks like a change and nothing is
-    // suppressed.
+    // (201 then 36), so every line looks like a change.
     static uint32_t lastLog = 0;
     if (lastLog != 0 && millis() - lastLog < 10000) return;
     lastLog = millis();
@@ -408,26 +402,25 @@ static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 
 // HANDSHAKE_TIMEOUT is not only "wrong password" -- it is also what you get
 // when the auth mode can't be negotiated (WPA3-only, enterprise, or a WPA2/WPA3
-// transition AP with PMF required). So the scan has to report the actual mode,
-// not just "encrypted".
+// transition AP with PMF required). So the scan reports the actual mode.
 static const char *authName(wifi_auth_mode_t a) {
   switch (a) {
-    case WIFI_AUTH_OPEN:                     return "open";
-    case WIFI_AUTH_WEP:                      return "WEP";
-    case WIFI_AUTH_WPA_PSK:                  return "WPA-PSK";
-    case WIFI_AUTH_WPA2_PSK:                 return "WPA2-PSK";
-    case WIFI_AUTH_WPA_WPA2_PSK:             return "WPA/WPA2-PSK";
-    case WIFI_AUTH_WPA3_PSK:                 return "WPA3-PSK";
-    case WIFI_AUTH_WPA2_WPA3_PSK:            return "WPA2/WPA3-PSK";
-    case WIFI_AUTH_WPA3_EXT_PSK:             return "WPA3-ext-PSK";
-    case WIFI_AUTH_WPA3_EXT_PSK_MIXED_MODE:  return "WPA3-ext-mixed";
-    case WIFI_AUTH_OWE:                      return "OWE";
-    case WIFI_AUTH_WAPI_PSK:                 return "WAPI-PSK";
-    case WIFI_AUTH_ENTERPRISE:               return "ENTERPRISE (802.1X!)";
-    case WIFI_AUTH_WPA3_ENTERPRISE:          return "WPA3-ENTERPRISE (802.1X!)";
-    case WIFI_AUTH_WPA2_WPA3_ENTERPRISE:     return "WPA2/WPA3-ENT (802.1X!)";
-    case WIFI_AUTH_WPA3_ENT_192:             return "WPA3-ENT-192 (802.1X!)";
-    default:                                 return "?";
+    case WIFI_AUTH_OPEN:                    return "open";
+    case WIFI_AUTH_WEP:                     return "WEP";
+    case WIFI_AUTH_WPA_PSK:                 return "WPA-PSK";
+    case WIFI_AUTH_WPA2_PSK:                return "WPA2-PSK";
+    case WIFI_AUTH_WPA_WPA2_PSK:            return "WPA/WPA2-PSK";
+    case WIFI_AUTH_WPA3_PSK:                return "WPA3-PSK";
+    case WIFI_AUTH_WPA2_WPA3_PSK:           return "WPA2/WPA3-PSK";
+    case WIFI_AUTH_WPA3_EXT_PSK:            return "WPA3-ext-PSK";
+    case WIFI_AUTH_WPA3_EXT_PSK_MIXED_MODE: return "WPA3-ext-mixed";
+    case WIFI_AUTH_OWE:                     return "OWE";
+    case WIFI_AUTH_WAPI_PSK:                return "WAPI-PSK";
+    case WIFI_AUTH_ENTERPRISE:              return "ENTERPRISE (802.1X!)";
+    case WIFI_AUTH_WPA3_ENTERPRISE:         return "WPA3-ENTERPRISE (802.1X!)";
+    case WIFI_AUTH_WPA2_WPA3_ENTERPRISE:    return "WPA2/WPA3-ENT (802.1X!)";
+    case WIFI_AUTH_WPA3_ENT_192:            return "WPA3-ENT-192 (802.1X!)";
+    default:                                return "?";
   }
 }
 
@@ -443,6 +436,7 @@ static void diagnoseWiFi() {
   int n = WiFi.scanNetworks();
   if (n < 0) {
     Serial.printf("scan failed (%d)\n", n);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
     return;
   }
   bool found = false;
@@ -450,19 +444,15 @@ static void diagnoseWiFi() {
     bool match = (WiFi.SSID(i) == WIFI_SSID);
     found |= match;
     Serial.printf("  %-24s ch%-3d %4d dBm %-26s%s\n", WiFi.SSID(i).c_str(), WiFi.channel(i),
-                  WiFi.RSSI(i), authName(WiFi.encryptionType(i)),
-                  match ? "  <-- target" : "");
+                  WiFi.RSSI(i), authName(WiFi.encryptionType(i)), match ? "  <-- target" : "");
   }
-  // Don't over-claim here: "found" only rules out the name. Whether it's the
-  // password or the link is the reason code's job, not the scan's.
+  // Don't over-claim: "found" only rules out the name. Whether it's the
+  // credential or the link is the reason code's job, not the scan's.
   if (!found) {
     Serial.printf("target \"%s\": NOT FOUND -- wrong name, or 5GHz-only (%d APs)\n", WIFI_SSID, n);
   } else {
-    Serial.printf("target \"%s\": on the air. last reason %u %s -> %s (%d APs)\n", WIFI_SSID,
-                  lastDisconnectReason, reasonName(lastDisconnectReason),
-                  reasonIsAuth(lastDisconnectReason) ? "check the password"
-                                                     : "RF/link, not the password",
-                  n);
+    Serial.printf("target \"%s\": on the air. last reason %u %s (%d APs)\n", WIFI_SSID,
+                  lastDisconnectReason, reasonName(lastDisconnectReason), n);
   }
   WiFi.scanDelete();
   WiFi.begin(WIFI_SSID, WIFI_PASS);  // scanning tore the connection down
@@ -549,6 +539,12 @@ static bool fetchWeather() {
     return false;
   }
 
+  // Read into a String rather than deserializing straight from the stream: the
+  // response is well under 2KB, and holding it means a parse failure can show
+  // what actually arrived instead of leaving you guessing.
+  String body = http.getString();
+  http.end();
+
   // The filter is mandatory, not an optimization: the full open-meteo document
   // will not fit in this heap alongside the display buffers.
   JsonDocument filter;
@@ -559,12 +555,6 @@ static bool fetchWeather() {
   filter["daily"]["weather_code"] = true;
   filter["daily"]["temperature_2m_max"] = true;
   filter["daily"]["temperature_2m_min"] = true;
-
-  // Read into a String rather than deserializing straight from the stream: the
-  // response is well under 2KB, and holding it means a parse failure can show
-  // what actually arrived instead of leaving you guessing.
-  String body = http.getString();
-  http.end();
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
@@ -610,40 +600,64 @@ static bool fetchWeather() {
 // ponytail: three bands, not a gradient -- a gradient is more code carrying the
 // same information. Values are deliberately dim; this LED is bright.
 static void ledByTemp(float c) {
-  if (c <= 0.0f)       led(0, 0, 20);
-  else if (c < 18.0f)  led(0, 16, 6);
-  else                 led(22, 5, 0);
+  if (c <= 0.0f)      led(0, 0, 20);
+  else if (c < 18.0f) led(0, 16, 6);
+  else                led(22, 5, 0);
 }
 
-// ── theme + button ───────────────────────────────────────────────────────
-static void applyTheme(bool light, bool persist) {
-  theme = light ? &LIGHT : &DARK;
-  if (persist) prefs.putBool("light", light);
+// ── mode + button ────────────────────────────────────────────────────────
+// Rotation is applied here, not in board.h: the panel's (34, 0, 34, 0) offsets
+// are correct in all four rotations, so switching at runtime is safe.
+static void applyMode(uint8_t m, bool persist) {
+  mode = m & 3;
+  theme = (mode & 1) ? &LIGHT : &DARK;
+  L = (mode & 2) ? &LANDSCAPE : &PORTRAIT;
+  gfx->setRotation(L->landscape ? 1 : 0);
+  if (persist) prefs.putUChar("mode", mode);
   invalidateCache();
-  Serial.printf("theme %s\n", light ? "light" : "dark");
+  Serial.printf("mode %u: %s\n", mode, modeName(mode));
 }
 
-// One button, so: short press toggles the theme. Long press is left free for
-// whatever the next feature needs.
-static bool pollButtonShortPress() {
-  static bool wasDown = false;
+// Short press cycles the four modes; long press blanks the screen.
+enum class Press { None, Short, Long };
+
+static Press pollButton() {
+  static bool wasDown = false, longFired = false;
   static uint32_t downAt = 0;
   bool down = digitalRead(BTN_BOOT) == LOW;  // active low
 
   if (down && !wasDown) {
     downAt = millis();
     wasDown = true;
+    longFired = false;
+  } else if (down && wasDown && !longFired && millis() - downAt >= 1200) {
+    // Fire on crossing the threshold, not on release: holding a button and
+    // seeing nothing happen until you let go feels broken.
+    longFired = true;
+    return Press::Long;
   } else if (!down && wasDown) {
     wasDown = false;
-    uint32_t held = millis() - downAt;
-    return held > 40 && held < 800;  // 40ms debounce, 800ms = not a long press
+    if (!longFired && millis() - downAt > 40) return Press::Short;  // 40ms debounce
   }
-  return false;
+  return Press::None;
 }
 
 // ── self-check ───────────────────────────────────────────────────────────
-// One runnable check, per the repo's habit. Covers the code->label map, which
-// is the only logic here that can be wrong without being obvious on screen.
+// Both layouts are asserted, not just the one in use -- that is the point of
+// making orientation runtime, and it is stronger coverage than before.
+static void checkLayout(const Layout *l) {
+  assert(l->xTime >= 0 && l->xTime + GW(5) * 5 <= l->w);  // "14:32"
+  assert(l->xDate + GW(2) * 13 <= l->w);                  // date footer
+  assert(l->xStatus + GW(1) * 26 <= l->w);                // status strip
+  assert(l->xFc0 + 3 * l->fcPitch <= l->w);               // three forecast columns
+  assert(l->yStale + GH(1) <= l->h);                      // footer on-screen
+  assert(l->yFcCnd + GH(1) <= l->h);
+  assert(l->fcChars >= 7);                                // "drizzle"/"showers"
+  assert((l->w / GW(1)) - 2 >= 22);                        // offline panel lines
+  assert(8 + GW(3) * 8 <= l->w);                           // "NO CLOCK" at size 3
+  assert((l->h - 62 - 16) / 11 >= 6);                      // enough offline rows
+}
+
 static void selfCheck() {
   assert(strcmp(wmoLabel(0), "clear") == 0);
   assert(strcmp(wmoLabel(2), "partly") == 0);
@@ -654,26 +668,42 @@ static void selfCheck() {
   assert(strcmp(wmoLabel(99), "storm") == 0);
   assert(strcmp(wmoLabel(-1), "?") == 0);
   assert(strcmp(wmoLabel(1234), "?") == 0);
+  assert(strlen(wmoLabel(51)) <= 7);
+  assert(strlen(wmoLabel(80)) <= 7);
 
-  // Layout must fit whichever orientation was compiled. These are what catch a
-  // bad landscape/portrait constant at boot instead of on the panel.
-  assert(X_TIME >= 0 && X_TIME + GW(5) * 5 <= LCD_W);   // "14:32"
-  assert(X_DATE + GW(2) * 13 <= LCD_W);                 // date footer
-  assert(X_STATUS + GW(1) * 26 <= LCD_W);               // status strip
-  assert(X_FC0 + 3 * FC_PITCH <= LCD_W);                // three forecast columns
-  assert(Y_STALE + GH(1) <= LCD_H);                     // footer is on-screen
-  assert(strlen(wmoLabel(51)) <= FC_CHARS);             // "drizzle" -- longest label
-  assert(strlen(wmoLabel(80)) <= FC_CHARS);             // "showers"
-
-  // The offline panel writes COLS1-2 chars per line, and its longest line must
-  // fit. 22 is the longest literal in drawNoTime().
-  assert(COLS1 >= 24);
-  assert(8 + GW(3) * 8 <= LCD_W);  // "NO CLOCK" title at size 3
+  checkLayout(&PORTRAIT);
+  checkLayout(&LANDSCAPE);
+  assert(PORTRAIT.w == LCD_NATIVE_W && PORTRAIT.h == LCD_NATIVE_H);
+  assert(LANDSCAPE.w == LCD_NATIVE_H && LANDSCAPE.h == LCD_NATIVE_W);
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoWifi, NoTime, Running };
 static State state = State::Boot;
+
+// "Off" means the display, not the chip. True deep sleep is possible but not
+// useful here: BOOT is GPIO9 and the C6's RTC-capable pins are GPIO0-7
+// (SOC_RTCIO_PIN_COUNT == 8), so the button physically cannot wake it -- only
+// RESET or a timer could. On a permanently USB-powered clock that's a worse
+// interface for no meaningful power saving, so long-press blanks the panel and
+// leaves the app running: time and weather stay current and come back instantly.
+static bool screenOn = true;
+
+static void setScreen(bool on) {
+  screenOn = on;
+  if (on) {
+    gfx->displayOn();
+    backlight(BL_DAY);  // loop() re-applies night dimming on the next minute tick
+    invalidateCache();
+    state = State::Boot;  // force a full redraw
+    Serial.println("screen on");
+  } else {
+    backlight(0);
+    gfx->displayOff();  // ST7789 SLPIN -- stops the panel, not just the backlight
+    led(0, 0, 0);
+    Serial.println("screen off (press BOOT to wake)");
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -685,14 +715,14 @@ void setup() {
 
   pinMode(BTN_BOOT, INPUT_PULLUP);
   prefs.begin("deskclock", false);
-  theme = prefs.getBool("light", false) ? &LIGHT : &DARK;
 
   gfx = boardDisplay();
   gfx->begin();
   backlight(BL_DAY);
+  applyMode(prefs.getUChar("mode", 0), false);
 
-  const char *boot[] = {"connecting to wifi", WIFI_SSID};
-  drawOfflinePanel("STARTING", theme->muted, boot, 2);
+  const char *boot[] = {"connecting to wifi", WIFI_SSID, "", "BOOT cycles modes"};
+  drawOfflinePanel("STARTING", theme->muted, boot, 4);
 
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(onWiFiEvent);
@@ -703,9 +733,9 @@ void setup() {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  // 20s, not 10: on a congested 2.4GHz channel at marginal signal the
-  // association can take several attempts, and a short window reports a
-  // failure that would have succeeded.
+  // 20s, not 10: the WPA2 handshake can time out once (204) and succeed on the
+  // next attempt. A 10s window reported a failure that would have connected,
+  // and I misread that as a wrong password twice.
   for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -743,8 +773,15 @@ void loop() {
   static uint32_t lastWx = 0;
   static int lastMinute = -1;
 
-  if (pollButtonShortPress()) {
-    applyTheme(theme == &DARK, true);
+  Press p = pollButton();
+  if (!screenOn) {
+    // Any press wakes -- making you remember it was a long press to get the
+    // screen back would be a bad joke.
+    if (p != Press::None) setScreen(true);
+  } else if (p == Press::Long) {
+    setScreen(false);
+  } else if (p == Press::Short) {
+    applyMode(mode + 1, true);
     state = State::Boot;  // force the full redraw below
   }
 
@@ -757,13 +794,16 @@ void loop() {
   if (want != state) {
     state = want;
     invalidateCache();
-    if (state == State::Running) {
+    if (screenOn && state == State::Running) {
       drawChrome();
       drawWeather();
     }
   }
 
-  if (state == State::Running) {
+  if (!screenOn) {
+    // Deliberately keep fetching below: the point of blanking rather than
+    // sleeping is that the clock is already right when it comes back.
+  } else if (state == State::Running) {
     drawClock(t);
     drawDate(t);
 
@@ -782,22 +822,22 @@ void loop() {
       snprintf(stale, sizeof stale, "no weather - see serial");
     }
     if (strcmp(stale, cStale) != 0) {
-      field(X_STATUS, Y_STALE, 26, 1, wx.valid ? theme->dim : theme->warn, stale);
+      field(L->xStatus, L->yStale, 26, 1, wx.valid ? theme->dim : theme->warn, stale);
       strcpy(cStale, stale);
     }
 
     char net[34];
     snprintf(net, sizeof net, "%s %ddBm", WiFi.SSID().c_str(), WiFi.RSSI());
     if (strcmp(net, cStatus) != 0) {
-      field(X_STATUS, Y_STATUS, 26, 1, theme->muted, net);
+      field(L->xStatus, L->yStatus, 26, 1, theme->muted, net);
       strcpy(cStatus, net);
     }
   } else {
     // Offline panels: repaint only when their content actually changes, then
-    // tick one "for Ns" line so it's visibly alive rather than frozen.
-    char key[40];
-    snprintf(key, sizeof key, "%d-%u-%d", (int)state, lastDisconnectReason,
-             state == State::NoTime ? WiFi.RSSI() / 5 : 0);
+    // tick one line at the bottom so it's visibly alive rather than frozen.
+    char key[48];
+    snprintf(key, sizeof key, "%d-%u-%d-%u", (int)state, lastDisconnectReason,
+             state == State::NoTime ? WiFi.RSSI() / 5 : 0, mode);
     if (strcmp(key, cStatusKey) != 0) {
       strcpy(cStatusKey, key);
       if (state == State::NoWifi) {
@@ -807,9 +847,9 @@ void loop() {
       }
     }
     char up[34];
-    snprintf(up, sizeof up, "for %lus   BOOT=theme", millis() / 1000);
+    snprintf(up, sizeof up, "for %lus  BOOT=mode", millis() / 1000);
     if (strcmp(up, cStale) != 0) {
-      panelLine(13, theme->dim, up);
+      field(8, L->h - 12, (L->w / GW(1)) - 2, 1, theme->dim, up);
       strcpy(cStale, up);
     }
     led(0, 0, 0);
@@ -822,8 +862,8 @@ void loop() {
   if (state != State::NoWifi && (lastWx == 0 || millis() - lastWx > period)) {
     lastWx = millis();
     if (fetchWeather()) {
-      if (state == State::Running) drawWeather();
-      ledByTemp(wx.temp);
+      if (screenOn && state == State::Running) drawWeather();
+      if (screenOn) ledByTemp(wx.temp);
     }
   }
 
