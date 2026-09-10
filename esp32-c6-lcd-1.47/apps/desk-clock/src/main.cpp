@@ -1,24 +1,26 @@
 // desk-clock: NTP clock + open-meteo weather.
 //
-// The one button does both jobs:
-//   short press -- cycle four display modes, persisted in NVS:
-//                  dark portrait -> light portrait -> dark landscape -> light landscape
-//   long press  -- blank the panel; any press brings it back
+// One button, three actions by hold duration (persisted in NVS):
+//   tap          -- next rotation: 0 -> 90 -> 180 -> 270
+//   hold 1.2s    -- toggle light/dark
+//   hold 3s      -- blank the panel; any press brings it back
+// While holding, an on-screen hint says what releasing will do.
 //
-// Orientation is runtime rather than a build flag because one button cycling
-// four modes is more discoverable than splitting theme and orientation across
-// short/long press, and the panel's offsets are correct in all four rotations.
+// Four rotations, not two, because the USB-C socket is on a fixed edge: mounting
+// the board with the cable exiting left, right, top or bottom needs all four.
+// Rotation is runtime rather than a build flag, and the panel's (34, 0, 34, 0)
+// offsets are correct in all four.
 //
 // All coordinates come from a Layout struct chosen at runtime, so every redraw
 // still erases an exact box -- there is no fillScreen() in loop(), which is
 // what stops the large digits from flickering.
 #include <board.h>
+#include <ui.h>
 #include <secrets.h>
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
-#include <Preferences.h>
 #include <WiFi.h>
 #include <assert.h>
 #include <time.h>
@@ -31,8 +33,14 @@ static const char *PLACE = "TORONTO";
 
 static const uint32_t WX_PERIOD_MS = 15UL * 60 * 1000;  // open-meteo is free; don't hammer it
 static const uint32_t WX_RETRY_MS = 60UL * 1000;        // but retry sooner while it's failing
-static const uint8_t BL_DAY = 200, BL_NIGHT = 50;       // ponytail: tune these by eye, in the dark
-static const uint8_t NIGHT_FROM = 23, NIGHT_TO = 7;
+// Night window and per-theme backlight levels live in lib/board/ui.h
+// (uiNightFrom/uiNightTo, Theme::blDay/blNight) -- shared by every app.
+
+// Power/heat. The board runs warm mainly because of the radio, the 160MHz clock
+// and the LCD backlight, plus the 5V->3.3V LDO dissipating (5-3.3)*I. Set to 0
+// to compare against the unthrottled baseline.
+#define POWER_SAVE 1
+static const uint32_t TEMP_LOG_MS = 30UL * 1000;  // report die temperature
 
 // The built-in 6x8 font scales by integer size, so a glyph is exactly
 // 6*size wide and 8*size tall. That exactness is why the dirty rects can be
@@ -41,29 +49,6 @@ static const uint8_t NIGHT_FROM = 23, NIGHT_TO = 7;
 #define GH(size) (8 * (size))
 
 static Arduino_GFX *gfx;
-static Preferences prefs;
-
-// ── theme ────────────────────────────────────────────────────────────────
-// Weather accent colours have to be per-theme, not global: cyan on white is
-// unreadable, and so is navy on black.
-struct Theme {
-  uint16_t bg, fg, dim, muted, rule;
-  uint16_t snow, rain, sun, storm, neutral;
-  uint16_t warn, bad, good;
-};
-
-static const Theme DARK = {
-    RGB565_BLACK, RGB565_WHITE,   RGB565_DIMGREY, RGB565_GREY, RGB565_DARKGREY,
-    RGB565_CYAN,  RGB565_SKYBLUE, RGB565_ORANGE,  RGB565_RED,  RGB565_LIGHTGREY,
-    RGB565_ORANGE, RGB565_RED,    RGB565_GREEN,
-};
-
-static const Theme LIGHT = {
-    RGB565_WHITESMOKE,  RGB565_BLACK,     RGB565_SILVER,     RGB565_DARKSLATEGREY,
-    RGB565_SILVER,      RGB565_DARKCYAN,  RGB565_STEELBLUE,  RGB565_DARKORANGE,
-    RGB565_MAROON,      RGB565_DARKSLATEGREY, RGB565_SADDLEBROWN, RGB565_MAROON,
-    RGB565_DARKGREEN,
-};
 
 // ── layout ───────────────────────────────────────────────────────────────
 // The only orientation-dependent data in the app. Everything below reads these
@@ -110,19 +95,9 @@ static const Layout LANDSCAPE = {
     /*rules*/ 0, 0, 0,
 };
 
-// mode bit 0 = light, bit 1 = landscape. One button cycles 0..3.
-static uint8_t mode = 0;
-static const Theme *theme = &DARK;
+// Which layout is live. Rotations 0/2 are portrait, 1/3 landscape.
 static const Layout *L = &PORTRAIT;
-
-static const char *modeName(uint8_t m) {
-  switch (m & 3) {
-    case 0:  return "dark portrait";
-    case 1:  return "light portrait";
-    case 2:  return "dark landscape";
-    default: return "light landscape";
-  }
-}
+static void syncLayout() { L = uiLandscape() ? &LANDSCAPE : &PORTRAIT; }
 
 // ── weather state ────────────────────────────────────────────────────────
 struct Weather {
@@ -155,11 +130,11 @@ static const char *wmoLabel(int code) {
 
 static uint16_t wmoColor(int code) {
   switch (code) {
-    case 0: case 1: return theme->sun;
-    case 71: case 73: case 75: case 77: case 85: case 86: return theme->snow;
-    case 61: case 63: case 65: case 80: case 81: case 82: return theme->rain;
-    case 95: case 96: case 99: return theme->storm;
-    default: return theme->neutral;
+    case 0: case 1: return uiTheme()->sun;
+    case 71: case 73: case 75: case 77: case 85: case 86: return uiTheme()->snow;
+    case 61: case 63: case 65: case 80: case 81: case 82: return uiTheme()->rain;
+    case 95: case 96: case 99: return uiTheme()->storm;
+    default: return uiTheme()->neutral;
   }
 }
 
@@ -169,7 +144,7 @@ static uint16_t wmoColor(int code) {
 static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg,
                   const char *s, bool center = false) {
   int16_t w = GW(size) * chars;
-  gfx->fillRect(x, y, w, GH(size), theme->bg);
+  gfx->fillRect(x, y, w, GH(size), uiTheme()->bg);
   int16_t tx = center ? x + (w - (int16_t)(GW(size) * strlen(s))) / 2 : x;
   gfx->setTextSize(size);
   gfx->setTextColor(fg);
@@ -180,7 +155,7 @@ static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg
 static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size,
                        uint16_t fg, const char *s) {
   int16_t w = GW(size) * chars;
-  gfx->fillRect(right - w, y, w, GH(size), theme->bg);
+  gfx->fillRect(right - w, y, w, GH(size), uiTheme()->bg);
   gfx->setTextSize(size);
   gfx->setTextColor(fg);
   gfx->setCursor(right - (int16_t)(GW(size) * strlen(s)), y);
@@ -200,16 +175,16 @@ static void invalidateCache() {
 }
 
 static void drawChrome() {
-  gfx->fillScreen(theme->bg);
+  gfx->fillScreen(uiTheme()->bg);
   if (L->landscape) {
-    gfx->drawFastVLine(170, 12, L->h - 24, theme->rule);
-    gfx->drawFastHLine(L->xCol2, L->yFcDay - 10, L->w - L->xCol2 - 8, theme->rule);
+    gfx->drawFastVLine(170, 12, L->h - 24, uiTheme()->rule);
+    gfx->drawFastHLine(L->xCol2, L->yFcDay - 10, L->w - L->xCol2 - 8, uiTheme()->rule);
   } else {
-    gfx->drawFastHLine(12, L->rule1, L->w - 24, theme->rule);
-    gfx->drawFastHLine(12, L->rule2, L->w - 24, theme->rule);
-    gfx->drawFastHLine(12, L->rule3, L->w - 24, theme->rule);
+    gfx->drawFastHLine(12, L->rule1, L->w - 24, uiTheme()->rule);
+    gfx->drawFastHLine(12, L->rule2, L->w - 24, uiTheme()->rule);
+    gfx->drawFastHLine(12, L->rule3, L->w - 24, uiTheme()->rule);
   }
-  field(L->xCol2, L->yPlace, 12, 1, theme->muted, PLACE);
+  field(L->xCol2, L->yPlace, 12, 1, uiTheme()->muted, PLACE);
 }
 
 // Only repaints what changed -- the minute block once a minute, seconds once a
@@ -219,11 +194,11 @@ static void drawClock(const struct tm &t) {
   strftime(hm, sizeof hm, "%H:%M", &t);
   strftime(ss, sizeof ss, "%S", &t);
   if (strcmp(hm, cHM) != 0) {
-    field(L->xTime, L->yTime, 5, 5, theme->fg, hm);
+    field(L->xTime, L->yTime, 5, 5, uiTheme()->fg, hm);
     strcpy(cHM, hm);
   }
   if (strcmp(ss, cSS) != 0) {
-    field(L->xSecs, L->ySecs, 2, 2, theme->dim, ss);
+    field(L->xSecs, L->ySecs, 2, 2, uiTheme()->dim, ss);
     strcpy(cSS, ss);
   }
 }
@@ -234,7 +209,7 @@ static void drawDate(const struct tm &t) {
   if (strcmp(d, cDate) == 0) return;
   // 13 not 14: at size 2 a 14-char box is 168px, which overruns the 172px
   // portrait panel and clips the erase rect.
-  field(L->xDate, L->yDate, 13, 2, theme->fg, d, true);
+  field(L->xDate, L->yDate, 13, 2, uiTheme()->fg, d, true);
   strcpy(cDate, d);
 }
 
@@ -242,15 +217,15 @@ static void drawWeather() {
   char buf[16];
 
   if (!wx.valid) {
-    field(L->xCol2, L->yTemp, 6, 4, theme->dim, "--");
-    fieldRight(L->w - 8, L->yMeta, 12, 1, theme->warn, "no weather");
-    fieldRight(L->w - 8, L->yMeta + 14, 12, 1, theme->dim, "");
-    fieldRight(L->w - 8, L->yMeta + 28, 12, 1, theme->dim, "");
+    field(L->xCol2, L->yTemp, 6, 4, uiTheme()->dim, "--");
+    fieldRight(L->w - 8, L->yMeta, 12, 1, uiTheme()->warn, "no weather");
+    fieldRight(L->w - 8, L->yMeta + 14, 12, 1, uiTheme()->dim, "");
+    fieldRight(L->w - 8, L->yMeta + 28, 12, 1, uiTheme()->dim, "");
     for (int i = 0; i < 3; i++) {
       int16_t x = L->xFc0 + i * L->fcPitch;
-      field(x, L->yFcDay, L->fcChars, 1, theme->dim, "--", true);
-      field(x, L->yFcTmp, L->fcChars, 1, theme->dim, "", true);
-      field(x, L->yFcCnd, L->fcChars, 1, theme->dim, "", true);
+      field(x, L->yFcDay, L->fcChars, 1, uiTheme()->dim, "--", true);
+      field(x, L->yFcTmp, L->fcChars, 1, uiTheme()->dim, "", true);
+      field(x, L->yFcCnd, L->fcChars, 1, uiTheme()->dim, "", true);
     }
     return;
   }
@@ -260,16 +235,16 @@ static void drawWeather() {
   degree(L->xCol2 + GW(4) * strlen(buf) + 5, L->yTemp + 5, wmoColor(wx.code));
 
   snprintf(buf, sizeof buf, "feels %d", (int)lroundf(wx.feels));
-  fieldRight(L->w - 8, L->yMeta, 12, 1, theme->muted, buf);
+  fieldRight(L->w - 8, L->yMeta, 12, 1, uiTheme()->muted, buf);
   fieldRight(L->w - 8, L->yMeta + 14, 12, 1, wmoColor(wx.code), wmoLabel(wx.code));
   snprintf(buf, sizeof buf, "%d%% hum", wx.humidity);
-  fieldRight(L->w - 8, L->yMeta + 28, 12, 1, theme->muted, buf);
+  fieldRight(L->w - 8, L->yMeta + 28, 12, 1, uiTheme()->muted, buf);
 
   for (int i = 0; i < 3; i++) {
     int16_t x = L->xFc0 + i * L->fcPitch;
-    field(x, L->yFcDay, L->fcChars, 1, theme->muted, wx.day[i], true);
+    field(x, L->yFcDay, L->fcChars, 1, uiTheme()->muted, wx.day[i], true);
     snprintf(buf, sizeof buf, "%d/%d", wx.hi[i], wx.lo[i]);
-    field(x, L->yFcTmp, L->fcChars, 1, theme->fg, buf, true);
+    field(x, L->yFcTmp, L->fcChars, 1, uiTheme()->fg, buf, true);
     field(x, L->yFcCnd, L->fcChars, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
   }
 }
@@ -315,13 +290,13 @@ static void panelLine(uint8_t row, uint16_t fg, const char *s) {
 
 static void drawOfflinePanel(const char *title, uint16_t titleColor, const char *const *lines,
                              uint8_t n) {
-  gfx->fillScreen(theme->bg);
+  gfx->fillScreen(uiTheme()->bg);
   field(8, 24, (L->w / GW(1)) - 2, 3, titleColor, title);
-  gfx->drawFastHLine(8, 54, L->w - 16, theme->rule);
+  gfx->drawFastHLine(8, 54, L->w - 16, uiTheme()->rule);
   // Landscape is only 172px tall, so fewer rows fit than portrait. Clip rather
   // than drawing off the bottom edge.
   uint8_t maxRows = (L->h - 62 - 16) / 11;
-  for (uint8_t i = 0; i < n && i < maxRows; i++) panelLine(i, theme->muted, lines[i]);
+  for (uint8_t i = 0; i < n && i < maxRows; i++) panelLine(i, uiTheme()->muted, lines[i]);
 }
 
 static void drawNoWifi() {
@@ -348,7 +323,7 @@ static void drawNoWifi() {
   }
 
   const char *lines[] = {ssid, why, "", a1, a2, a3, "", "retrying..."};
-  drawOfflinePanel("NO WIFI", theme->bad, lines, sizeof lines / sizeof lines[0]);
+  drawOfflinePanel("NO WIFI", uiTheme()->bad, lines, sizeof lines / sizeof lines[0]);
 }
 
 static void drawNoTime() {
@@ -368,7 +343,7 @@ static void drawNoTime() {
                          "with no portal.",
                          "",
                          "retrying..."};
-  drawOfflinePanel("NO CLOCK", theme->warn, lines, sizeof lines / sizeof lines[0]);
+  drawOfflinePanel("NO CLOCK", uiTheme()->warn, lines, sizeof lines / sizeof lines[0]);
 }
 
 // ── network ──────────────────────────────────────────────────────────────
@@ -606,42 +581,6 @@ static void ledByTemp(float c) {
 }
 
 // ── mode + button ────────────────────────────────────────────────────────
-// Rotation is applied here, not in board.h: the panel's (34, 0, 34, 0) offsets
-// are correct in all four rotations, so switching at runtime is safe.
-static void applyMode(uint8_t m, bool persist) {
-  mode = m & 3;
-  theme = (mode & 1) ? &LIGHT : &DARK;
-  L = (mode & 2) ? &LANDSCAPE : &PORTRAIT;
-  gfx->setRotation(L->landscape ? 1 : 0);
-  if (persist) prefs.putUChar("mode", mode);
-  invalidateCache();
-  Serial.printf("mode %u: %s\n", mode, modeName(mode));
-}
-
-// Short press cycles the four modes; long press blanks the screen.
-enum class Press { None, Short, Long };
-
-static Press pollButton() {
-  static bool wasDown = false, longFired = false;
-  static uint32_t downAt = 0;
-  bool down = digitalRead(BTN_BOOT) == LOW;  // active low
-
-  if (down && !wasDown) {
-    downAt = millis();
-    wasDown = true;
-    longFired = false;
-  } else if (down && wasDown && !longFired && millis() - downAt >= 1200) {
-    // Fire on crossing the threshold, not on release: holding a button and
-    // seeing nothing happen until you let go feels broken.
-    longFired = true;
-    return Press::Long;
-  } else if (!down && wasDown) {
-    wasDown = false;
-    if (!longFired && millis() - downAt > 40) return Press::Short;  // 40ms debounce
-  }
-  return Press::None;
-}
-
 // ── self-check ───────────────────────────────────────────────────────────
 // Both layouts are asserted, not just the one in use -- that is the point of
 // making orientation runtime, and it is stronger coverage than before.
@@ -656,6 +595,8 @@ static void checkLayout(const Layout *l) {
   assert((l->w / GW(1)) - 2 >= 22);                        // offline panel lines
   assert(8 + GW(3) * 8 <= l->w);                           // "NO CLOCK" at size 3
   assert((l->h - 62 - 16) / 11 >= 6);                      // enough offline rows
+  // The hold hint is centred, so the longest one must fit this orientation.
+  assert(GW(1) * 18 + 10 <= l->w);                         // "release: SCREEN OFF"
 }
 
 static void selfCheck() {
@@ -681,30 +622,6 @@ static void selfCheck() {
 enum class State { Boot, NoWifi, NoTime, Running };
 static State state = State::Boot;
 
-// "Off" means the display, not the chip. True deep sleep is possible but not
-// useful here: BOOT is GPIO9 and the C6's RTC-capable pins are GPIO0-7
-// (SOC_RTCIO_PIN_COUNT == 8), so the button physically cannot wake it -- only
-// RESET or a timer could. On a permanently USB-powered clock that's a worse
-// interface for no meaningful power saving, so long-press blanks the panel and
-// leaves the app running: time and weather stay current and come back instantly.
-static bool screenOn = true;
-
-static void setScreen(bool on) {
-  screenOn = on;
-  if (on) {
-    gfx->displayOn();
-    backlight(BL_DAY);  // loop() re-applies night dimming on the next minute tick
-    invalidateCache();
-    state = State::Boot;  // force a full redraw
-    Serial.println("screen on");
-  } else {
-    backlight(0);
-    gfx->displayOff();  // ST7789 SLPIN -- stops the panel, not just the backlight
-    led(0, 0, 0);
-    Serial.println("screen off (press BOOT to wake)");
-  }
-}
-
 void setup() {
   Serial.begin(115200);
   // Native USB CDC: anything printed in the first few hundred ms is lost while
@@ -714,15 +631,14 @@ void setup() {
   selfCheck();
 
   pinMode(BTN_BOOT, INPUT_PULLUP);
-  prefs.begin("deskclock", false);
 
   gfx = boardDisplay();
   gfx->begin();
-  backlight(BL_DAY);
-  applyMode(prefs.getUChar("mode", 0), false);
+  uiBegin(gfx, "deskclock");  // loads rotation/theme from NVS and applies them
+  syncLayout();
 
   const char *boot[] = {"connecting to wifi", WIFI_SSID, "", "BOOT cycles modes"};
-  drawOfflinePanel("STARTING", theme->muted, boot, 4);
+  drawOfflinePanel("STARTING", uiTheme()->muted, boot, 4);
 
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(onWiFiEvent);
@@ -732,6 +648,11 @@ void setup() {
   // not hide the compiled-in copy; see SECURITY.md for what actually helps.
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
+#if POWER_SAVE
+  // MAX_MODEM parks the radio between beacon intervals. Costs a little latency
+  // on inbound packets, which a clock polling every 15 minutes never notices.
+  WiFi.setSleep(WIFI_PS_MAX_MODEM);
+#endif
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   // 20s, not 10: the WPA2 handshake can time out once (204) and succeed on the
   // next attempt. A 10s window reported a failure that would have connected,
@@ -767,21 +688,25 @@ void setup() {
   for (const char *p = WIFI_PASS; *p; p++) h = (h ^ (uint8_t)*p) * 16777619u;
   Serial.printf("cred check: ssid=\"%s\" passlen=%u fnv1a=%08x\n", WIFI_SSID,
                 (unsigned)strlen(WIFI_PASS), h);
+
+#if POWER_SAVE
+  // 80MHz is the floor that still supports Wi-Fi on this chip. Nothing here is
+  // compute-bound -- the panel is SPI-limited and the clock ticks once a second
+  // -- so halving the clock costs nothing observable.
+  setCpuFrequencyMhz(80);
+#endif
+  Serial.printf("power: cpu %uMHz, wifi sleep %s, die %.1fC\n", getCpuFrequencyMhz(),
+                POWER_SAVE ? "MAX_MODEM" : "default", temperatureRead());
 }
 
 void loop() {
   static uint32_t lastWx = 0;
   static int lastMinute = -1;
 
-  Press p = pollButton();
-  if (!screenOn) {
-    // Any press wakes -- making you remember it was a long press to get the
-    // screen back would be a bad joke.
-    if (p != Press::None) setScreen(true);
-  } else if (p == Press::Long) {
-    setScreen(false);
-  } else if (p == Press::Short) {
-    applyMode(mode + 1, true);
+  // uiHandle() owns blank/wake/theme/rotate and says whether we must repaint.
+  if (uiHandle(uiPoll())) {
+    syncLayout();
+    invalidateCache();
     state = State::Boot;  // force the full redraw below
   }
 
@@ -794,13 +719,13 @@ void loop() {
   if (want != state) {
     state = want;
     invalidateCache();
-    if (screenOn && state == State::Running) {
+    if (uiScreenOn() && state == State::Running) {
       drawChrome();
       drawWeather();
     }
   }
 
-  if (!screenOn) {
+  if (!uiScreenOn()) {
     // Deliberately keep fetching below: the point of blanking rather than
     // sleeping is that the clock is already right when it comes back.
   } else if (state == State::Running) {
@@ -809,8 +734,7 @@ void loop() {
 
     if (t.tm_min != lastMinute) {
       lastMinute = t.tm_min;
-      bool night = (t.tm_hour >= NIGHT_FROM || t.tm_hour < NIGHT_TO);
-      backlight(night ? BL_NIGHT : BL_DAY);
+      backlight(uiBacklightNow());  // theme-specific day/night level
     }
 
     // Staleness has to be visible: a frozen panel showing nice weather is worse
@@ -822,14 +746,14 @@ void loop() {
       snprintf(stale, sizeof stale, "no weather - see serial");
     }
     if (strcmp(stale, cStale) != 0) {
-      field(L->xStatus, L->yStale, 26, 1, wx.valid ? theme->dim : theme->warn, stale);
+      field(L->xStatus, L->yStale, 26, 1, wx.valid ? uiTheme()->dim : uiTheme()->warn, stale);
       strcpy(cStale, stale);
     }
 
     char net[34];
     snprintf(net, sizeof net, "%s %ddBm", WiFi.SSID().c_str(), WiFi.RSSI());
     if (strcmp(net, cStatus) != 0) {
-      field(L->xStatus, L->yStatus, 26, 1, theme->muted, net);
+      field(L->xStatus, L->yStatus, 26, 1, uiTheme()->muted, net);
       strcpy(cStatus, net);
     }
   } else {
@@ -837,7 +761,7 @@ void loop() {
     // tick one line at the bottom so it's visibly alive rather than frozen.
     char key[48];
     snprintf(key, sizeof key, "%d-%u-%d-%u", (int)state, lastDisconnectReason,
-             state == State::NoTime ? WiFi.RSSI() / 5 : 0, mode);
+             state == State::NoTime ? WiFi.RSSI() / 5 : 0, (unsigned)(uiRot() * 2 + uiLight()));
     if (strcmp(key, cStatusKey) != 0) {
       strcpy(cStatusKey, key);
       if (state == State::NoWifi) {
@@ -849,7 +773,7 @@ void loop() {
     char up[34];
     snprintf(up, sizeof up, "for %lus  BOOT=mode", millis() / 1000);
     if (strcmp(up, cStale) != 0) {
-      field(8, L->h - 12, (L->w / GW(1)) - 2, 1, theme->dim, up);
+      field(8, L->h - 12, (L->w / GW(1)) - 2, 1, uiTheme()->dim, up);
       strcpy(cStale, up);
     }
     led(0, 0, 0);
@@ -862,9 +786,16 @@ void loop() {
   if (state != State::NoWifi && (lastWx == 0 || millis() - lastWx > period)) {
     lastWx = millis();
     if (fetchWeather()) {
-      if (screenOn && state == State::Running) drawWeather();
-      if (screenOn) ledByTemp(wx.temp);
+      if (uiScreenOn() && state == State::Running) drawWeather();
+      if (uiScreenOn()) ledByTemp(wx.temp);
     }
+  }
+
+  static uint32_t lastTemp = 0;
+  if (millis() - lastTemp > TEMP_LOG_MS) {
+    lastTemp = millis();
+    Serial.printf("die %.1fC  cpu %uMHz  bl %u  heap %u\n", temperatureRead(),
+                  getCpuFrequencyMhz(), uiBacklightApplied, ESP.getFreeHeap());
   }
 
   delay(100);

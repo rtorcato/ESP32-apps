@@ -122,6 +122,39 @@ Two things worth knowing:
 Each orientation gets its own preview: `preview.svg` (vertical) and
 `preview-h.svg` (horizontal).
 
+## Heat — it's the backlight, measured
+
+The board runs warm. I measured the die sensor (`temperatureRead()`) at steady
+state to find out where it actually comes from, rather than guessing:
+
+| Configuration | Die temp |
+|---|---|
+| 160MHz, no Wi-Fi power save, backlight 200 | **51.1 °C** |
+| 80MHz + `WIFI_PS_MAX_MODEM`, backlight 200 | 49.1 °C |
+| 80MHz + `MAX_MODEM`, **backlight 140** | **43.1 °C** |
+| 80MHz + `MAX_MODEM`, panel blanked | 41.1 °C and still falling |
+
+**The LCD backlight dominates.** Halving the CPU clock and parking the radio
+bought only 2 °C; dropping the backlight from 200 to 140 bought 6 °C more, and
+blanking the panel entirely is cooler still. That inverts the intuition that a
+radio and a 160MHz core are the hot parts.
+
+So the levers, in order of effect:
+
+1. **Backlight.** `Theme::blDay` / `blNight` in [`lib/board/ui.h`](lib/board/ui.h).
+   Defaults are now 140/40 (dark) and 70/18 (light) rather than 200/50.
+2. **Blank it when you're not looking** — hold BOOT 3s, or add a schedule.
+   Night dimming already does a softer version of this.
+3. **`setCpuFrequencyMhz(80)` and `WiFi.setSleep(WIFI_PS_MAX_MODEM)`** — worth
+   the 2 °C since nothing here is compute-bound. 80MHz is the floor that still
+   supports Wi-Fi on this chip.
+
+Some warmth is unavoidable: the 5V→3.3V LDO dissipates `(5 − 3.3) × I`, so every
+milliamp saved anywhere shows up as less heat there too. None of this is a
+reliability concern at these temperatures — but it does bias any onboard
+temperature reading, which is why [thermostat](../elecrow-rotary-2.1/apps/thermostat/)
+insists on a remote sensor.
+
 ## Apps
 
 Each app README has a `preview.svg` wireframe drawn at the panel's real 172×320,
