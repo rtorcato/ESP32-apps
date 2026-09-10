@@ -1,6 +1,10 @@
 # Waveshare ESP32-C6-LCD-1.47
 
-**Status: owned.** Pinout verified, `hello` builds and runs.
+**Status: owned.** Pinout verified, `hello` and `desk-clock` build and run.
+
+> **Writing an app for this board? Start with
+> [APP-CHECKLIST.md](APP-CHECKLIST.md)** — the conventions and measured
+> optimisations that every app here should follow, in one place.
 
 **Buy:** [amazon.ca](https://www.amazon.ca/dp/B0DHTMYTCY) ·
 [amazon.com](https://www.amazon.com/dp/B0DHTMYTCY) ·
@@ -180,7 +184,8 @@ insists on a remote sensor.
 ## Apps
 
 Each app README has a `preview.svg` wireframe drawn at the panel's real 172×320,
-so what you see is what actually fits.
+so what you see is what actually fits. New apps should follow
+[APP-CHECKLIST.md](APP-CHECKLIST.md).
 
 | App | Status | Idea |
 |---|---|---|

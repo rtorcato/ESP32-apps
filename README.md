@@ -7,6 +7,7 @@ almost no code with a clock for an 800×480 RGB-parallel panel.
 ```
 <device>/
   README.md          device spec, verified pinout, toolchain gotchas
+  APP-CHECKLIST.md   conventions every app on that device follows
   platformio.ini     only for devices I actually own
   lib/board/         pin definitions for that board
   apps/<app>/
