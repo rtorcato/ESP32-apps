@@ -69,6 +69,10 @@ cp lib/board/secrets.h.example lib/board/secrets.h && $EDITOR lib/board/secrets.
 [`lib/board/secrets.h.example`](lib/board/secrets.h.example) is the tracked
 template; `secrets.h` beside it is gitignored and shared by every app here.
 
+**Gitignoring it protects the repo, not the board.** Credentials are compiled
+into the firmware, so anyone holding the device can read them out of flash. Use
+an isolated IoT VLAN you can rotate — see [SECURITY.md](../SECURITY.md).
+
 **TLS needs a bigger app partition.** The default 4MB table splits into two OTA
 slots and leaves ~1.31MB for the app — WiFi + TLS + ArduinoJson + Arduino_GFX
 alone reaches 93% of it. `platformio.ini` sets `huge_app.csv` (single ~3MB

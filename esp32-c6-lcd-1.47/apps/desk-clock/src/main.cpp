@@ -347,6 +347,11 @@ void setup() {
 
   field(X_STATUS, Y_STATUS, 26, 1, RGB565_GREY, "wifi...");
   WiFi.mode(WIFI_STA);
+  // The core defaults to _persistent = true, which writes the SSID and PSK into
+  // NVS as well as having them compiled into the app partition. This keeps the
+  // credential out of NVS (WIFI_STORAGE_RAM) -- one copy instead of two. It does
+  // not hide the compiled-in copy; see SECURITY.md for what actually helps.
+  WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) delay(250);

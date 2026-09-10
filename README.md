@@ -42,6 +42,8 @@ or a browser.
 | [elecrow-rotary-1.28](elecrow-rotary-1.28/) | Wishlist | 240×240 round SPI + knob | — |
 
 Purchase links and the cross-device comparison live in [DEVICES.md](DEVICES.md).
+Credential handling on a device that can be stolen is in
+[SECURITY.md](SECURITY.md).
 
 ## Toolchain
 
