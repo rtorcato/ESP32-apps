@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="ticker: vertical watchlist of symbols with prices and percent change">
+  <!-- 172x320 native. 11 rows of 26px fit under a 24px header. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <rect width="172" height="24" fill="#161d26"/>
+  <text x="8" y="16" font-family="monospace" font-size="10" fill="#8b98a5">WATCHLIST</text>
+  <text x="164" y="16" font-family="monospace" font-size="10" fill="#8b98a5" text-anchor="end">14:32</text>
+
+  <g font-family="monospace" font-size="11">
+    <line x1="0" y1="50" x2="172" y2="50" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="41" fill="#e6edf3">AAPL</text><text x="120" y="41" fill="#e6edf3" text-anchor="end">241.12</text><text x="164" y="41" fill="#3fb950" text-anchor="end">+1.4</text>
+
+    <line x1="0" y1="76" x2="172" y2="76" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="67" fill="#e6edf3">NVDA</text><text x="120" y="67" fill="#e6edf3" text-anchor="end">183.44</text><text x="164" y="67" fill="#3fb950" text-anchor="end">+3.8</text>
+
+    <line x1="0" y1="102" x2="172" y2="102" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="93" fill="#e6edf3">TSLA</text><text x="120" y="93" fill="#e6edf3" text-anchor="end">402.90</text><text x="164" y="93" fill="#f85149" text-anchor="end">-2.1</text>
+
+    <line x1="0" y1="128" x2="172" y2="128" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="119" fill="#e6edf3">MSFT</text><text x="120" y="119" fill="#e6edf3" text-anchor="end">512.03</text><text x="164" y="119" fill="#3fb950" text-anchor="end">+0.6</text>
+
+    <line x1="0" y1="154" x2="172" y2="154" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="145" fill="#e6edf3">GOOG</text><text x="120" y="145" fill="#e6edf3" text-anchor="end">198.77</text><text x="164" y="145" fill="#f85149" text-anchor="end">-0.3</text>
+
+    <line x1="0" y1="180" x2="172" y2="180" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="171" fill="#e6edf3">AMZN</text><text x="120" y="171" fill="#e6edf3" text-anchor="end">231.05</text><text x="164" y="171" fill="#3fb950" text-anchor="end">+1.1</text>
+
+    <line x1="0" y1="206" x2="172" y2="206" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="197" fill="#e6edf3">BTC</text><text x="120" y="197" fill="#e6edf3" text-anchor="end">97204</text><text x="164" y="197" fill="#f85149" text-anchor="end">-4.2</text>
+
+    <line x1="0" y1="232" x2="172" y2="232" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="223" fill="#e6edf3">ETH</text><text x="120" y="223" fill="#e6edf3" text-anchor="end">3812</text><text x="164" y="223" fill="#3fb950" text-anchor="end">+2.7</text>
+
+    <line x1="0" y1="258" x2="172" y2="258" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="249" fill="#e6edf3">VFV</text><text x="120" y="249" fill="#e6edf3" text-anchor="end">148.20</text><text x="164" y="249" fill="#3fb950" text-anchor="end">+0.9</text>
+
+    <line x1="0" y1="284" x2="172" y2="284" stroke="#263140" stroke-width="1"/>
+    <text x="8" y="275" fill="#e6edf3">XEQT</text><text x="120" y="275" fill="#e6edf3" text-anchor="end">36.44</text><text x="164" y="275" fill="#3fb950" text-anchor="end">+0.5</text>
+
+    <text x="8" y="301" fill="#e6edf3">CADUSD</text><text x="120" y="301" fill="#e6edf3" text-anchor="end">0.7188</text><text x="164" y="301" fill="#f85149" text-anchor="end">-0.1</text>
+  </g>
+
+  <!-- delayed-data honesty marker -->
+  <rect x="0" y="310" width="172" height="10" fill="#161d26"/>
+  <text x="8" y="318" font-family="monospace" font-size="7" fill="#6e7681">delayed 15m</text>
+</svg>

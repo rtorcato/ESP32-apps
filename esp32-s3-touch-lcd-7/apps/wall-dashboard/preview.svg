@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" width="800" height="480" role="img" aria-label="wall-dashboard: weather header, agenda column, transit board and sensor row on an 800x480 panel">
+  <!-- 800x480 native (shown 1:1). Four blocks, each with its own last-updated
+       stamp so stale data is visible rather than silently wrong. -->
+  <rect width="800" height="480" fill="#0b0f14"/>
+
+  <!-- ── header: clock + weather ─────────────────────────────── -->
+  <rect width="800" height="104" fill="#161d26"/>
+  <text x="24" y="62" font-family="monospace" font-size="52" fill="#e6edf3">14:32</text>
+  <text x="24" y="86" font-family="monospace" font-size="15" fill="#8b98a5">Wednesday 10 September</text>
+
+  <text x="330" y="58" font-family="monospace" font-size="40" fill="#58a6ff">-4&#176;</text>
+  <text x="330" y="82" font-family="monospace" font-size="13" fill="#8b98a5">snow &#183; feels -9&#176;</text>
+
+  <g font-family="monospace" font-size="13" text-anchor="middle">
+    <text x="500" y="36" fill="#6e7681">THU</text><text x="500" y="58" fill="#e6edf3">-2/-8</text><text x="500" y="78" fill="#58a6ff">snow</text>
+    <text x="580" y="36" fill="#6e7681">FRI</text><text x="580" y="58" fill="#e6edf3">1/-4</text><text x="580" y="78" fill="#8b98a5">cloud</text>
+    <text x="660" y="36" fill="#6e7681">SAT</text><text x="660" y="58" fill="#e6edf3">3/-1</text><text x="660" y="78" fill="#d29922">sun</text>
+    <text x="740" y="36" fill="#6e7681">SUN</text><text x="740" y="58" fill="#e6edf3">4/0</text><text x="740" y="78" fill="#d29922">sun</text>
+  </g>
+  <text x="792" y="98" font-family="monospace" font-size="9" fill="#4d5560" text-anchor="end">wx 4m ago</text>
+
+  <!-- ── left: agenda ────────────────────────────────────────── -->
+  <rect x="16" y="120" width="380" height="272" rx="6" fill="#12171e"/>
+  <text x="32" y="146" font-family="monospace" font-size="13" fill="#6e7681">TODAY</text>
+  <text x="380" y="146" font-family="monospace" font-size="9" fill="#4d5560" text-anchor="end">cal 2m ago</text>
+
+  <g font-family="monospace">
+    <rect x="32" y="158" width="3" height="36" fill="#f85149"/>
+    <text x="46" y="176" font-size="15" fill="#e6edf3">15:00  Standup</text>
+    <text x="46" y="190" font-size="11" fill="#8b98a5">30m &#183; Zoom</text>
+
+    <rect x="32" y="204" width="3" height="36" fill="#58a6ff"/>
+    <text x="46" y="222" font-size="15" fill="#e6edf3">16:30  Design review</text>
+    <text x="46" y="236" font-size="11" fill="#8b98a5">1h &#183; Room 2</text>
+
+    <rect x="32" y="250" width="3" height="36" fill="#d29922"/>
+    <text x="46" y="268" font-size="15" fill="#e6edf3">18:00  Dentist</text>
+    <text x="46" y="282" font-size="11" fill="#8b98a5">45m &#183; Bloor St</text>
+
+    <rect x="32" y="296" width="3" height="36" fill="#3fb950"/>
+    <text x="46" y="314" font-size="15" fill="#e6edf3">20:00  Dinner</text>
+    <text x="46" y="328" font-size="11" fill="#8b98a5">2h</text>
+
+    <text x="46" y="364" font-size="12" fill="#4d5560">+ 2 more tomorrow</text>
+  </g>
+
+  <!-- ── right: transit ──────────────────────────────────────── -->
+  <rect x="412" y="120" width="372" height="272" rx="6" fill="#12171e"/>
+  <text x="428" y="146" font-family="monospace" font-size="13" fill="#6e7681">DEPARTURES</text>
+  <text x="768" y="146" font-family="monospace" font-size="9" fill="#4d5560" text-anchor="end">live 20s</text>
+
+  <g font-family="monospace" font-size="15">
+    <text x="428" y="180" fill="#e6edf3">504 King  W</text><text x="768" y="180" fill="#3fb950" text-anchor="end">2 min</text>
+    <line x1="428" y1="192" x2="768" y2="192" stroke="#1b232d"/>
+    <text x="428" y="216" fill="#e6edf3">504 King  E</text><text x="768" y="216" fill="#3fb950" text-anchor="end">6 min</text>
+    <line x1="428" y1="228" x2="768" y2="228" stroke="#1b232d"/>
+    <text x="428" y="252" fill="#e6edf3">Line 1  S</text><text x="768" y="252" fill="#e6edf3" text-anchor="end">3 min</text>
+    <line x1="428" y1="264" x2="768" y2="264" stroke="#1b232d"/>
+    <text x="428" y="288" fill="#e6edf3">Line 1  N</text><text x="768" y="288" fill="#e6edf3" text-anchor="end">5 min</text>
+    <line x1="428" y1="300" x2="768" y2="300" stroke="#1b232d"/>
+    <text x="428" y="324" fill="#8b98a5">GO Lakeshore</text><text x="768" y="324" fill="#d29922" text-anchor="end">14 min</text>
+    <line x1="428" y1="336" x2="768" y2="336" stroke="#1b232d"/>
+    <text x="428" y="360" fill="#8b98a5">501 Queen  W</text><text x="768" y="360" fill="#f85149" text-anchor="end">delayed</text>
+  </g>
+
+  <!-- ── footer: house sensors ───────────────────────────────── -->
+  <rect x="16" y="404" width="768" height="60" rx="6" fill="#12171e"/>
+  <g font-family="monospace">
+    <text x="40" y="428" font-size="11" fill="#6e7681">LIVING</text><text x="40" y="452" font-size="19" fill="#e6edf3">21.4&#176;</text>
+    <text x="176" y="428" font-size="11" fill="#6e7681">BASEMENT</text><text x="176" y="452" font-size="19" fill="#e6edf3">17.9&#176;</text>
+    <text x="322" y="428" font-size="11" fill="#6e7681">OUTSIDE</text><text x="322" y="452" font-size="19" fill="#58a6ff">-4.0&#176;</text>
+    <text x="462" y="428" font-size="11" fill="#6e7681">CO&#8322;</text><text x="462" y="452" font-size="19" fill="#3fb950">612</text>
+    <text x="580" y="428" font-size="11" fill="#6e7681">POWER</text><text x="580" y="452" font-size="19" fill="#d29922">1.8kW</text>
+    <text x="700" y="428" font-size="11" fill="#6e7681">DOOR</text><text x="700" y="452" font-size="19" fill="#3fb950">shut</text>
+  </g>
+
+  <text x="792" y="476" font-family="monospace" font-size="9" fill="#3a424c" text-anchor="end">dims 23:00&#8211;07:00</text>
+</svg>

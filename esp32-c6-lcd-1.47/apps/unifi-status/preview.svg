@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="unifi-status: WAN state, throughput, client count and a row per UniFi device">
+  <!-- 172x320 native. WAN block on top, device rows below. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <!-- header: WAN state drives the LED colour too -->
+  <rect width="172" height="22" fill="#0f2417"/>
+  <circle cx="10" cy="11" r="4" fill="#3fb950"/>
+  <text x="20" y="15" font-family="monospace" font-size="10" fill="#3fb950">WAN UP</text>
+  <text x="164" y="15" font-family="monospace" font-size="8" fill="#6e7681" text-anchor="end">14d 06:22</text>
+
+  <text x="8" y="36" font-family="monospace" font-size="8" fill="#6e7681">99.245.11.203</text>
+
+  <!-- throughput: from counter deltas, clamped (reboot = negative delta) -->
+  <text x="8" y="58" font-family="monospace" font-size="17" fill="#3fb950">&#8595; 184</text>
+  <text x="94" y="58" font-family="monospace" font-size="9" fill="#6e7681">Mb/s</text>
+  <text x="8" y="78" font-family="monospace" font-size="17" fill="#58a6ff">&#8593;  32</text>
+  <text x="94" y="78" font-family="monospace" font-size="9" fill="#6e7681">Mb/s</text>
+
+  <line x1="0" y1="88" x2="172" y2="88" stroke="#263140"/>
+
+  <!-- site totals -->
+  <g font-family="monospace" font-size="9">
+    <text x="8" y="102" fill="#6e7681">CLIENTS</text>
+    <text x="164" y="102" fill="#e6edf3" text-anchor="end">38  (7 wired)</text>
+    <text x="8" y="116" fill="#6e7681">GW CPU</text>
+    <text x="164" y="116" fill="#e6edf3" text-anchor="end">14%  mem 42%</text>
+    <text x="8" y="130" fill="#6e7681">GW TEMP</text>
+    <text x="164" y="130" fill="#d29922" text-anchor="end">61&#176;C</text>
+  </g>
+
+  <line x1="0" y1="138" x2="172" y2="138" stroke="#263140"/>
+
+  <!-- device rows: name / clients or PoE / state dot -->
+  <text x="8" y="152" font-family="monospace" font-size="8" fill="#6e7681">DEVICES</text>
+
+  <g font-family="monospace" font-size="9">
+    <circle cx="10" cy="168" r="3" fill="#3fb950"/>
+    <text x="20" y="171" fill="#e6edf3">UDM-Pro</text><text x="164" y="171" fill="#8b98a5" text-anchor="end">gw</text>
+
+    <circle cx="10" cy="186" r="3" fill="#3fb950"/>
+    <text x="20" y="189" fill="#e6edf3">USW-24-PoE</text><text x="164" y="189" fill="#8b98a5" text-anchor="end">62W</text>
+
+    <circle cx="10" cy="204" r="3" fill="#3fb950"/>
+    <text x="20" y="207" fill="#e6edf3">U6-Pro main</text><text x="164" y="207" fill="#8b98a5" text-anchor="end">14 cl</text>
+
+    <circle cx="10" cy="222" r="3" fill="#3fb950"/>
+    <text x="20" y="225" fill="#e6edf3">U6-Lite up</text><text x="164" y="225" fill="#8b98a5" text-anchor="end">9 cl</text>
+
+    <circle cx="10" cy="240" r="3" fill="#d29922"/>
+    <text x="20" y="243" fill="#e6edf3">U6-Mesh gar</text><text x="164" y="243" fill="#d29922" text-anchor="end">-74 dBm</text>
+
+    <circle cx="10" cy="258" r="3" fill="#3fb950"/>
+    <text x="20" y="261" fill="#e6edf3">USW-Flex</text><text x="164" y="261" fill="#8b98a5" text-anchor="end">11W</text>
+
+    <!-- adopting / provisioning state, not just up/down -->
+    <circle cx="10" cy="276" r="3" fill="#58a6ff"/>
+    <text x="20" y="279" fill="#8b98a5">USW-Lite-8</text><text x="164" y="279" fill="#58a6ff" text-anchor="end">provis</text>
+
+    <circle cx="10" cy="294" r="3" fill="#f85149"/>
+    <text x="20" y="297" fill="#4d5560">G4-Doorbell</text><text x="164" y="297" fill="#f85149" text-anchor="end">offline</text>
+  </g>
+
+  <!-- staleness: a frozen panel showing a healthy WAN is worse than a blank one -->
+  <rect x="0" y="306" width="172" height="14" fill="#161d26"/>
+  <text x="8" y="316" font-family="monospace" font-size="7" fill="#6e7681">api ok &#183; 4s ago &#183; via mac-mini</text>
+</svg>

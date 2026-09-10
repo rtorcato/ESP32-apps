@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="360" height="360" role="img" aria-label="scroll-knob: small round face showing the active input mode and mode dots">
+  <!-- 240x240 round, shown 1.5x. Shows the MODE, never a value — BLE HID is
+       output-only, so the knob cannot know the host's zoom level. -->
+  <defs><clipPath id="round"><circle cx="120" cy="120" r="120"/></clipPath></defs>
+
+  <rect width="240" height="240" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="240" height="240" fill="#0b0f14"/>
+
+    <!-- rim: neutral, no value to show -->
+    <circle cx="120" cy="120" r="104" fill="none" stroke="#161d26" stroke-width="10"/>
+
+    <!-- mode dots on the rim: 5 modes, 2nd active -->
+    <circle cx="88"  cy="30" r="4" fill="#2f3b47"/>
+    <circle cx="110" cy="26" r="6" fill="#58a6ff"/>
+    <circle cx="132" cy="26" r="4" fill="#2f3b47"/>
+    <circle cx="154" cy="30" r="4" fill="#2f3b47"/>
+    <circle cx="174" cy="38" r="4" fill="#2f3b47"/>
+
+    <!-- big glyph for the active mode -->
+    <text x="120" y="132" font-family="monospace" font-size="60" fill="#58a6ff" text-anchor="middle">&#8597;</text>
+
+    <text x="120" y="168" font-family="monospace" font-size="18" fill="#e6edf3" text-anchor="middle">SCROLL</text>
+    <text x="120" y="188" font-family="monospace" font-size="10" fill="#6e7681" text-anchor="middle">natural &#183; accel on</text>
+
+    <text x="120" y="212" font-family="monospace" font-size="9" fill="#3a424c" text-anchor="middle">press = next mode</text>
+    <text x="120" y="226" font-family="monospace" font-size="8" fill="#3a424c" text-anchor="middle">zoom / scrub / brush / undo</text>
+  </g>
+</svg>

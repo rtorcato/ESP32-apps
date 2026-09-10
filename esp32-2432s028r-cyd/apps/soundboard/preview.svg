@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="soundboard: 3x4 grid of labelled sample buttons with one playing">
+  <!-- 240x320 native. 3x4 grid of 72x62 buttons. Labels come from a manifest on
+       the SD card, so adding a sound needs no re-flash. -->
+  <rect width="240" height="320" fill="#0b0f14"/>
+
+  <rect width="240" height="24" fill="#161d26"/>
+  <text x="8" y="17" font-family="monospace" font-size="10" fill="#e6edf3">SOUNDS</text>
+  <text x="232" y="17" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="end">SD ok  1/3</text>
+
+  <g font-family="monospace" font-size="9" text-anchor="middle">
+    <!-- row 1 -->
+    <rect x="6" y="32" width="72" height="62" rx="5" fill="#1c2430"/><text x="42" y="67" fill="#e6edf3">doorbell</text>
+    <rect x="84" y="32" width="72" height="62" rx="5" fill="#1c2430"/><text x="120" y="67" fill="#e6edf3">airhorn</text>
+    <rect x="162" y="32" width="72" height="62" rx="5" fill="#1c2430"/><text x="198" y="67" fill="#e6edf3">rimshot</text>
+
+    <!-- row 2: one playing — highlighted with a progress bar -->
+    <rect x="6" y="100" width="72" height="62" rx="5" fill="#1c2430"/><text x="42" y="135" fill="#e6edf3">applause</text>
+    <rect x="84" y="100" width="72" height="62" rx="5" fill="#173a22"/>
+    <rect x="84" y="100" width="72" height="3" rx="1.5" fill="#3fb950"/>
+    <text x="120" y="130" fill="#3fb950">sad-trom</text>
+    <rect x="92" y="142" width="56" height="3" rx="1.5" fill="#22502f"/>
+    <rect x="92" y="142" width="34" height="3" rx="1.5" fill="#3fb950"/>
+    <rect x="162" y="100" width="72" height="62" rx="5" fill="#1c2430"/><text x="198" y="135" fill="#e6edf3">crickets</text>
+
+    <!-- row 3 -->
+    <rect x="6" y="168" width="72" height="62" rx="5" fill="#1c2430"/><text x="42" y="203" fill="#e6edf3">bell</text>
+    <rect x="84" y="168" width="72" height="62" rx="5" fill="#1c2430"/><text x="120" y="203" fill="#e6edf3">buzzer</text>
+    <rect x="162" y="168" width="72" height="62" rx="5" fill="#1c2430"/><text x="198" y="203" fill="#e6edf3">chime</text>
+
+    <!-- row 4 -->
+    <rect x="6" y="236" width="72" height="62" rx="5" fill="#1c2430"/><text x="42" y="271" fill="#e6edf3">tada</text>
+    <rect x="84" y="236" width="72" height="62" rx="5" fill="#1c2430"/><text x="120" y="271" fill="#e6edf3">whoosh</text>
+    <rect x="162" y="236" width="72" height="62" rx="5" fill="#1c2430"/><text x="198" y="271" fill="#e6edf3">error</text>
+  </g>
+
+  <!-- volume + overlap policy -->
+  <text x="8" y="313" font-family="monospace" font-size="8" fill="#6e7681">vol 6/10 &#183; new tap cuts current</text>
+</svg>

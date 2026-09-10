@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="360" height="360" role="img" aria-label="single-gauge: small round radial gauge showing one metric with a fixed range and threshold colour">
+  <!-- 240x240 round, shown 1.5x. Fixed range, never auto-scaled: a full-looking
+       dial must mean the same thing every glance. -->
+  <defs><clipPath id="round"><circle cx="120" cy="120" r="120"/></clipPath></defs>
+
+  <rect width="240" height="240" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="240" height="240" fill="#0b0f14"/>
+
+    <!-- threshold zones on the track: green / amber / red, r=100, 270° = 471 -->
+    <g transform="rotate(135 120 120)">
+      <circle cx="120" cy="120" r="100" fill="none" stroke="#173a22" stroke-width="15"
+              stroke-dasharray="282 346"/>
+      <circle cx="120" cy="120" r="100" fill="none" stroke="#3d3212" stroke-width="15"
+              stroke-dasharray="94 534" stroke-dashoffset="-282"/>
+      <circle cx="120" cy="120" r="100" fill="none" stroke="#3d1a18" stroke-width="15"
+              stroke-dasharray="95 533" stroke-dashoffset="-376"/>
+      <!-- value: 1.8kW of a fixed 0-5kW range = 36% of sweep -->
+      <circle cx="120" cy="120" r="100" fill="none" stroke="#3fb950" stroke-width="15"
+              stroke-dasharray="170 458" stroke-linecap="round"/>
+    </g>
+
+    <text x="120" y="76" font-family="monospace" font-size="10" fill="#6e7681" text-anchor="middle">HOUSE POWER</text>
+
+    <text x="120" y="136" font-family="monospace" font-size="44" fill="#e6edf3" text-anchor="middle">1.84</text>
+    <text x="120" y="158" font-family="monospace" font-size="13" fill="#8b98a5" text-anchor="middle">kW</text>
+
+    <!-- fixed range endpoints, stated so the dial is readable at a glance -->
+    <text x="120" y="182" font-family="monospace" font-size="9" fill="#4d5560" text-anchor="middle">0 &#8212; 5 kW fixed</text>
+    <text x="120" y="198" font-family="monospace" font-size="9" fill="#4d5560" text-anchor="middle">30s moving avg</text>
+    <text x="120" y="220" font-family="monospace" font-size="9" fill="#3a424c" text-anchor="middle">turn = next metric (1/6)</text>
+  </g>
+</svg>

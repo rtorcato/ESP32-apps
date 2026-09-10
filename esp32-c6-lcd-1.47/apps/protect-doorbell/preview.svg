@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="protect-doorbell: active ring alert pinned above a list of recent camera events">
+  <!-- 172x320 native. Ring pinned at top; motion ranked below and rate-limited. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <!-- ACTIVE RING: unmissable, drives the LED at full brightness -->
+  <rect x="0" y="0" width="172" height="96" fill="#3d1216"/>
+  <rect x="0" y="0" width="172" height="2" fill="#f85149"/>
+  <text x="86" y="26" font-family="monospace" font-size="14" fill="#f85149" text-anchor="middle">DOORBELL</text>
+  <text x="86" y="52" font-family="monospace" font-size="19" fill="#ffffff" text-anchor="middle">RINGING</text>
+  <text x="86" y="72" font-family="monospace" font-size="10" fill="#e0a0a0" text-anchor="middle">Front door</text>
+  <text x="86" y="88" font-family="monospace" font-size="9" fill="#a86464" text-anchor="middle">14:32:08 &#183; 3s ago</text>
+
+  <!-- recent events -->
+  <text x="8" y="112" font-family="monospace" font-size="8" fill="#6e7681">RECENT</text>
+
+  <g font-family="monospace" font-size="9">
+    <!-- a pinned earlier ring stays visible; motion cannot push it off -->
+    <rect x="0" y="118" width="172" height="20" fill="#1b1113"/>
+    <circle cx="10" cy="128" r="3" fill="#f85149"/>
+    <text x="20" y="131" fill="#e6edf3">ring Front</text>
+    <text x="164" y="131" fill="#8b98a5" text-anchor="end">13:04</text>
+
+    <circle cx="10" cy="152" r="3" fill="#d29922"/>
+    <text x="20" y="155" fill="#8b98a5">person Drive</text>
+    <text x="164" y="155" fill="#6e7681" text-anchor="end">13:02</text>
+
+    <circle cx="10" cy="172" r="3" fill="#d29922"/>
+    <text x="20" y="175" fill="#8b98a5">person Front</text>
+    <text x="164" y="175" fill="#6e7681" text-anchor="end">12:58</text>
+
+    <circle cx="10" cy="192" r="3" fill="#58a6ff"/>
+    <text x="20" y="195" fill="#8b98a5">vehicle Drive</text>
+    <text x="164" y="195" fill="#6e7681" text-anchor="end">12:41</text>
+
+    <circle cx="10" cy="212" r="3" fill="#2f3b47"/>
+    <text x="20" y="215" fill="#4d5560">motion Back</text>
+    <text x="164" y="215" fill="#4d5560" text-anchor="end">12:30</text>
+
+    <circle cx="10" cy="232" r="3" fill="#2f3b47"/>
+    <text x="20" y="235" fill="#4d5560">motion Back</text>
+    <text x="164" y="235" fill="#4d5560" text-anchor="end">12:22</text>
+
+    <!-- rate limiting made visible, so suppression is not mistaken for quiet -->
+    <text x="20" y="255" fill="#3a424c">+ 14 motion muted</text>
+  </g>
+
+  <!-- ack via the one button -->
+  <rect x="4" y="266" width="164" height="20" rx="3" fill="#1c2430"/>
+  <text x="86" y="280" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="middle">BOOT = ack, clear LED</text>
+
+  <!-- transport state: a doorbell that missed a ring must look broken -->
+  <rect x="0" y="294" width="172" height="26" fill="#161d26"/>
+  <circle cx="10" cy="304" r="3.5" fill="#3fb950"/>
+  <text x="20" y="307" font-family="monospace" font-size="7" fill="#8b98a5">mqtt via home-assistant</text>
+  <text x="20" y="316" font-family="monospace" font-size="7" fill="#4d5560">3 cameras &#183; reconnects: 0</text>
+</svg>

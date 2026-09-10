@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="hello smoke test: white border, ESP32-C6 text, button state bar">
+  <!-- 172x320 native. Mirrors apps/hello/src/main.cpp exactly. -->
+  <rect width="172" height="320" fill="#000"/>
+
+  <!-- drawRect(0,0,LCD_W,LCD_H,WHITE) — must hug all four edges -->
+  <rect x="0.5" y="0.5" width="171" height="319" fill="none" stroke="#fff" stroke-width="1"/>
+
+  <!-- setTextSize(2) = 12x16px glyphs; textLength pins the real advance width -->
+  <text x="12" y="54" font-family="monospace" font-size="16" fill="#fff"
+        textLength="96" lengthAdjust="spacing">ESP32-C6</text>
+  <text x="12" y="78" font-family="monospace" font-size="16" fill="#fff"
+        textLength="84" lengthAdjust="spacing">172x320</text>
+
+  <!-- fillRect(12,110,148,20) — green while BOOT held, dark grey otherwise -->
+  <rect x="12" y="110" width="148" height="20" fill="#3fb950"/>
+  <text x="86" y="124" font-family="monospace" font-size="9" fill="#04260d" text-anchor="middle">BOOT HELD</text>
+  <rect x="12" y="138" width="148" height="20" fill="#4a4a4a"/>
+  <text x="86" y="152" font-family="monospace" font-size="9" fill="#9aa4ae" text-anchor="middle">RELEASED</text>
+  <text x="12" y="176" font-family="monospace" font-size="8" fill="#6e7681">(one bar, two states)</text>
+
+  <!-- RGB LED cycle indicator -->
+  <text x="12" y="250" font-family="monospace" font-size="8" fill="#6e7681">RGB LED cycle</text>
+  <circle cx="24" cy="270" r="9" fill="#f85149"/>
+  <circle cx="52" cy="270" r="9" fill="#3fb950"/>
+  <circle cx="80" cy="270" r="9" fill="#58a6ff"/>
+  <text x="12" y="300" font-family="monospace" font-size="8" fill="#6e7681">serial: tick 1500</text>
+</svg>

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="desk-clock: large time, weather block, forecast row, date footer">
+  <!-- 172x320 native. Three stacked blocks: time / weather / forecast. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <!-- TIME. Widest thing on screen, so it sets the font size: 5 glyphs of ~30px. -->
+  <text x="86" y="72" font-family="monospace" font-size="42" fill="#e6edf3" text-anchor="middle">14:32</text>
+  <text x="86" y="92" font-family="monospace" font-size="10" fill="#6e7681" text-anchor="middle">:07</text>
+
+  <line x1="12" y1="108" x2="160" y2="108" stroke="#263140"/>
+
+  <!-- CURRENT WEATHER -->
+  <text x="8" y="128" font-family="monospace" font-size="8" fill="#6e7681">TORONTO</text>
+  <text x="8" y="164" font-family="monospace" font-size="34" fill="#58a6ff">-4&#176;</text>
+  <text x="164" y="140" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="end">feels -9&#176;</text>
+  <text x="164" y="156" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="end">snow</text>
+  <text x="164" y="172" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="end">78% hum</text>
+
+  <line x1="12" y1="186" x2="160" y2="186" stroke="#263140"/>
+
+  <!-- 3-DAY FORECAST: three columns, ~57px each -->
+  <g font-family="monospace" font-size="9" text-anchor="middle">
+    <text x="34" y="204" fill="#6e7681">THU</text>
+    <text x="86" y="204" fill="#6e7681">FRI</text>
+    <text x="138" y="204" fill="#6e7681">SAT</text>
+    <text x="34" y="224" fill="#e6edf3">-2/-8</text>
+    <text x="86" y="224" fill="#e6edf3">1/-4</text>
+    <text x="138" y="224" fill="#e6edf3">3/-1</text>
+    <text x="34" y="242" fill="#58a6ff">snow</text>
+    <text x="86" y="242" fill="#8b98a5">cloud</text>
+    <text x="138" y="242" fill="#d29922">sun</text>
+  </g>
+
+  <line x1="12" y1="258" x2="160" y2="258" stroke="#263140"/>
+
+  <!-- DATE -->
+  <text x="86" y="280" font-family="monospace" font-size="12" fill="#e6edf3" text-anchor="middle">Wed 10 Sep</text>
+
+  <!-- staleness marker: weather refreshes every 15m, clock every second -->
+  <text x="86" y="308" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="middle">wx updated 4m ago</text>
+</svg>

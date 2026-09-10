@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="poe-cycle: switch port list with link speed and PoE watts, one port armed for a power cycle">
+  <!-- 172x320 native. Port rows; uplink and own-path ports are locked. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <rect width="172" height="22" fill="#161d26"/>
+  <text x="8" y="15" font-family="monospace" font-size="10" fill="#e6edf3">USW-24-PoE</text>
+  <text x="164" y="15" font-family="monospace" font-size="8" fill="#8b98a5" text-anchor="end">62.4W / 95W</text>
+
+  <!-- column hints -->
+  <text x="8" y="34" font-family="monospace" font-size="7" fill="#4d5560">PORT  DEVICE</text>
+  <text x="164" y="34" font-family="monospace" font-size="7" fill="#4d5560" text-anchor="end">SPD    W</text>
+
+  <g font-family="monospace" font-size="9">
+    <!-- uplink: locked, cycling it kills the path the command arrives on -->
+    <rect x="0" y="40" width="172" height="20" fill="#12171e"/>
+    <text x="8" y="54" fill="#4d5560">1</text>
+    <text x="26" y="54" fill="#4d5560">uplink UDM</text>
+    <text x="164" y="54" fill="#4d5560" text-anchor="end">&#128274; 1G</text>
+
+    <text x="8" y="76" fill="#8b98a5">2</text>
+    <text x="26" y="76" fill="#e6edf3">U6-Pro main</text>
+    <text x="164" y="76" fill="#8b98a5" text-anchor="end">1G  6.8</text>
+
+    <!-- the AP this device is associated to: locked for the same reason -->
+    <rect x="0" y="82" width="172" height="20" fill="#12171e"/>
+    <text x="8" y="96" fill="#4d5560">3</text>
+    <text x="26" y="96" fill="#4d5560">U6-Lite up</text>
+    <text x="164" y="96" fill="#4d5560" text-anchor="end">&#128274; 5.1</text>
+    <text x="26" y="106" font-family="monospace" font-size="6" fill="#3a424c">my wifi path</text>
+
+    <text x="8" y="126" fill="#8b98a5">4</text>
+    <text x="26" y="126" fill="#e6edf3">G4-Bullet drv</text>
+    <text x="164" y="126" fill="#8b98a5" text-anchor="end">100M 5.9</text>
+
+    <!-- ARMED: selected, awaiting the confirm press. Names the target. -->
+    <rect x="0" y="132" width="172" height="46" fill="#3d1d1d"/>
+    <rect x="0" y="132" width="2" height="46" fill="#f85149"/>
+    <text x="8" y="146" fill="#f85149">5</text>
+    <text x="26" y="146" fill="#ffffff">G4-Doorbell</text>
+    <text x="164" y="146" fill="#f85149" text-anchor="end">DOWN 0.0</text>
+    <text x="86" y="162" font-size="10" fill="#f85149" text-anchor="middle">CYCLE PORT 5?</text>
+    <text x="86" y="174" font-size="8" fill="#a86464" text-anchor="middle">press to confirm &#183; 4s</text>
+
+    <text x="8" y="194" fill="#8b98a5">6</text>
+    <text x="26" y="194" fill="#e6edf3">G5-Flex back</text>
+    <text x="164" y="194" fill="#8b98a5" text-anchor="end">100M 4.2</text>
+
+    <!-- provisioning: re-read state, never trust the 200 -->
+    <text x="8" y="214" fill="#58a6ff">7</text>
+    <text x="26" y="214" fill="#58a6ff">USW-Flex</text>
+    <text x="164" y="214" fill="#58a6ff" text-anchor="end">prov 11.0</text>
+
+    <text x="8" y="234" fill="#8b98a5">8</text>
+    <text x="26" y="234" fill="#e6edf3">NAS</text>
+    <text x="164" y="234" fill="#8b98a5" text-anchor="end">1G   --</text>
+
+    <text x="8" y="254" fill="#4d5560">9-24</text>
+    <text x="26" y="254" fill="#4d5560">not allowlisted</text>
+    <text x="164" y="254" fill="#4d5560" text-anchor="end">&#128274;</text>
+  </g>
+
+  <line x1="0" y1="262" x2="172" y2="262" stroke="#263140"/>
+  <text x="8" y="276" font-family="monospace" font-size="7" fill="#6e7681">tap=next  hold=arm  tap=confirm</text>
+  <text x="8" y="288" font-family="monospace" font-size="7" fill="#6e7681">cycle = poe off &#8594; 5s &#8594; auto</text>
+
+  <rect x="0" y="296" width="172" height="24" fill="#161d26"/>
+  <text x="8" y="305" font-family="monospace" font-size="7" fill="#6e7681">writes via mac-mini proxy</text>
+  <text x="8" y="315" font-family="monospace" font-size="7" fill="#4d5560">allowlist: 5,6 &#183; key not on device</text>
+</svg>

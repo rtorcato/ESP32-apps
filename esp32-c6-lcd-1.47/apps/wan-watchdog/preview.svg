@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="wan-watchdog: WAN uptime, latency and loss, latency sparkline and a persisted outage log">
+  <!-- 172x320 native. The flap log is the product; it lives in NVS so a power
+       cut does not erase the evidence. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <rect width="172" height="22" fill="#0f2417"/>
+  <circle cx="10" cy="11" r="4" fill="#3fb950"/>
+  <text x="20" y="15" font-family="monospace" font-size="10" fill="#3fb950">UP</text>
+  <text x="164" y="15" font-family="monospace" font-size="8" fill="#8b98a5" text-anchor="end">99.245.11.203</text>
+
+  <!-- headline: time since last flap -->
+  <text x="8" y="38" font-family="monospace" font-size="8" fill="#6e7681">SINCE LAST FLAP</text>
+  <text x="8" y="62" font-family="monospace" font-size="21" fill="#e6edf3">3d 14:07</text>
+
+  <line x1="0" y1="74" x2="172" y2="74" stroke="#263140"/>
+
+  <!-- live quality: three targets, "all down" = outage, "one down" = noise -->
+  <g font-family="monospace" font-size="9">
+    <text x="8" y="88" fill="#6e7681">RTT</text>
+    <text x="164" y="88" fill="#e6edf3" text-anchor="end">11.4 ms</text>
+    <text x="8" y="102" fill="#6e7681">JITTER</text>
+    <text x="164" y="102" fill="#e6edf3" text-anchor="end">1.8 ms</text>
+    <text x="8" y="116" fill="#6e7681">LOSS 5m</text>
+    <text x="164" y="116" fill="#3fb950" text-anchor="end">0.0%</text>
+    <text x="8" y="130" fill="#6e7681">TARGETS</text>
+    <text x="164" y="130" fill="#3fb950" text-anchor="end">3/3 ok</text>
+  </g>
+
+  <!-- latency sparkline, 60s -->
+  <rect x="8" y="140" width="156" height="34" fill="#12171e"/>
+  <polyline fill="none" stroke="#3fb950" stroke-width="1"
+    points="8,166 18,164 28,167 38,160 48,163 58,158 68,166 78,161 88,155 98,164
+            108,159 118,168 128,162 138,157 148,165 164,161"/>
+  <text x="12" y="150" font-family="monospace" font-size="6" fill="#4d5560">60s</text>
+
+  <line x1="0" y1="182" x2="172" y2="182" stroke="#263140"/>
+
+  <!-- the log. "wifi" vs "isp" cause matters: mislabelled entries make it useless -->
+  <text x="8" y="196" font-family="monospace" font-size="8" fill="#6e7681">OUTAGE LOG (NVS)</text>
+
+  <g font-family="monospace" font-size="8">
+    <text x="8" y="212" fill="#e6edf3">Sep 07 02:14</text><text x="120" y="212" fill="#f85149">4m12s</text><text x="164" y="212" fill="#6e7681" text-anchor="end">isp</text>
+    <text x="8" y="228" fill="#e6edf3">Sep 04 19:38</text><text x="120" y="228" fill="#f85149">0m48s</text><text x="164" y="228" fill="#6e7681" text-anchor="end">isp</text>
+    <text x="8" y="244" fill="#e6edf3">Sep 04 19:31</text><text x="120" y="244" fill="#f85149">1m06s</text><text x="164" y="244" fill="#6e7681" text-anchor="end">isp</text>
+    <text x="8" y="260" fill="#8b98a5">Sep 02 08:02</text><text x="120" y="260" fill="#d29922">2m30s</text><text x="164" y="260" fill="#6e7681" text-anchor="end">wifi</text>
+    <text x="8" y="276" fill="#8b98a5">Aug 29 23:55</text><text x="120" y="276" fill="#f85149">18m04s</text><text x="164" y="276" fill="#6e7681" text-anchor="end">isp</text>
+    <!-- flagged: clock had no fresh NTP sync when this was recorded -->
+    <text x="8" y="292" fill="#8b98a5">Aug 26 ~04:10</text><text x="120" y="292" fill="#f85149">6m20s</text><text x="164" y="292" fill="#d29922" text-anchor="end">no ntp</text>
+  </g>
+
+  <rect x="0" y="300" width="172" height="20" fill="#161d26"/>
+  <text x="8" y="308" font-family="monospace" font-size="7" fill="#6e7681">6 flaps / 30d &#183; 24m53s total</text>
+  <text x="8" y="317" font-family="monospace" font-size="7" fill="#4d5560">~ = recorded without ntp sync</text>
+</svg>

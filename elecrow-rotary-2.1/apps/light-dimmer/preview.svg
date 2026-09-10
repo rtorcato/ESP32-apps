@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" role="img" aria-label="light-dimmer: round brightness arc, percentage, colour temperature preview and target group">
+  <!-- 480x480 round. Background tint previews the bulb's actual colour temp. -->
+  <defs>
+    <clipPath id="round"><circle cx="240" cy="240" r="240"/></clipPath>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.62">
+      <stop offset="0" stop-color="#5a4520"/>
+      <stop offset="1" stop-color="#0b0f14"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="480" height="480" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="480" height="480" fill="url(#glow)"/>
+
+    <!-- brightness arc: 270° sweep, r=198. 72% shown, but the arc is
+         gamma-mapped, so 72% perceived sits past the linear midpoint. -->
+    <circle cx="240" cy="240" r="198" fill="none" stroke="#1b232d" stroke-width="24"
+            stroke-dasharray="933 311" stroke-linecap="round" transform="rotate(135 240 240)"/>
+    <circle cx="240" cy="240" r="198" fill="none" stroke="#f0c05a" stroke-width="24"
+            stroke-dasharray="672 572" stroke-linecap="round" transform="rotate(135 240 240)"/>
+
+    <text x="240" y="164" font-family="monospace" font-size="15" fill="#c9a961" text-anchor="middle">LIVING ROOM</text>
+    <text x="240" y="188" font-family="monospace" font-size="12" fill="#8b7a52" text-anchor="middle">4 bulbs &#183; group</text>
+
+    <text x="240" y="292" font-family="monospace" font-size="108" fill="#f5e6c8" text-anchor="middle">72</text>
+    <text x="356" y="256" font-family="monospace" font-size="32" fill="#a89465">%</text>
+
+    <!-- colour temperature strip, previewed in real colour -->
+    <text x="240" y="330" font-family="monospace" font-size="13" fill="#8b7a52" text-anchor="middle">2700K warm</text>
+    <rect x="150" y="342" width="180" height="8" rx="4" fill="#2a2418"/>
+    <rect x="150" y="342" width="58" height="8" rx="4" fill="#ffb457"/>
+
+    <!-- gamma note: the reason the arc isn't linear -->
+    <text x="240" y="382" font-family="monospace" font-size="11" fill="#6e7681" text-anchor="middle">gamma 2.2 &#183; perceptual, not linear</text>
+    <text x="240" y="402" font-family="monospace" font-size="11" fill="#6e7681" text-anchor="middle">debounced 80ms &#183; sends latest only</text>
+
+    <text x="240" y="440" font-family="monospace" font-size="12" fill="#4d5560" text-anchor="middle">turn = dim &#183; press = toggle</text>
+    <text x="240" y="458" font-family="monospace" font-size="11" fill="#3a424c" text-anchor="middle">hold = next scene</text>
+  </g>
+</svg>

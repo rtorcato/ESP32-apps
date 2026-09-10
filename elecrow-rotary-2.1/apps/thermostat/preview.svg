@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" role="img" aria-label="thermostat: round dial with setpoint arc, large target temperature and mode">
+  <!-- 480x480 round. Everything must live inside the inscribed circle — corners
+       do not exist on this panel. -->
+  <defs>
+    <clipPath id="round"><circle cx="240" cy="240" r="240"/></clipPath>
+    <radialGradient id="warm" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#2a1512"/>
+      <stop offset="1" stop-color="#0b0f14"/>
+    </radialGradient>
+  </defs>
+
+  <!-- off-circle area shown dark grey: not drawable -->
+  <rect width="480" height="480" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="480" height="480" fill="url(#warm)"/>
+
+    <!-- track: 270° sweep, r=196, circumference 1231; 270° = 923 -->
+    <circle cx="240" cy="240" r="196" fill="none" stroke="#1b232d" stroke-width="22"
+            stroke-dasharray="923 308" stroke-linecap="round" transform="rotate(135 240 240)"/>
+    <!-- setpoint fill: 20° on a 10-30° range = 50% of sweep -->
+    <circle cx="240" cy="240" r="196" fill="none" stroke="#f0883e" stroke-width="22"
+            stroke-dasharray="461 770" stroke-linecap="round" transform="rotate(135 240 240)"/>
+
+    <!-- setpoint marker at 50% of a 270° sweep starting at 135° = 270° abs -->
+    <circle cx="240" cy="44" r="13" fill="#ffd7a8" stroke="#0b0f14" stroke-width="3"/>
+
+    <!-- current-temp tick, slightly past setpoint -->
+    <line x1="240" y1="60" x2="240" y2="28" stroke="#58a6ff" stroke-width="3"
+          transform="rotate(21 240 240)"/>
+
+    <text x="240" y="176" font-family="monospace" font-size="15" fill="#8b98a5" text-anchor="middle">HEAT</text>
+
+    <!-- the number: the one thing readable across a room -->
+    <text x="240" y="286" font-family="monospace" font-size="118" fill="#e6edf3" text-anchor="middle">20</text>
+    <text x="352" y="240" font-family="monospace" font-size="34" fill="#8b98a5">&#176;C</text>
+
+    <text x="240" y="326" font-family="monospace" font-size="17" fill="#8b98a5" text-anchor="middle">now 21.4&#176;</text>
+    <text x="240" y="352" font-family="monospace" font-size="13" fill="#f0883e" text-anchor="middle">idle &#183; reaches 20&#176; in ~0m</text>
+
+    <!-- remote sensor + calibration offset: onboard sensors read high from
+         the board's own heat, so the offset is a permanent knob -->
+    <text x="240" y="392" font-family="monospace" font-size="12" fill="#6e7681" text-anchor="middle">sensor: living-room (remote)</text>
+    <text x="240" y="412" font-family="monospace" font-size="12" fill="#6e7681" text-anchor="middle">cal offset -1.8&#176;</text>
+
+    <text x="240" y="446" font-family="monospace" font-size="12" fill="#4d5560" text-anchor="middle">turn = setpoint &#183; press = mode</text>
+  </g>
+</svg>

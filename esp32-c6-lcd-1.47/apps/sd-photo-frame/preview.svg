@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="sd-photo-frame: full-bleed photo with a filename and progress overlay">
+  <!-- 172x320 native. Full-bleed image; overlay only on transition, then hidden. -->
+  <rect width="172" height="320" fill="#000"/>
+
+  <!-- stand-in for a pre-resized 172x320 JPEG (resize on the computer, not here) -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b3a5c"/>
+      <stop offset="0.55" stop-color="#c96a4a"/>
+      <stop offset="1" stop-color="#2a1e22"/>
+    </linearGradient>
+    <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.75"/>
+    </linearGradient>
+  </defs>
+  <rect width="172" height="320" fill="url(#sky)"/>
+  <circle cx="118" cy="150" r="16" fill="#ffd9a0" opacity="0.9"/>
+  <path d="M0 236 L44 204 L82 232 L120 196 L172 238 L172 320 L0 320 Z" fill="#14181d"/>
+  <path d="M0 262 L58 240 L110 266 L172 244 L172 320 L0 320 Z" fill="#0a0d10"/>
+
+  <!-- overlay: filename + position + transition progress -->
+  <rect x="0" y="266" width="172" height="54" fill="url(#scrim)"/>
+  <text x="8" y="290" font-family="monospace" font-size="9" fill="#e6edf3">IMG_2481.JPG</text>
+  <text x="164" y="290" font-family="monospace" font-size="8" fill="#a8b3bd" text-anchor="end">12/240</text>
+  <rect x="8" y="300" width="156" height="2" rx="1" fill="#ffffff" opacity="0.25"/>
+  <rect x="8" y="300" width="62" height="2" rx="1" fill="#ffffff" opacity="0.85"/>
+  <text x="8" y="314" font-family="monospace" font-size="7" fill="#8b98a5">decoding blocks &#183; SD shares LCD bus</text>
+</svg>

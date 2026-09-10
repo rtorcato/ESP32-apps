@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" role="img" aria-label="media-knob: round face with album art, volume ring and now-playing text">
+  <!-- 480x480 round. Volume ring on the rim, art in the middle. -->
+  <defs>
+    <clipPath id="round"><circle cx="240" cy="240" r="240"/></clipPath>
+    <clipPath id="art"><circle cx="240" cy="212" r="86"/></clipPath>
+  </defs>
+
+  <rect width="480" height="480" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="480" height="480" fill="#0b0f14"/>
+
+    <!-- volume ring: 270° sweep, r=210, 62% -->
+    <circle cx="240" cy="240" r="210" fill="none" stroke="#1b232d" stroke-width="16"
+            stroke-dasharray="989 331" stroke-linecap="round" transform="rotate(135 240 240)"/>
+    <circle cx="240" cy="240" r="210" fill="none" stroke="#3fb950" stroke-width="16"
+            stroke-dasharray="613 707" stroke-linecap="round" transform="rotate(135 240 240)"/>
+
+    <!-- album art stand-in -->
+    <g clip-path="url(#art)">
+      <rect x="154" y="126" width="172" height="172" fill="#1d3a5f"/>
+      <circle cx="240" cy="212" r="60" fill="#2b5580"/>
+      <circle cx="240" cy="212" r="30" fill="#0f2137"/>
+      <circle cx="240" cy="212" r="7" fill="#8fb8de"/>
+    </g>
+    <circle cx="240" cy="212" r="86" fill="none" stroke="#263140" stroke-width="2"/>
+
+    <text x="240" y="336" font-family="monospace" font-size="22" fill="#e6edf3" text-anchor="middle">Blue Train</text>
+    <text x="240" y="360" font-family="monospace" font-size="14" fill="#8b98a5" text-anchor="middle">John Coltrane</text>
+
+    <!-- scrub position -->
+    <rect x="150" y="378" width="180" height="4" rx="2" fill="#263140"/>
+    <rect x="150" y="378" width="74" height="4" rx="2" fill="#8b98a5"/>
+    <text x="150" y="398" font-family="monospace" font-size="11" fill="#6e7681">4:12</text>
+    <text x="330" y="398" font-family="monospace" font-size="11" fill="#6e7681" text-anchor="end">10:41</text>
+
+    <!-- volume readout -->
+    <text x="240" y="118" font-family="monospace" font-size="15" fill="#3fb950" text-anchor="middle">VOL 62</text>
+
+    <!-- BLE state: reconnect-after-host-sleep is the main annoyance -->
+    <text x="240" y="428" font-family="monospace" font-size="12" fill="#8b98a5" text-anchor="middle">BLE HID &#183; paired</text>
+    <text x="240" y="448" font-family="monospace" font-size="11" fill="#4d5560" text-anchor="middle">turn = vol &#183; press = play &#183; 2x = skip</text>
+  </g>
+</svg>

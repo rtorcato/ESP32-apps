@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="notifier: feed of alerts with severity dots, wrapped text and a connection status bar">
+  <!-- 172x320 native. Newest at top. Severity dot doubles as the LED colour. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <rect width="172" height="20" fill="#161d26"/>
+  <text x="8" y="14" font-family="monospace" font-size="9" fill="#e6edf3">ALERTS</text>
+  <text x="164" y="14" font-family="monospace" font-size="8" fill="#8b98a5" text-anchor="end">3 new</text>
+
+  <!-- newest: red, unread (brighter card + left rule) -->
+  <rect x="0" y="24" width="172" height="52" fill="#1b1113"/>
+  <rect x="0" y="24" width="2" height="52" fill="#f85149"/>
+  <circle cx="12" cy="38" r="3.5" fill="#f85149"/>
+  <text x="22" y="41" font-family="monospace" font-size="8" fill="#f85149">ci/main</text>
+  <text x="164" y="41" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="end">14:31</text>
+  <text x="8" y="56" font-family="monospace" font-size="9" fill="#e6edf3">build failed: 3 tests</text>
+  <text x="8" y="68" font-family="monospace" font-size="9" fill="#e6edf3">in auth_spec.rb</text>
+
+  <!-- amber -->
+  <rect x="0" y="80" width="172" height="40" fill="#1a1710"/>
+  <rect x="0" y="80" width="2" height="40" fill="#d29922"/>
+  <circle cx="12" cy="94" r="3.5" fill="#d29922"/>
+  <text x="22" y="97" font-family="monospace" font-size="8" fill="#d29922">disk/nas</text>
+  <text x="164" y="97" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="end">13:02</text>
+  <text x="8" y="112" font-family="monospace" font-size="9" fill="#e6edf3">volume 88% full</text>
+
+  <!-- green -->
+  <rect x="0" y="124" width="172" height="40" fill="#0f1a12"/>
+  <rect x="0" y="124" width="2" height="40" fill="#3fb950"/>
+  <circle cx="12" cy="138" r="3.5" fill="#3fb950"/>
+  <text x="22" y="141" font-family="monospace" font-size="8" fill="#3fb950">deploy</text>
+  <text x="164" y="141" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="end">12:44</text>
+  <text x="8" y="156" font-family="monospace" font-size="9" fill="#e6edf3">v2.4.1 live</text>
+
+  <!-- older, read: dimmed -->
+  <g font-family="monospace" font-size="8" fill="#4d5560">
+    <circle cx="12" cy="180" r="3" fill="#2f3b47"/>
+    <text x="22" y="183">doorbell</text><text x="164" y="183" text-anchor="end">11:58</text>
+    <circle cx="12" cy="200" r="3" fill="#2f3b47"/>
+    <text x="22" y="203">backup ok</text><text x="164" y="203" text-anchor="end">04:00</text>
+    <circle cx="12" cy="220" r="3" fill="#2f3b47"/>
+    <text x="22" y="223">cert renewed</text><text x="164" y="223" text-anchor="end">02:11</text>
+    <circle cx="12" cy="240" r="3" fill="#2f3b47"/>
+    <text x="22" y="243">ci/main ok</text><text x="164" y="243" text-anchor="end">Tue</text>
+  </g>
+
+  <!-- ack affordance: the one button -->
+  <rect x="4" y="258" width="164" height="22" rx="3" fill="#1c2430"/>
+  <text x="86" y="273" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="middle">BOOT = ack all</text>
+
+  <!-- connection state, small but always visible: stale beats silently wrong -->
+  <rect x="0" y="298" width="172" height="22" fill="#161d26"/>
+  <circle cx="10" cy="309" r="3.5" fill="#3fb950"/>
+  <text x="20" y="312" font-family="monospace" font-size="7" fill="#8b98a5">mqtt up &#183; wifi -48 &#183; 0s</text>
+</svg>

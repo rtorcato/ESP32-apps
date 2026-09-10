@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+!.vscode/extensions.json
+.DS_Store
+
+# Wi-Fi credentials and API keys belong here, never in a tracked source file.
+secrets.h
+*.secrets.h

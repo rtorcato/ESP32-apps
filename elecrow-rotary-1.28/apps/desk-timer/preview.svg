@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="360" height="360" role="img" aria-label="desk-timer: small round face with a depleting arc and remaining time">
+  <!-- 240x240 round, shown 1.5x. One number, one arc — that is the honest
+       content budget at this size. -->
+  <defs><clipPath id="round"><circle cx="120" cy="120" r="120"/></clipPath></defs>
+
+  <rect width="240" height="240" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="240" height="240" fill="#0b0f14"/>
+
+    <!-- depleting arc: 270° sweep, r=100, circumference 628; 270° = 471.
+         62% remaining. -->
+    <circle cx="120" cy="120" r="100" fill="none" stroke="#1b232d" stroke-width="14"
+            stroke-dasharray="471 157" stroke-linecap="round" transform="rotate(135 120 120)"/>
+    <circle cx="120" cy="120" r="100" fill="none" stroke="#3fb950" stroke-width="14"
+            stroke-dasharray="292 336" stroke-linecap="round" transform="rotate(135 120 120)"/>
+
+    <text x="120" y="82" font-family="monospace" font-size="11" fill="#6e7681" text-anchor="middle">RUNNING</text>
+
+    <text x="120" y="142" font-family="monospace" font-size="46" fill="#e6edf3" text-anchor="middle">10:34</text>
+    <text x="120" y="164" font-family="monospace" font-size="11" fill="#6e7681" text-anchor="middle">of 17:00</text>
+
+    <!-- no speaker on this board: the whole screen flashes at zero -->
+    <text x="120" y="196" font-family="monospace" font-size="10" fill="#4d5560" text-anchor="middle">alert: screen flash</text>
+    <text x="120" y="212" font-family="monospace" font-size="9" fill="#3a424c" text-anchor="middle">turn=set press=pause</text>
+  </g>
+</svg>

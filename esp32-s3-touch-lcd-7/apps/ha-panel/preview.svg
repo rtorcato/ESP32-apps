@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" width="800" height="480" role="img" aria-label="ha-panel: room tabs, grid of entity tiles, thermostat and media widgets">
+  <!-- 800x480 native (1:1). Room tabs left, entity grid right.
+       Reminder: ESPHome expresses all of this in YAML — see the README. -->
+  <rect width="800" height="480" fill="#0b0f14"/>
+
+  <!-- ── left rail: room tabs, 140px ─────────────────────────── -->
+  <rect width="140" height="480" fill="#161d26"/>
+  <text x="20" y="34" font-family="monospace" font-size="12" fill="#6e7681">ROOMS</text>
+
+  <rect x="0" y="48" width="140" height="44" fill="#1c2a3a"/>
+  <rect x="0" y="48" width="3" height="44" fill="#58a6ff"/>
+  <text x="20" y="76" font-family="monospace" font-size="14" fill="#58a6ff">Living</text>
+
+  <text x="20" y="124" font-family="monospace" font-size="14" fill="#8b98a5">Kitchen</text>
+  <text x="20" y="168" font-family="monospace" font-size="14" fill="#8b98a5">Office</text>
+  <text x="20" y="212" font-family="monospace" font-size="14" fill="#8b98a5">Bedroom</text>
+  <text x="20" y="256" font-family="monospace" font-size="14" fill="#8b98a5">Basement</text>
+  <text x="20" y="300" font-family="monospace" font-size="14" fill="#8b98a5">Garage</text>
+  <text x="20" y="344" font-family="monospace" font-size="14" fill="#8b98a5">Outside</text>
+
+  <!-- connection state: full resync on reconnect, or the panel lies -->
+  <circle cx="20" cy="446" r="5" fill="#3fb950"/>
+  <text x="34" y="450" font-family="monospace" font-size="10" fill="#8b98a5">ws sync</text>
+  <text x="20" y="466" font-family="monospace" font-size="9" fill="#4d5560">62 entities</text>
+
+  <!-- ── entity grid: 3 across x 2 down, 196x116 ─────────────── -->
+  <text x="164" y="34" font-family="monospace" font-size="12" fill="#6e7681">LIVING ROOM</text>
+  <text x="784" y="34" font-family="monospace" font-size="12" fill="#8b98a5" text-anchor="end">14:32</text>
+
+  <!-- on -->
+  <rect x="164" y="48" width="196" height="116" rx="8" fill="#2d2a12"/>
+  <rect x="164" y="48" width="196" height="4" rx="2" fill="#d29922"/>
+  <text x="184" y="80" font-family="monospace" font-size="13" fill="#d29922">Ceiling</text>
+  <text x="184" y="116" font-family="monospace" font-size="26" fill="#e6edf3">ON</text>
+  <text x="184" y="144" font-family="monospace" font-size="11" fill="#8b98a5">72% &#183; 2700K</text>
+
+  <rect x="376" y="48" width="196" height="116" rx="8" fill="#12171e"/>
+  <text x="396" y="80" font-family="monospace" font-size="13" fill="#8b98a5">Lamp</text>
+  <text x="396" y="116" font-family="monospace" font-size="26" fill="#4d5560">OFF</text>
+
+  <!-- pending -->
+  <rect x="588" y="48" width="196" height="116" rx="8" fill="#12222e"/>
+  <rect x="588" y="48" width="196" height="4" rx="2" fill="#58a6ff"/>
+  <text x="608" y="80" font-family="monospace" font-size="13" fill="#58a6ff">TV back</text>
+  <text x="608" y="116" font-family="monospace" font-size="26" fill="#58a6ff">&#8230;</text>
+  <text x="608" y="144" font-family="monospace" font-size="11" fill="#5c7d99">sending&#8230;</text>
+
+  <rect x="164" y="176" width="196" height="116" rx="8" fill="#12171e"/>
+  <text x="184" y="208" font-family="monospace" font-size="13" fill="#8b98a5">Blinds</text>
+  <text x="184" y="244" font-family="monospace" font-size="26" fill="#e6edf3">60%</text>
+  <rect x="184" y="262" width="156" height="5" rx="2.5" fill="#263140"/>
+  <rect x="184" y="262" width="94" height="5" rx="2.5" fill="#8b98a5"/>
+
+  <rect x="376" y="176" width="196" height="116" rx="8" fill="#12171e"/>
+  <text x="396" y="208" font-family="monospace" font-size="13" fill="#8b98a5">Fan</text>
+  <text x="396" y="244" font-family="monospace" font-size="26" fill="#4d5560">OFF</text>
+
+  <rect x="588" y="176" width="196" height="116" rx="8" fill="#12171e"/>
+  <text x="608" y="208" font-family="monospace" font-size="13" fill="#8b98a5">Scene</text>
+  <text x="608" y="242" font-family="monospace" font-size="20" fill="#e6edf3">Evening</text>
+  <text x="608" y="266" font-family="monospace" font-size="11" fill="#6e7681">tap to run</text>
+
+  <!-- ── bottom: thermostat + media ──────────────────────────── -->
+  <rect x="164" y="304" width="302" height="160" rx="8" fill="#12171e"/>
+  <text x="184" y="332" font-family="monospace" font-size="12" fill="#6e7681">THERMOSTAT</text>
+  <text x="184" y="392" font-family="monospace" font-size="52" fill="#e6edf3">20&#176;</text>
+  <text x="184" y="420" font-family="monospace" font-size="12" fill="#8b98a5">now 21.4&#176; &#183; heat</text>
+  <rect x="352" y="344" width="94" height="46" rx="6" fill="#1c2430"/>
+  <text x="399" y="374" font-family="monospace" font-size="22" fill="#e6edf3" text-anchor="middle">+</text>
+  <rect x="352" y="400" width="94" height="46" rx="6" fill="#1c2430"/>
+  <text x="399" y="430" font-family="monospace" font-size="22" fill="#e6edf3" text-anchor="middle">&#8722;</text>
+
+  <rect x="482" y="304" width="302" height="160" rx="8" fill="#12171e"/>
+  <text x="502" y="332" font-family="monospace" font-size="12" fill="#6e7681">PLAYING</text>
+  <rect x="502" y="344" width="72" height="72" rx="4" fill="#2a3340"/>
+  <text x="590" y="366" font-family="monospace" font-size="14" fill="#e6edf3">Blue Train</text>
+  <text x="590" y="386" font-family="monospace" font-size="11" fill="#8b98a5">John Coltrane</text>
+  <rect x="590" y="400" width="174" height="4" rx="2" fill="#263140"/>
+  <rect x="590" y="400" width="72" height="4" rx="2" fill="#3fb950"/>
+  <text x="502" y="440" font-family="monospace" font-size="18" fill="#e6edf3">&#9198;   &#10074;&#10074;   &#9197;</text>
+</svg>
