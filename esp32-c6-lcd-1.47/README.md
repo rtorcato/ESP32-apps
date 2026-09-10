@@ -139,6 +139,28 @@ bought only 2 °C; dropping the backlight from 200 to 140 bought 6 °C more, and
 blanking the panel entirely is cooler still. That inverts the intuition that a
 radio and a 160MHz core are the hot parts.
 
+A second pass removed one consumer at a time to find where the *remaining* heat
+goes, and the answer is mostly "the board itself":
+
+| State | Die temp |
+|---|---|
+| Radio on, backlight 140 | 44.1 °C |
+| **Radio off**, backlight 140 | 43.1 °C — only **1 °C** |
+| Radio off + **backlight 0** | 38.1 °C and falling → floor ≈ **37 °C** |
+
+**The radio costs about 1 °C.** That is worth knowing because it kills the
+obvious next optimisation: disconnecting Wi-Fi between polls would add
+reconnect delays and failure modes to buy roughly one degree. Don't.
+
+The **~37 °C floor** is the CPU at 80MHz plus the 5V→3.3V LDO and regulators —
+you cannot get below it while the board is powered. So the whole controllable
+range is about 37–48 °C, and the backlight is essentially the only dial.
+
+For context: the ESP32-C6 is rated to 105 °C junction. **44 °C is not a
+problem**, even though the board feels warm to the touch — surface temperature
+runs cooler than the die, and warm is normal for an always-on board with a lit
+LCD.
+
 So the levers, in order of effect:
 
 1. **Backlight.** `Theme::blDay` / `blNight` in [`lib/board/ui.h`](lib/board/ui.h).

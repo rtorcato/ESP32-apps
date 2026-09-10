@@ -40,7 +40,7 @@ static const uint32_t WX_RETRY_MS = 60UL * 1000;        // but retry sooner whil
 // and the LCD backlight, plus the 5V->3.3V LDO dissipating (5-3.3)*I. Set to 0
 // to compare against the unthrottled baseline.
 #define POWER_SAVE 1
-static const uint32_t TEMP_LOG_MS = 30UL * 1000;  // report die temperature
+static const uint32_t TEMP_LOG_MS = 20UL * 1000;  // report die temperature
 
 // The built-in 6x8 font scales by integer size, so a glyph is exactly
 // 6*size wide and 8*size tall. That exactness is why the dirty rects can be
@@ -761,7 +761,7 @@ void loop() {
     // tick one line at the bottom so it's visibly alive rather than frozen.
     char key[48];
     snprintf(key, sizeof key, "%d-%u-%d-%u", (int)state, lastDisconnectReason,
-             state == State::NoTime ? WiFi.RSSI() / 5 : 0, (unsigned)(uiRot() * 2 + uiLight()));
+             state == State::NoTime ? WiFi.RSSI() / 5 : 0, (unsigned)(uiRot() * 8 + uiScheme()));
     if (strcmp(key, cStatusKey) != 0) {
       strcpy(cStatusKey, key);
       if (state == State::NoWifi) {
