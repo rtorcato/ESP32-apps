@@ -58,9 +58,17 @@ wishlist can speak Zigbee or Thread natively.
 
 ## Build
 
+Apps that use Wi-Fi need credentials first. `secrets.h` is gitignored:
+
 ```sh
-pio run -e hello -t upload -t monitor
+cp lib/board/secrets.h.example lib/board/secrets.h && $EDITOR lib/board/secrets.h
+~/.platformio-venv/bin/pio run -e desk-clock -t upload
 ```
+
+**TLS needs a bigger app partition.** The default 4MB table splits into two OTA
+slots and leaves ~1.31MB for the app — WiFi + TLS + ArduinoJson + Arduino_GFX
+alone reaches 93% of it. `platformio.ini` sets `huge_app.csv` (single ~3MB
+partition, no OTA), which drops that to 39%.
 
 Add an app by creating `apps/<name>/src/main.cpp` and appending to
 `platformio.ini`:
@@ -82,8 +90,8 @@ so what you see is what actually fits.
 | [wan-watchdog](apps/wan-watchdog/) | Idea | ISP flap log that survives reboots |
 | [protect-doorbell](apps/protect-doorbell/) | Idea | UniFi Protect ring + motion alerts |
 | [poe-cycle](apps/poe-cycle/) | Idea | Switch port view + power-cycle a wedged PoE device |
+| [desk-clock](apps/desk-clock/) | **Built** | NTP clock + open-meteo weather and forecast |
 | [mac-mini](apps/mac-mini/) | Idea | Mac mini stats + sleep/wake button |
-| [desk-clock](apps/desk-clock/) | Idea | NTP clock + weather, stacked vertically |
 | [ticker](apps/ticker/) | Idea | Scrolling stock/crypto price list |
 | [wifi-scanner](apps/wifi-scanner/) | Idea | Live ranked list of nearby APs |
 | [zigbee-hub](apps/zigbee-hub/) | Idea | Read 802.15.4 sensors direct, no hub |

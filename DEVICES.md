@@ -79,6 +79,24 @@ So there are three real paths, and they're genuinely different projects:
 **The 7" board does not fit 2U.** Its active area is ~152 × 91 mm and 2U is
 88.9 mm *total*, before any bezel. It needs 3U.
 
+### Full-width 19" rack, specifically
+
+The GeeekPi 6.91" 1424×280 1U monitor
+([CA](https://www.amazon.ca/s?k=GeeekPi+6.91+inch+1424x280+1U+rack+mount+monitor)) is
+for a **10" mini rack** (254 mm wide) — its LCD is 176 mm, which is why it fits
+1U. Scaling that to 19" needs ~440 mm of width inside 1U's **43.66 mm** usable
+height (h = 44.45n − 0.79 mm), a ~10:1 aspect ratio nobody makes.
+
+| Panel | Active area | Verdict for a 19" rack |
+|---|---|---|
+| **VSDISPLAY 19" 1920×360** | ~474 × 89 mm | **Fits 19" 2U almost exactly.** ~$470, USB video input, VESA holes, no bezel — you print the faceplate |
+| 14.1" 1920×550 (BOE NV140DQM) | 344 × 99 mm, outline 350 × 119 mm | Needs 3U for the outline; ~65 mm filler each side |
+| 12.6" 1920×515 (BOE NV126B5M) | 309 × 83 mm, outline 316 × 94 mm | Active fits 2U, outline doesn't — custom overlapping bezel or 3U |
+| **1U LED matrix** (Etsy, "19in 1RU") | — | **The only real 1U option.** Matrices fit 1U where LCDs can't, and some ship with Prometheus/MQTT input |
+
+All the LCD options are **eDP / HDMI / USB — not SPI**, so none are ESP32-driven;
+they need a Pi or PC. The full-width dream and the ESP32 are separate projects.
+
 ### Recommendation
 
 Given the C6 is what you own and understand: **2U blank panel + three C6 boards.**
