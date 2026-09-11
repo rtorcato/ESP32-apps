@@ -14,7 +14,7 @@ implementation for nearly all of it is
 - [ ] Layout from a `Layout` struct chosen on `uiLandscape()`, never literal 172/320
 - [ ] `selfCheck()` asserting **both** layouts, run early, logged at the *end* of `setup()`
 - [ ] Draw through an exact-box `field()` helper; **never `fillScreen()` in `loop()`**
-- [ ] `POWER_SAVE`: `setCpuFrequencyMhz(80)` + `WiFi.setSleep(WIFI_PS_MAX_MODEM)`
+- [ ] `setCpuFrequencyMhz(80)`, and `netTune()` + `netJoinBest()` from `<netjoin.h>`
 - [ ] Wi-Fi: 20s connect window, `setAutoReconnect(true)`, `persistent(false)`
 - [ ] A real offline/degraded screen that says what's wrong and what to fix
 - [ ] `ArduinoJson` **filter**, and validate the payload before trusting it
@@ -70,11 +70,13 @@ Measured with `temperatureRead()` at steady state, not estimated:
 
 - Backlight 200 → 140 is worth ~6 °C. Keep `blDay` modest; per-scheme values are
   in `ui.h`.
-- CPU 160 → 80MHz plus radio power save is worth ~2 °C. Take it — nothing here is
-  compute-bound and 80MHz is the floor that still supports Wi-Fi.
-- **The radio costs ~1 °C.** Do *not* disconnect Wi-Fi between polls to save
-  power: it buys one degree in exchange for reconnect delays and new failure
-  modes.
+- CPU 160 → 80MHz is worth ~2 °C. Take it — nothing here is compute-bound and
+  80MHz is the floor that still supports Wi-Fi.
+- **The radio costs ~1 °C *when parked with `MAX_MODEM`*.** That qualifier is
+  load-bearing: see the Wi-Fi section. Running the receiver continuously costs
+  **12 °C**, and reusing the 1 °C figure without it is how that regression
+  happened. Either way, do not disconnect Wi-Fi between polls — it buys about a
+  degree in exchange for reconnect delays and new failure modes.
 - **~37 °C is the floor** (CPU + the 5V→3.3V LDO + regulators). The whole
   controllable range is ~37–48 °C.
 
@@ -124,10 +126,11 @@ wifi retry #1
 wifi retry #2
 ```
 
-**Apply Wi-Fi power save *after* association, never before.** Parking the radio
-between beacon intervals while the four-way handshake is still in flight is a
-good way to make that handshake time out. `WiFi.setSleep(WIFI_PS_MAX_MODEM)`
-belongs in the branch that runs once `WL_CONNECTED` is true.
+**Set power save before joining, not after — but set it to `MIN_MODEM`.** The
+ordering mattered when the setting was `MAX_MODEM`, because parking the radio
+mid-handshake makes that handshake time out. With `MIN_MODEM` the radio wakes
+for every beacon, so it is safe either side of association and `netTune()` does
+it up front.
 
 **Pin to the strongest BSSID — use `lib/board/netjoin.h`.** Where two APs
 broadcast one SSID, letting the stack choose means it can latch onto the far one
