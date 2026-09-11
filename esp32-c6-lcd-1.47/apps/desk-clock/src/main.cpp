@@ -711,14 +711,6 @@ void setup() {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
     configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
-    static uint32_t lastPage = 0;
-  if (state == State::Running && millis() - lastPage > PAGE_MS) {
-    lastPage = millis();
-    page = (page + 1) % PAGES;
-    invalidateCache();
-    if (uiScreenOn()) drawChrome();
-  }
-
   struct tm t;
     bool synced = false;
     for (int i = 0; i < 40 && !(synced = getLocalTime(&t, 250)); i++) {}
@@ -771,6 +763,16 @@ void loop() {
     syncLayout();
     invalidateCache();
     state = State::Boot;  // force the full redraw below
+  }
+
+  // Flip the page on a timer. The two pages share no coordinates, so the cache
+  // is invalidated and the chrome repainted rather than trying to diff them.
+  static uint32_t lastPage = 0;
+  if (state == State::Running && millis() - lastPage > PAGE_MS) {
+    lastPage = millis();
+    page = (page + 1) % PAGES;
+    invalidateCache();
+    if (uiScreenOn()) drawChrome();
   }
 
   struct tm t;
