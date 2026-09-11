@@ -1,22 +1,11 @@
 # desk-clock — **built**
 
-NTP clock with current weather and a three-day forecast, across **two
-auto-cycling pages**. Backlight dims overnight, and the RGB LED tints by
-temperature.
+NTP clock with current weather and a three-day forecast, all on one screen.
+Backlight dims overnight, and the RGB LED tints by temperature.
 
-| Page 1 — now | Page 2 — 3 day |
-|---|---|
-| time (size 5), seconds, date, temperature (size 4), condition (size 2) | each forecast day a third of the panel: day, hi/lo, condition |
-
-Pages alternate every 7s with dots showing which is up. **Two pages exist so the
-type can be bigger** — the forecast and the condition line were size 1 and too
-small to read. Splitting them buys size 2 and 3 for everything on page 2, and the
-condition on page 1 went from size 1 to 2.
-
-Value size is per-orientation: portrait gives each day a full-width row so size 3
-fits, while landscape has three ~100px columns and must use size 2. Three columns
-of size-3 text needs 432px on a 320px panel — `selfCheck()` caught that at boot
-rather than clipping on screen.
+A two-page version was tried and reverted: it bought bigger type but the single
+dense screen reads better, so everything is back on one page. The forecast rows
+are still size 1 as a result — see [Readability](#readability).
 
 Weather comes from [open-meteo](https://open-meteo.com) — **no API key needed**,
 which is why it's the right source for this.
@@ -248,3 +237,23 @@ Both orientations are verified on hardware: `selfcheck ok` from a
   portal to set them would be more code than reflashing when you move.
 - **Sunrise/sunset, wind, UV.** open-meteo returns them, and the panel has room
   in the footer if you want them.
+
+## Readability
+
+The forecast row and condition line are size 1 (6×8px), which is small. The
+two-page split that fixed it was reverted because the single dense screen looks
+better, so this is a deliberate trade rather than an oversight.
+
+If it needs to be larger without pages, the space has to come from somewhere on
+the same screen. Cheapest first:
+
+1. **Drop the seconds** (size 2, 16px) and the rule above it. Frees ~30px, which
+   is enough to take the forecast to size 2.
+2. **Two forecast days instead of three.** Each column goes from 52px to 78px,
+   which is size 2 with room to spare.
+3. **Shorten the condition words** — `wmoLabel()` returns up to 7 characters
+   (`drizzle`, `showers`); capping at 4 (`driz`, `show`) allows a larger size in
+   the same box.
+
+Each is a small change to the layout block. None is obviously right, which is
+why none is applied.
