@@ -1,7 +1,22 @@
 # desk-clock — **built**
 
-NTP clock with current weather and a three-day forecast. Backlight dims
-overnight, and the RGB LED tints by temperature.
+NTP clock with current weather and a three-day forecast, across **two
+auto-cycling pages**. Backlight dims overnight, and the RGB LED tints by
+temperature.
+
+| Page 1 — now | Page 2 — 3 day |
+|---|---|
+| time (size 5), seconds, date, temperature (size 4), condition (size 2) | each forecast day a third of the panel: day, hi/lo, condition |
+
+Pages alternate every 7s with dots showing which is up. **Two pages exist so the
+type can be bigger** — the forecast and the condition line were size 1 and too
+small to read. Splitting them buys size 2 and 3 for everything on page 2, and the
+condition on page 1 went from size 1 to 2.
+
+Value size is per-orientation: portrait gives each day a full-width row so size 3
+fits, while landscape has three ~100px columns and must use size 2. Three columns
+of size-3 text needs 432px on a 320px panel — `selfCheck()` caught that at boot
+rather than clipping on screen.
 
 Weather comes from [open-meteo](https://open-meteo.com) — **no API key needed**,
 which is why it's the right source for this.

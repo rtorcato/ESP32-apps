@@ -61,43 +61,63 @@ static Arduino_GFX *gfx;
 struct Layout {
   bool landscape;
   int16_t w, h;
+  // page 1: the clock and current conditions
   int16_t xTime, yTime;
   int16_t xSecs, ySecs;
   int16_t xDate, yDate;
+  int16_t xPlace, yPlace;
+  int16_t xTemp, yTemp;   // size 4
+  int16_t xCond, yCond;   // size 2 -- was size 1 and unreadable
+  // page 2: three forecast rows, each day / hi-lo / condition
+  int16_t xFc, fcRow[3], fcStep;  // fcStep: day -> hi/lo -> condition
+  // Value size differs by orientation: portrait has one full-width row per day
+  // so size 3 fits, landscape has three columns of ~100px so it must be 2.
+  // 8 glyphs at size 3 is 144px, and 3 x 144 does not fit 320.
+  uint8_t fcValSize;
+  int16_t xMeta, yFeels, yHum;    // size 2
   int16_t xStatus, yStatus, yStale;
-  int16_t xCol2, yPlace, yTemp, yMeta;
-  int16_t xFc0, yFcDay, yFcTmp, yFcCnd, fcPitch;
-  uint8_t fcChars;
-  int16_t rule1, rule2, rule3;  // portrait: three h-rules. landscape: unused.
+  int16_t rule1, rule2;   // 0 = don't draw
 };
 
-// 172x320: three stacked blocks (time / current / forecast) plus a date footer.
+// 172x320. Page 1 gives the time the top half and the temperature the rest;
+// page 2 gives each forecast day a third of the screen, which is what buys the
+// bigger type -- everything on page 2 used to be size 1 and too small to read.
 static const Layout PORTRAIT = {
-    /*landscape*/ false, /*w,h*/ 172, 320,
-    /*time*/ (172 - GW(5) * 5) / 2, 24,
-    /*secs*/ (172 - GW(2) * 2) / 2, 70,
-    /*date*/ 8, 228,
+    false, 172, 320,
+    /*time  */ (172 - GW(5) * 5) / 2, 24,
+    /*secs  */ (172 - GW(2) * 2) / 2, 70,
+    /*date  */ 8, 212,
+    /*place */ 8, 106,
+    /*temp  */ 8, 122,
+    /*cond  */ 8, 166,
+    /*fc    */ 10, {46, 128, 210}, 22, /*valSize*/ 3,
+    /*meta  */ 10, 272, 292,
     /*status*/ 8, 296, 308,
-    /*col2*/ 8, 106, 120, 120,
-    /*fc*/ 8, 172, 186, 200, 52,
-    /*fcChars*/ 8,
-    /*rules*/ 96, 162, 216,
+    /*rules */ 96, 196,
 };
 
-// 320x172: clock and date on the left, weather on the right, split at x=170.
+// 320x172. Page 1 splits clock left, conditions right; page 2 puts the three
+// forecast days in three columns, which fits size 3 numbers comfortably.
 static const Layout LANDSCAPE = {
-    /*landscape*/ true, /*w,h*/ 320, 172,
-    /*time*/ 12, 18,
-    /*secs*/ 12, 64,
-    /*date*/ 12, 92,
-    /*status*/ 12, 132, 148,
-    /*col2*/ 182, 14, 28, 28,
-    /*fc*/ 182, 96, 112, 128, 46,
-    /*fcChars*/ 7,
-    /*rules*/ 0, 0, 0,
+    true, 320, 172,
+    /*time  */ 12, 18,
+    /*secs  */ 12, 64,
+    /*date  */ 12, 96,
+    /*place */ 182, 14,
+    /*temp  */ 182, 30,
+    /*cond  */ 182, 74,
+    /*fc    */ 14, {34, 34, 34}, 24, /*valSize*/ 2,
+    /*meta  */ 14, 112, 130,
+    /*status*/ 12, 132, 150,
+    /*rules */ 0, 0,
 };
 
-// Which layout is live. Rotations 0/2 are portrait, 1/3 landscape.
+// Two pages, auto-cycling. One button with its gestures already spent means a
+// timer, not a press -- same reasoning as host-monitor.
+static const uint32_t PAGE_MS = 7UL * 1000;
+static const uint8_t PAGES = 2;
+static uint8_t page = 0;
+
 static const Layout *L = &PORTRAIT;
 static void syncLayout() { L = uiLandscape() ? &LANDSCAPE : &PORTRAIT; }
 
@@ -171,28 +191,38 @@ static void degree(int16_t x, int16_t y, uint16_t fg) { gfx->drawCircle(x, y, 2,
 // place -- otherwise a toggle repaints the background and leaves the old text
 // colour, or the old orientation's coordinates, behind.
 static char cHM[6], cSS[3], cDate[18], cStatus[34], cStale[34], cStatusKey[48];
+// Page 1's temperature and condition; page 2 redraws wholesale on each flip,
+// which is cheap because it only happens every 7s.
+static char cTemp[8], cCond[12];
 
 static void invalidateCache() {
   cHM[0] = cSS[0] = cDate[0] = cStatus[0] = cStale[0] = cStatusKey[0] = '\0';
 }
 
-static void drawChrome() {
-  gfx->fillScreen(uiTheme()->bg);
-  if (L->landscape) {
-    gfx->drawFastVLine(170, 12, L->h - 24, uiTheme()->rule);
-    gfx->drawFastHLine(L->xCol2, L->yFcDay - 10, L->w - L->xCol2 - 8, uiTheme()->rule);
-  } else {
-    gfx->drawFastHLine(12, L->rule1, L->w - 24, uiTheme()->rule);
-    gfx->drawFastHLine(12, L->rule2, L->w - 24, uiTheme()->rule);
-    gfx->drawFastHLine(12, L->rule3, L->w - 24, uiTheme()->rule);
-  }
-  field(L->xCol2, L->yPlace, 12, 1, uiTheme()->muted, PLACE);
+static void drawDots() {
+  static int8_t cached = -1;
+  if (cached == (int8_t)page) return;
+  cached = page;
+  for (uint8_t i = 0; i < PAGES; i++)
+    gfx->fillCircle(L->w - 12 + i * 9, 8, 3, i == page ? uiTheme()->fg : uiTheme()->rule);
 }
 
-// Only repaints what changed -- the minute block once a minute, seconds once a
-// second. Repainting the whole screen here is what makes big digits flicker.
-static void drawClock(const struct tm &t) {
-  char hm[6], ss[3];
+static void drawChrome() {
+  gfx->fillScreen(uiTheme()->bg);
+  if (page == 0) {
+    if (L->rule1) gfx->drawFastHLine(12, L->rule1, L->w - 24, uiTheme()->rule);
+    if (L->rule2) gfx->drawFastHLine(12, L->rule2, L->w - 24, uiTheme()->rule);
+    if (L->landscape) gfx->drawFastVLine(170, 12, L->h - 24, uiTheme()->rule);
+    field(L->xPlace, L->yPlace, 12, 1, uiTheme()->muted, PLACE);
+  } else {
+    field(L->xFc, 14, 12, 1, uiTheme()->muted, "3 DAY");
+  }
+  drawDots();
+}
+
+// Page 1: time, date and current conditions at size 2-5.
+static void drawNow(const struct tm &t) {
+  char hm[6], ss[3], buf[20];
   strftime(hm, sizeof hm, "%H:%M", &t);
   strftime(ss, sizeof ss, "%S", &t);
   if (strcmp(hm, cHM) != 0) {
@@ -203,51 +233,57 @@ static void drawClock(const struct tm &t) {
     field(L->xSecs, L->ySecs, 2, 2, uiTheme()->dim, ss);
     strcpy(cSS, ss);
   }
-}
 
-static void drawDate(const struct tm &t) {
   char d[18];
   strftime(d, sizeof d, "%a %d %b", &t);
-  if (strcmp(d, cDate) == 0) return;
-  // 13 not 14: at size 2 a 14-char box is 168px, which overruns the 172px
-  // portrait panel and clips the erase rect.
-  field(L->xDate, L->yDate, 13, 2, uiTheme()->fg, d, true);
-  strcpy(cDate, d);
-}
-
-static void drawWeather() {
-  char buf[16];
-
-  if (!wx.valid) {
-    field(L->xCol2, L->yTemp, 6, 4, uiTheme()->dim, "--");
-    fieldRight(L->w - 8, L->yMeta, 12, 1, uiTheme()->warn, "no weather");
-    fieldRight(L->w - 8, L->yMeta + 14, 12, 1, uiTheme()->dim, "");
-    fieldRight(L->w - 8, L->yMeta + 28, 12, 1, uiTheme()->dim, "");
-    for (int i = 0; i < 3; i++) {
-      int16_t x = L->xFc0 + i * L->fcPitch;
-      field(x, L->yFcDay, L->fcChars, 1, uiTheme()->dim, "--", true);
-      field(x, L->yFcTmp, L->fcChars, 1, uiTheme()->dim, "", true);
-      field(x, L->yFcCnd, L->fcChars, 1, uiTheme()->dim, "", true);
-    }
-    return;
+  if (strcmp(d, cDate) != 0) {
+    field(L->xDate, L->yDate, 13, 2, uiTheme()->fg, d, true);
+    strcpy(cDate, d);
   }
 
+  if (!wx.valid) {
+    field(L->xTemp, L->yTemp, 4, 4, uiTheme()->dim, "--");
+    field(L->xCond, L->yCond, 11, 2, uiTheme()->warn, "no weather");
+    return;
+  }
   snprintf(buf, sizeof buf, "%d", (int)lroundf(wx.temp));
-  field(L->xCol2, L->yTemp, 4, 4, wmoColor(wx.code), buf);
-  degree(L->xCol2 + GW(4) * strlen(buf) + 5, L->yTemp + 5, wmoColor(wx.code));
+  if (strcmp(buf, cTemp) != 0) {
+    field(L->xTemp, L->yTemp, 4, 4, wmoColor(wx.code), buf);
+    degree(L->xTemp + GW(4) * strlen(buf) + 6, L->yTemp + 6, wmoColor(wx.code));
+    strcpy(cTemp, buf);
+  }
+  // Size 2, not 1: this is the line that was too small to read.
+  if (strcmp(wmoLabel(wx.code), cCond) != 0) {
+    field(L->xCond, L->yCond, 11, 2, wmoColor(wx.code), wmoLabel(wx.code));
+    strcpy(cCond, wmoLabel(wx.code));
+  }
+}
 
-  snprintf(buf, sizeof buf, "feels %d", (int)lroundf(wx.feels));
-  fieldRight(L->w - 8, L->yMeta, 12, 1, uiTheme()->muted, buf);
-  fieldRight(L->w - 8, L->yMeta + 14, 12, 1, wmoColor(wx.code), wmoLabel(wx.code));
-  snprintf(buf, sizeof buf, "%d%% hum", wx.humidity);
-  fieldRight(L->w - 8, L->yMeta + 28, 12, 1, uiTheme()->muted, buf);
-
+// Page 2: each forecast day gets a third of the panel, so day / hi-lo /
+// condition can be size 2 and 3 instead of a cramped size 1 row.
+static void drawForecast() {
+  char buf[20];
   for (int i = 0; i < 3; i++) {
-    int16_t x = L->xFc0 + i * L->fcPitch;
-    field(x, L->yFcDay, L->fcChars, 1, uiTheme()->muted, wx.day[i], true);
-    snprintf(buf, sizeof buf, "%d/%d", wx.hi[i], wx.lo[i]);
-    field(x, L->yFcTmp, L->fcChars, 1, uiTheme()->fg, buf, true);
-    field(x, L->yFcCnd, L->fcChars, 1, wmoColor(wx.dayCode[i]), wmoLabel(wx.dayCode[i]), true);
+    int16_t x = L->landscape ? L->xFc + i * 102 : L->xFc;
+    int16_t y = L->landscape ? L->fcRow[0] : L->fcRow[i];
+
+    const char *day = wx.valid ? wx.day[i] : "--";
+    field(x, y, 4, 2, uiTheme()->muted, day);
+
+    if (wx.valid) snprintf(buf, sizeof buf, "%d/%d", wx.hi[i], wx.lo[i]);
+    else snprintf(buf, sizeof buf, "--");
+    field(x, y + L->fcStep, 8, L->fcValSize, uiTheme()->fg, buf);
+
+    const char *cond = wx.valid ? wmoLabel(wx.dayCode[i]) : "";
+    field(x, y + L->fcStep * 2 + 6, 8, 2, wx.valid ? wmoColor(wx.dayCode[i]) : uiTheme()->dim,
+          cond);
+  }
+
+  if (wx.valid) {
+    snprintf(buf, sizeof buf, "feels %d", (int)lroundf(wx.feels));
+    field(L->xMeta, L->yFeels, 10, 2, uiTheme()->muted, buf);
+    snprintf(buf, sizeof buf, "%d%% hum", wx.humidity);
+    field(L->xMeta, L->yHum, 10, 2, uiTheme()->muted, buf);
   }
 }
 
@@ -587,18 +623,32 @@ static void ledByTemp(float c) {
 // Both layouts are asserted, not just the one in use -- that is the point of
 // making orientation runtime, and it is stronger coverage than before.
 static void checkLayout(const Layout *l) {
+  // Page 1
   assert(l->xTime >= 0 && l->xTime + GW(5) * 5 <= l->w);  // "14:32"
-  assert(l->xDate + GW(2) * 13 <= l->w);                  // date footer
-  assert(l->xStatus + GW(1) * 26 <= l->w);                // status strip
-  assert(l->xFc0 + 3 * l->fcPitch <= l->w);               // three forecast columns
-  assert(l->yStale + GH(1) <= l->h);                      // footer on-screen
-  assert(l->yFcCnd + GH(1) <= l->h);
-  assert(l->fcChars >= 7);                                // "drizzle"/"showers"
-  assert((l->w / GW(1)) - 2 >= 22);                        // offline panel lines
-  assert(8 + GW(3) * 8 <= l->w);                           // "NO CLOCK" at size 3
-  assert((l->h - 62 - 16) / 11 >= 6);                      // enough offline rows
-  // The hold hint is centred, so the longest one must fit this orientation.
-  assert(GW(1) * 18 + 10 <= l->w);                         // "release: SCREEN OFF"
+  assert(l->xSecs + GW(2) * 2 <= l->w);
+  assert(l->xDate + GW(2) * 13 <= l->w);
+  assert(l->xTemp + GW(4) * 4 + 10 <= l->w);  // "-14" plus the degree ring
+  assert(l->xCond + GW(2) * 11 <= l->w);      // "showers" at size 2
+  assert(l->yCond + GH(2) <= l->h);
+
+  // Page 2: three rows (portrait) or three columns (landscape), each carrying a
+  // size-2 day, a size-3 hi/lo and a size-2 condition.
+  for (int i = 0; i < 3; i++) {
+    int16_t x = l->landscape ? l->xFc + i * 102 : l->xFc;
+    int16_t y = l->landscape ? l->fcRow[0] : l->fcRow[i];
+    assert(x + GW(l->fcValSize) * 8 <= l->w);            // "-12/-18"
+    assert(y + l->fcStep * 2 + 6 + GH(2) <= l->h);      // condition stays on-screen
+  }
+  assert(l->xMeta + GW(2) * 10 <= l->w);                 // "feels -9"
+  assert(l->yHum + GH(2) <= l->h);
+
+  assert(l->xStatus + GW(1) * 26 <= l->w);
+  assert(l->yStale + GH(1) <= l->h);
+  assert((l->w / GW(1)) - 2 >= 22);        // offline panel lines
+  assert(8 + GW(3) * 8 <= l->w);           // "NO CLOCK" at size 3
+  assert((l->h - 62 - 16) / 11 >= 6);      // enough offline rows
+  assert(GW(1) * 18 + 10 <= l->w);         // "release: SCREEN OFF" hint
+  assert(l->w - 12 + (PAGES - 1) * 9 + 3 <= l->w + 3);  // page dots
 }
 
 static void selfCheck() {
@@ -661,7 +711,15 @@ void setup() {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
     configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
-    struct tm t;
+    static uint32_t lastPage = 0;
+  if (state == State::Running && millis() - lastPage > PAGE_MS) {
+    lastPage = millis();
+    page = (page + 1) % PAGES;
+    invalidateCache();
+    if (uiScreenOn()) drawChrome();
+  }
+
+  struct tm t;
     bool synced = false;
     for (int i = 0; i < 40 && !(synced = getLocalTime(&t, 250)); i++) {}
     Serial.printf("ntp %s\n", synced ? "ok" : "FAILED");
@@ -728,7 +786,8 @@ void loop() {
     invalidateCache();
     if (uiScreenOn() && state == State::Running) {
       drawChrome();
-      drawWeather();
+      if (page == 0) { struct tm n; if (getLocalTime(&n, 0)) drawNow(n); }
+      else drawForecast();
     }
   }
   if (changed) {
@@ -736,8 +795,8 @@ void loop() {
     // measurement covers the whole visible change.
     struct tm now;
     if (uiScreenOn() && state == State::Running && getLocalTime(&now, 0)) {
-      drawClock(now);
-      drawDate(now);
+      if (page == 0) drawNow(now);
+      else drawForecast();
     }
     Serial.printf("btn: press to redraw %lums\n", (unsigned long)(millis() - pressT0));
   }
@@ -771,8 +830,8 @@ void loop() {
     // Deliberately keep fetching below: the point of blanking rather than
     // sleeping is that the clock is already right when it comes back.
   } else if (state == State::Running) {
-    drawClock(t);
-    drawDate(t);
+    if (page == 0) drawNow(t);
+    else drawForecast();
 
     if (t.tm_min != lastMinute) {
       lastMinute = t.tm_min;
@@ -781,6 +840,9 @@ void loop() {
 
     // Staleness has to be visible: a frozen panel showing nice weather is worse
     // than one that admits it lost the network.
+    // Page 1 only: in landscape the status rows and page 2's forecast occupy the
+    // same space, and repeating the network state on both pages adds nothing.
+    if (page != 0) { /* skip the status strip */ } else {
     char stale[34];
     if (wx.valid) {
       snprintf(stale, sizeof stale, "wx %lum ago", (millis() - wx.fetchedAt) / 60000);
@@ -797,6 +859,7 @@ void loop() {
     if (strcmp(net, cStatus) != 0) {
       field(L->xStatus, L->yStatus, 26, 1, uiTheme()->muted, net);
       strcpy(cStatus, net);
+    }
     }
   } else {
     // Offline panels: repaint only when their content actually changes, then
@@ -828,7 +891,10 @@ void loop() {
   if (state != State::NoWifi && (lastWx == 0 || millis() - lastWx > period)) {
     lastWx = millis();
     if (fetchWeather()) {
-      if (uiScreenOn() && state == State::Running) drawWeather();
+      if (uiScreenOn() && state == State::Running) {
+        if (page == 0) { struct tm n; if (getLocalTime(&n, 0)) drawNow(n); }
+        else drawForecast();
+      }
       if (uiScreenOn()) ledByTemp(wx.temp);
     }
   }
