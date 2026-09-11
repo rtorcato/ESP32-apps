@@ -33,6 +33,7 @@ static const char *PLACE = "TORONTO";
 
 static const uint32_t WX_PERIOD_MS = 15UL * 60 * 1000;  // open-meteo is free; don't hammer it
 static const uint32_t WX_RETRY_MS = 60UL * 1000;        // but retry sooner while it's failing
+static const uint32_t WIFI_RETRY_MS = 20UL * 1000;      // re-begin() while disconnected
 // Night window and per-theme backlight levels live in lib/board/ui.h
 // (uiNightFrom/uiNightTo, Theme::blDay/blNight) -- shared by every app.
 
@@ -648,11 +649,10 @@ void setup() {
   // not hide the compiled-in copy; see SECURITY.md for what actually helps.
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
-#if POWER_SAVE
-  // MAX_MODEM parks the radio between beacon intervals. Costs a little latency
-  // on inbound packets, which a clock polling every 15 minutes never notices.
-  WiFi.setSleep(WIFI_PS_MAX_MODEM);
-#endif
+  // Power save is applied *after* association, not before. Parking the radio
+  // between beacons while the four-way handshake is still in flight is a good
+  // way to make that handshake time out, which is exactly the failure this app
+  // already struggles with.
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   // 20s, not 10: the WPA2 handshake can time out once (204) and succeed on the
   // next attempt. A 10s window reported a failure that would have connected,
@@ -662,6 +662,11 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
+#if POWER_SAVE
+    // Now that we're associated, park the radio between beacon intervals. Costs
+    // a little inbound latency, which a 15-minute poll never notices.
+    WiFi.setSleep(WIFI_PS_MAX_MODEM);
+#endif
     configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
     struct tm t;
     bool synced = false;
@@ -725,6 +730,26 @@ void loop() {
     }
   }
 
+  // Re-issue begin() while disconnected. setAutoReconnect(true) was NOT enough:
+  // after a cold boot where the 20s window expired, the panel sat on NO WIFI
+  // until it was power-cycled. The association failure itself is transient (the
+  // WPA2 handshake times out once and succeeds on retry), so the only real bug
+  // was never trying again.
+  static uint32_t lastRetry = 0;
+  static uint16_t retries = 0;
+  if (state == State::NoWifi) {
+    if (lastRetry == 0 || millis() - lastRetry > WIFI_RETRY_MS) {
+      lastRetry = millis();
+      retries++;
+      Serial.printf("wifi retry #%u\n", retries);
+      WiFi.disconnect();
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+    }
+  } else {
+    retries = 0;
+    lastRetry = 0;
+  }
+
   if (!uiScreenOn()) {
     // Deliberately keep fetching below: the point of blanking rather than
     // sleeping is that the clock is already right when it comes back.
@@ -771,7 +796,7 @@ void loop() {
       }
     }
     char up[34];
-    snprintf(up, sizeof up, "for %lus  BOOT=mode", millis() / 1000);
+    snprintf(up, sizeof up, "%lus, retry %u", millis() / 1000, retries);
     if (strcmp(up, cStale) != 0) {
       field(8, L->h - 12, (L->w / GW(1)) - 2, 1, uiTheme()->dim, up);
       strcpy(cStale, up);

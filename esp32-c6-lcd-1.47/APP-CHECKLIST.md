@@ -113,6 +113,27 @@ like a wrong password.
 Calling it every 250ms floods the log with
 `E wifi:sta is connecting, return error`. The fix is deleting code.
 
+**`setAutoReconnect(true)` is not enough on its own — re-issue `begin()`.** After
+a cold boot where the connect window expired, the panel sat on `NO WIFI`
+indefinitely and only a power cycle fixed it. Since the association failure is
+transient, never retrying *was* the bug. Re-issue `WiFi.begin()` every ~20s
+while disconnected and log the attempt number:
+
+```
+wifi retry #1
+wifi retry #2
+```
+
+**Apply Wi-Fi power save *after* association, never before.** Parking the radio
+between beacon intervals while the four-way handshake is still in flight is a
+good way to make that handshake time out. `WiFi.setSleep(WIFI_PS_MAX_MODEM)`
+belongs in the branch that runs once `WL_CONNECTED` is true.
+
+**Signal strength is the hidden variable.** The same firmware connected first
+try at −58 dBm and failed a 20s window at −86 dBm. Log `WiFi.RSSI()` on every
+connect, because "it worked yesterday" often means "it was 28 dB stronger
+yesterday".
+
 **`WiFi.persistent(false)`** so the credential isn't also copied into NVS. The
 core defaults to `true`, which puts the PSK in two places.
 
