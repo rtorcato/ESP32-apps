@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 332 424" width="664" height="848" role="img" aria-label="the nine desk-clock colour schemes: dark, light, amber, green, ocean, mono, paper, synth, night">
+  <!-- All nine schemes from lib/board/ui.h, cycled by holding BOOT for 2s.
+       Each tile is the top of the portrait layout: time, temperature, a bar.
+       Colours are the RGB565 values from the scheme table; bl is that scheme's
+       daytime backlight duty, which is also the board's main heat dial. -->
+  <rect width="332" height="424" fill="#1a1a1a"/>
+
+  <!-- row 1 -->
+  <g transform="translate(4,4)">
+    <rect width="104" height="128" fill="#000000"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#969696">dark  bl140</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#f8fcf8" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#00ffff" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#5a5a5a"/>
+    <rect x="8" y="96" width="52" height="4" fill="#00ffff"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#696969">Wed 11 Sep</text>
+  </g>
+
+  <g transform="translate(114,4)">
+    <rect width="104" height="128" fill="#f5f5f5"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#46505a">light bl70</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#000000" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#006e82" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#c8c8c8"/>
+    <rect x="8" y="96" width="52" height="4" fill="#006e82"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#aaaaaa">Wed 11 Sep</text>
+  </g>
+
+  <g transform="translate(224,4)">
+    <rect width="104" height="128" fill="#080400"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#be8200">amber bl130</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#ffb000" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#ffd282" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#5a3c00"/>
+    <rect x="8" y="96" width="52" height="4" fill="#ffc800"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#785000">Wed 11 Sep</text>
+  </g>
+
+  <!-- row 2 -->
+  <g transform="translate(4,142)">
+    <rect width="104" height="128" fill="#000c00"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#00aa46">green bl130</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#3cff6e" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#a0ffc8" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#005023"/>
+    <rect x="8" y="96" width="52" height="4" fill="#c8ff78"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#006428">Wed 11 Sep</text>
+  </g>
+
+  <g transform="translate(114,142)">
+    <rect width="104" height="128" fill="#0b1e2d"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#8cafc3">ocean bl135</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#cfe8f5" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#78e6ff" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#325064"/>
+    <rect x="8" y="96" width="52" height="4" fill="#78e6ff"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#506e82">Wed 11 Sep</text>
+  </g>
+
+  <g transform="translate(224,142)">
+    <rect width="104" height="128" fill="#000000"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#aaaaaa">mono  bl120</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#ffffff" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#d2d2d2" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#505050"/>
+    <rect x="8" y="96" width="52" height="4" fill="#e6e6e6"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#6e6e6e">Wed 11 Sep</text>
+  </g>
+
+  <!-- row 3 -->
+  <g transform="translate(4,280)">
+    <rect width="104" height="128" fill="#f4eee2"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#605648">paper bl65</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#28221c" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#146078" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#cec6b6"/>
+    <rect x="8" y="96" width="52" height="4" fill="#146078"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#b2aa9c">Wed 11 Sep</text>
+  </g>
+
+  <g transform="translate(114,280)">
+    <rect width="104" height="128" fill="#16082a"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#a878dc">synth bl135</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#00eeff" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#ff6ed2" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#402468"/>
+    <rect x="8" y="96" width="52" height="4" fill="#50ffbe"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#603c8c">Wed 11 Sep</text>
+  </g>
+
+  <g transform="translate(224,280)">
+    <rect width="104" height="128" fill="#000000"/>
+    <text x="8" y="14" font-family="monospace" font-size="8" fill="#961a1a">night bl60</text>
+    <text x="8" y="48" font-family="monospace" font-size="26" fill="#d22828" textLength="88" lengthAdjust="spacing">14:32</text>
+    <text x="8" y="82" font-family="monospace" font-size="22" fill="#dc5a5a" textLength="44" lengthAdjust="spacing">-4</text>
+    <rect x="8" y="96" width="88" height="4" fill="#460a0a"/>
+    <rect x="8" y="96" width="52" height="4" fill="#b43c28"/>
+    <text x="8" y="118" font-family="monospace" font-size="8" fill="#5a0e0e">Wed 11 Sep</text>
+  </g>
+
+  <text x="166" y="420" font-family="monospace" font-size="8" fill="#6e7681" text-anchor="middle">hold BOOT 2s to cycle &#183; bl = daytime backlight duty</text>
+</svg>

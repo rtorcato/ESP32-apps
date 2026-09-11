@@ -10,13 +10,22 @@ which is why it's the right source for this.
 
 | Gesture | Action |
 |---|---|
-| **Tap** | Next rotation: 0° → 90° → 180° → 270° |
-| **Hold 1.2s** | Toggle light / dark |
-| **Hold 3s** | Blank the panel — any press brings it back |
+| **Tap** (under 2s) | Next rotation: 0° → 90° → 180° → 270° |
+| **Hold 2s** | Next colour scheme (nine of them) |
+| **Hold 4.5s** | Blank the panel — any press brings it back |
+
+The tap window is deliberately generous. It was 1.2s, and measured on this
+board every ordinary press landed over that and cycled the *colour* instead of
+rotating — which reads as "the button isn't responsive". Rotation is the
+frequent action, so it gets the whole short range.
 
 While you hold, a hint appears saying what releasing will do
-(`release: THEME`, `release: SCREEN OFF`), so the gestures don't have to be
-remembered. Both rotation and theme persist in NVS.
+(`release: COLOUR`, `release: SCREEN OFF`), so the gestures don't have to be
+remembered. Both rotation and scheme persist in NVS.
+
+The press is edge-captured in an interrupt rather than sampled in `loop()`.
+That matters: `loop()` blocks for tens of milliseconds per pass, and a quick tap
+that began *and ended* between two samples was previously never seen at all.
 
 **Four rotations, not two**, because the USB-C socket is on a fixed edge — you
 need the cable to exit left, right, top or bottom depending on how the board
@@ -27,6 +36,23 @@ hand a different rotation to the driver.
 | Portrait — 172×320 (rot 0, 180) | Landscape — 320×172 (rot 90, 270) |
 |---|---|
 | <img src="preview.svg" alt="desk-clock portrait" width="172"> | <img src="preview-h.svg" alt="desk-clock landscape" width="320"> |
+
+### The nine colour schemes
+
+<img src="preview-themes.svg" alt="all nine desk-clock colour schemes" width="500">
+
+Hold BOOT for 2s to cycle. `bl` is that scheme's daytime backlight duty, which
+is also the board's main heat and power dial — `night` at 60 runs considerably
+cooler than `dark` at 140.
+
+Two are there for specific reasons rather than taste: **`paper`** is a warm
+off-white that is much easier than `light`'s pure white in a lit room, and
+**`night`** is dim red on black, which preserves dark adaptation and is the one
+to pick for a bedside table.
+
+Nine schemes on one button means reaching the last is nine holds. They live in
+an array in [`lib/board/ui.h`](../../lib/board/ui.h) and `UI_SCHEME_COUNT` is
+derived from it, so deleting the ones you never pick needs no other change.
 
 All coordinates live in a `Layout` struct picked at runtime, so the dirty rects
 stay exact and `selfCheck()` asserts **both** layouts at boot — stronger
@@ -44,12 +70,9 @@ duty, so **brightness belongs to the theme**, not to one global pair. Both
 values live in [`lib/board/ui.h`](../../lib/board/ui.h) — a setting to edit, not
 a button gesture:
 
-| Theme | Day | Night |
-|---|---|---|
-| Dark | 140 | 40 |
-| Light | **70** | 18 |
-
-Light mode is deliberately half of dark: at 200 a near-white panel is genuinely
+Each of the nine schemes carries its own pair — see the table in the preview
+above. They range from `night` at 60/12 to `dark` at 140/40, and the light
+schemes sit lowest of all because a near-white panel at 140 is genuinely
 unpleasant. Night levels apply between `uiNightFrom`/`uiNightTo` (23:00–07:00)
 and switch on the minute tick.
 
@@ -58,9 +81,12 @@ backlight is the dominant heat source** — dropping 200 → 140 cut the die
 temperature by 6 °C, while halving the CPU clock and parking the radio bought
 only 2 °C. Full numbers in the [device README](../../README.md#heat--its-the-backlight-measured).
 
-`POWER_SAVE` at the top of [`src/main.cpp`](src/main.cpp) sets 80MHz and
-`WIFI_PS_MAX_MODEM`; set it to `0` to compare against the unthrottled baseline.
-The die temperature is logged every 30s.
+`POWER_SAVE` at the top of [`src/main.cpp`](src/main.cpp) sets the CPU to 80MHz;
+set it to `0` to compare against 160MHz. Radio settings live in
+[`netTune()`](../../lib/board/netjoin.h), which uses `WIFI_PS_MIN_MODEM` —
+`MAX_MODEM` saved 2 °C but dropped ACKs on a marginal link, and disabling sleep
+entirely cost 12 °C. The die temperature, Wi-Fi state and button counters are
+logged every 10s.
 
 ### Why long press doesn't really power off
 
@@ -147,7 +173,7 @@ fragmented heap.
 | Constant | Default | Why you'd change it |
 |---|---|---|
 | `Theme.blDay` / `blNight` | see above | Per-theme backlight. Tune in the dark |
-| `NIGHT_FROM` / `NIGHT_TO` | 23 / 7 | When to dim |
+| `uiNightFrom` / `uiNightTo` | 23 / 7 | When to dim (in `ui.h`) |
 | `WX_PERIOD_MS` | 15 min | Weather poll. open-meteo is free; don't hammer it |
 
 ## How it stays flicker-free

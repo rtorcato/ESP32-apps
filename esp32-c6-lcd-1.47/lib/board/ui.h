@@ -26,6 +26,9 @@
 #include "board.h"
 
 // ── colour schemes ───────────────────────────────────────────────────────
+// Nine of them, cycled by one button, so reaching the last is nine holds. If
+// that annoys you, delete the ones you never pick -- UI_SCHEME_COUNT is derived
+// from the array, so nothing else needs changing.
 // Custom RGB565 values rather than only the named constants, so palettes can be
 // chosen properly instead of approximated.
 //
@@ -75,6 +78,38 @@ inline constexpr Theme UI_SCHEMES[] = {
      RGB565(140, 175, 195), RGB565(50, 80, 100), RGB565(120, 230, 255), RGB565(100, 180, 240),
      RGB565(255, 190, 90), RGB565(255, 110, 110), RGB565(180, 205, 220), RGB565(255, 190, 90),
      RGB565(255, 110, 110), RGB565(110, 230, 160), 135, 35},
+
+    // 5: mono -- greyscale only. No colour to decode, maximum legibility; the
+    // one to pick if the accents are noise rather than information.
+    {"mono", RGB565(0, 0, 0), RGB565(255, 255, 255), RGB565(110, 110, 110),
+     RGB565(170, 170, 170), RGB565(80, 80, 80), RGB565(255, 255, 255),
+     RGB565(210, 210, 210), RGB565(255, 255, 255), RGB565(255, 255, 255),
+     RGB565(190, 190, 190), RGB565(230, 230, 230), RGB565(255, 255, 255),
+     RGB565(190, 190, 190), 120, 30},
+
+    // 6: paper -- warm off-white rather than pure white, which is markedly
+    // easier on the eye in a lit room than the "light" scheme.
+    {"paper", RGB565(244, 238, 226), RGB565(40, 34, 28), RGB565(178, 170, 156),
+     RGB565(96, 86, 72), RGB565(206, 198, 182), RGB565(20, 96, 120),
+     RGB565(44, 92, 150), RGB565(176, 96, 16), RGB565(140, 30, 24),
+     RGB565(96, 86, 72), RGB565(150, 84, 8), RGB565(140, 30, 24),
+     RGB565(28, 100, 44), 65, 16},
+
+    // 7: synth -- deep violet with cyan and magenta. Loud on purpose.
+    {"synth", RGB565(22, 8, 42), RGB565(0, 238, 255), RGB565(96, 60, 140),
+     RGB565(168, 120, 220), RGB565(64, 36, 104), RGB565(120, 240, 255),
+     RGB565(90, 170, 255), RGB565(255, 110, 210), RGB565(255, 60, 130),
+     RGB565(180, 150, 230), RGB565(255, 170, 60), RGB565(255, 60, 130),
+     RGB565(80, 255, 190), 135, 32},
+
+    // 8: night -- dim red on black. Red light preserves dark adaptation, so
+    // this is the one for a bedside table; the backlight is deliberately the
+    // lowest of any scheme.
+    {"night", RGB565(0, 0, 0), RGB565(210, 40, 40), RGB565(90, 14, 14),
+     RGB565(150, 26, 26), RGB565(70, 10, 10), RGB565(220, 90, 90),
+     RGB565(200, 70, 70), RGB565(230, 60, 40), RGB565(255, 70, 50),
+     RGB565(160, 40, 40), RGB565(230, 80, 40), RGB565(255, 60, 40),
+     RGB565(180, 60, 40), 60, 12},
 };
 
 inline constexpr uint8_t UI_SCHEME_COUNT = sizeof(UI_SCHEMES) / sizeof(UI_SCHEMES[0]);
@@ -194,8 +229,15 @@ inline void uiSetScreen(bool on) {
 // whether the firmware saw a different duration than you intended.
 enum class UiPress { None, Rotate, Scheme, Blank, Setup };
 
-inline constexpr uint32_t UI_HOLD_SCHEME_MS = 1200, UI_HOLD_BLANK_MS = 3000,
-                          UI_HOLD_SETUP_MS = 6000;
+// A tap is anything under 2 seconds -- deliberately generous.
+//
+// This was 1.2s, and that was too tight: measured on this board every press was
+// landing over it and cycling the colour scheme instead of rotating, which
+// reads as "the button isn't quick". Rotation is the frequent action, so it
+// gets the whole short range; colour is occasional, so it can afford a
+// deliberate hold.
+inline constexpr uint32_t UI_HOLD_SCHEME_MS = 2000, UI_HOLD_BLANK_MS = 4500,
+                          UI_HOLD_SETUP_MS = 7500;
 inline constexpr uint32_t UI_DEBOUNCE_MS = 25;
 
 
@@ -223,16 +265,36 @@ inline volatile uint32_t pressStart = 0;   // ms, when the current press began
 inline volatile uint32_t lastEdge = 0;     // ms, for debouncing in the ISR
 inline volatile uint32_t pendingHeld = 0;  // non-zero: a completed press to collect
 inline volatile bool down = false;         // debounced level
+inline volatile uint32_t edgesRaw = 0;     // every ISR entry, before debouncing
+inline volatile uint32_t edgesUsed = 0;    // edges the debounce accepted
+inline uint32_t lastHeld = 0;              // duration of the most recent press
+inline const char *lastAction = "-";       // what it was classified as
 }  // namespace uidetail
+
+// The most recent press, readable long after it happened. Catching the live
+// "btn:" line needs you to be watching at the right moment; this does not.
+inline uint32_t uiLastHeldMs() { return uidetail::lastHeld; }
+inline const char *uiLastAction() { return uidetail::lastAction; }
+
+// Counters and the live pin level, for the periodic log. If pressing the button
+// leaves raw at 0 the interrupt is not firing at all; if raw climbs but used
+// does not, the debounce window is eating everything; if both climb but no
+// gesture appears, the classification is at fault. One line separates three
+// very different bugs.
+inline uint32_t uiEdgesRaw() { return uidetail::edgesRaw; }
+inline uint32_t uiEdgesUsed() { return uidetail::edgesUsed; }
+inline bool uiButtonDownNow() { return digitalRead(BTN_BOOT) == LOW; }
 
 inline uint32_t uiNowMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
 
 IRAM_ATTR inline void uiButtonIsr() {
+  uidetail::edgesRaw++;
   uint32_t now = uiNowMs();
   // Contact bounce arrives as a burst of edges; ignore anything too soon after
   // the last accepted one.
   if (now - uidetail::lastEdge < UI_DEBOUNCE_MS) return;
   uidetail::lastEdge = now;
+  uidetail::edgesUsed++;
 
   bool isDown = digitalRead(BTN_BOOT) == LOW;  // active low
   if (isDown) {
@@ -248,6 +310,23 @@ IRAM_ATTR inline void uiButtonIsr() {
 }
 
 inline UiPress uiPoll() {
+  // Reconcile the ISR's view with the actual pin before trusting it.
+  //
+  // The ISR debounce ignores edges too close together, which means a bouncy
+  // release can have its settling edge swallowed -- leaving `down` stuck true.
+  // While it is stuck, uiPoll() reports nothing and the button is simply dead,
+  // which presents as "unresponsive, needs a long press". Reading the real
+  // level here makes that self-healing: fast capture from the ISR, ground truth
+  // from the loop.
+  if (uidetail::down && digitalRead(BTN_BOOT) != LOW) {
+    uint32_t heldFor = uiNowMs() - uidetail::pressStart;
+    uidetail::down = false;
+    if (heldFor >= UI_DEBOUNCE_MS && uidetail::pendingHeld == 0) {
+      uidetail::pendingHeld = heldFor;
+      if (uiLogButton) Serial.println("btn: recovered a missed release edge");
+    }
+  }
+
   // While still held, show what releasing now would do.
   static uint8_t hinted = 0;
   if (uidetail::down) {
@@ -274,12 +353,13 @@ inline UiPress uiPoll() {
               : held >= UI_HOLD_BLANK_MS  ? UiPress::Blank
               : held >= UI_HOLD_SCHEME_MS ? UiPress::Scheme
                                           : UiPress::Rotate;
+  uidetail::lastHeld = held;
+  uidetail::lastAction = p == UiPress::Setup    ? "SETUP"
+                         : p == UiPress::Blank  ? "BLANK"
+                         : p == UiPress::Scheme ? "COLOUR"
+                                                : "ROTATE";
   if (uiLogButton) {
-    Serial.printf("btn: held %lums -> %s\n", (unsigned long)held,
-                  p == UiPress::Setup    ? "SETUP (6s)"
-                  : p == UiPress::Blank  ? "BLANK (3s)"
-                  : p == UiPress::Scheme ? "COLOUR (1.2s)"
-                                         : "ROTATE (tap)");
+    Serial.printf("btn: held %lums -> %s\n", (unsigned long)held, uidetail::lastAction);
   }
   return p;
 }

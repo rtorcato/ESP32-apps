@@ -42,7 +42,7 @@ static const uint32_t WIFI_RETRY_MS = 20UL * 1000;      // re-begin() while disc
 // and the LCD backlight, plus the 5V->3.3V LDO dissipating (5-3.3)*I. Set to 0
 // to compare against the unthrottled baseline.
 #define POWER_SAVE 1
-static const uint32_t TEMP_LOG_MS = 20UL * 1000;  // report die temperature
+static const uint32_t TEMP_LOG_MS = 10UL * 1000;  // report die temperature
 
 // The built-in 6x8 font scales by integer size, so a glyph is exactly
 // 6*size wide and 8*size tall. That exactness is why the dirty rects can be
@@ -709,7 +709,9 @@ void loop() {
   }
 
   struct tm t;
-  bool haveTime = getLocalTime(&t, 100);
+  // 0ms timeout: once NTP has set the clock this returns immediately, and
+  // before that it must not block the button for 100ms per pass.
+  bool haveTime = getLocalTime(&t, 0);
   State want = (WiFi.status() != WL_CONNECTED) ? State::NoWifi
                : !haveTime                     ? State::NoTime
                                                : State::Running;
@@ -819,10 +821,18 @@ void loop() {
     lastTemp = millis();
     // RSSI and state belong here: "is it connected and how well" is the
     // question this log gets asked every single time.
-    Serial.printf("die %.1fC  bl %u  heap %u  wifi %s %ddBm\n", temperatureRead(),
-                  uiBacklightApplied, ESP.getFreeHeap(),
-                  WiFi.status() == WL_CONNECTED ? "up" : "DOWN", WiFi.RSSI());
+    Serial.printf("die %.1fC  bl %u  heap %u  wifi %s %ddBm  btn raw=%lu used=%lu %s\n",
+                  temperatureRead(), uiBacklightApplied, ESP.getFreeHeap(),
+                  WiFi.status() == WL_CONNECTED ? "up" : "DOWN", WiFi.RSSI(),
+                  (unsigned long)uiEdgesRaw(), (unsigned long)uiEdgesUsed(),
+                  uiButtonDownNow() ? "DOWN" : "up");
+    Serial.printf("  last press: %lums -> %s\n", (unsigned long)uiLastHeldMs(),
+                  uiLastAction());
   }
 
-  delay(100);
+  // 20ms, not 100: the ISR captures the press instantly, but the *reaction*
+  // still waits for the next loop pass, and 100ms of that is felt as lag on a
+  // tap. Nothing here needs a slow loop -- the clock reads the RTC and the
+  // weather poll is on its own timer.
+  delay(20);
 }
