@@ -6,9 +6,10 @@
 A vertical list of watchlist symbols: ticker, last price, percent change, green
 or red. Scrolls slowly if the list is longer than the screen.
 
-**Why this board:** a 172×320 portrait panel is *the* right shape for a ranked
-list — roughly 10–12 readable rows with no wasted space. This is the app the
-display was accidentally designed for.
+**Why this board:** a 172×320 portrait panel is the right shape for a ranked
+list. Not the 10–12 rows originally claimed here, though — at size 1 those are
+too small to read on this panel, so the real budget is **6–8 rows at size 2**.
+See [Readability](#readability-comes-first).
 
 ## The API question, tested rather than assumed
 
@@ -55,9 +56,10 @@ ticker, and paging was already rejected for desk-clock.
 - Delayed data is likely (Yahoo is ~15 min behind on some exchanges). Show a
   "delayed" marker rather than implying live prices; the preview already does.
 - Back off hard on 429, and never retry a rate-limit tightly.
-- TLS on 512KB of SRAM: each HTTPS connection costs a chunk of heap. Use one
-  reused `WiFiClientSecure`, fetch all symbols in a single batched request if the
-  API allows, and skip certificate pinning unless it matters.
+- TLS on 512KB of SRAM: each HTTPS connection costs a chunk of heap. Reuse one
+  `WiFiClientSecure` across the sequential per-symbol fetches and skip
+  certificate pinning. Batching is **not** available for stocks — the only
+  multi-symbol endpoint now returns 401, which is why the design is sequential.
 - Don't repaint the whole list per update — per-row dirty rects, or the scroll
   stutters.
 
