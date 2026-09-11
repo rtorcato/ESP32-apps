@@ -241,6 +241,21 @@ Two things to try if it's marginal:
 - **Drive the backlight from the LDR,** full brightness in sun. Power is not
   scarce here (see below), so there is no reason to ever dim it outdoors.
 
+**And if it fails outright, the fix is a different panel technology, not a
+brighter one.** Winning by brightness is the expensive half of right: it burns
+battery and runs hot in exactly the conditions that demanded it. The Hammerhead
+Karoo proves brute force *works* — and it is plugged into a 15-hour battery to do
+it. The other answer is a **reflective LCD**, where a mirror layer behind the
+pixels turns ambient light into contrast, so the brighter it gets the better it
+reads. That is the modern relative of the transflective MIP panels Garmin and
+Wahoo have used all along, and unlike e-paper it keeps fast refresh with no
+ghosting, so live speed and a moving map still work. There is an ESP32-S3 RLCD
+board — see [what none of the current boards do](../../../DEVICES.md#what-none-of-them-do).
+
+**Which makes the sun test worth running early and for real**, because its
+outcome picks the hardware, and the hardware is the one thing a rewrite can't
+fix later.
+
 ## Power: external bank, and that has consequences
 
 Rough budget, to be measured rather than trusted:
@@ -324,8 +339,9 @@ One of those data points is *good* news, though, and it revises the
 **the Karoo is a bright backlit colour touchscreen and it works fine on trails.**
 Reviews put Garmin ahead on midday brightness and the Karoo ahead on resolution,
 with an anti-glare coating doing real work. So backlit is not disqualifying —
-*dim* is. If the CYD fails the sun test, the answer is a brighter panel with a
-matte coating, not abandoning the idea.
+*dim* is, and the idea survives a failed sun test. It just moves to a different
+panel: brightness or reflectivity, per
+[Readability](#readability-decides-whether-this-is-worth-building).
 
 The open-source ESP32 field is busy too, and two projects have already solved
 this app's single hardest part:

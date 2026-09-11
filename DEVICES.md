@@ -56,6 +56,74 @@ own more than one:
   continuous adjustment beats touch.
 - **Rotary 1.28"** — a knob, cheaply, on an SPI panel. Code ports from the C6.
 
+## What none of them do
+
+Read the table above again and the five boards are, underneath, **the same kind
+of thing**: a mains-powered, always-on, backlit panel that sits indoors. The
+differences are real but they are all differences *within* that category. The
+gaps below are whole categories, and two of them already constrain apps that are
+written down in this repo.
+
+| Gap | Why it matters here | Candidate |
+|---|---|---|
+| **Reflective display** | All five wash out in sun | Waveshare **ESP32-S3 4.2" RLCD** |
+| **Battery + charging** | All five are USB-tethered | Waveshare AMOLED 1.75"/1.8"/2.06" (AXP2101 PMIC) |
+| **E-paper** | No access to the low-power regime at all | Inkplate · LilyGO T5 E-Paper S3 Pro · M5Paper |
+| **Camera** | [protect-doorbell](esp32-c6-lcd-1.47/apps/protect-doorbell/) has to borrow UniFi's eyes | ESP32-S3-EYE · XIAO ESP32S3 Sense |
+| **LoRa** | Nothing reaches past Wi-Fi | Comes free on the T5 E-Paper S3 Pro |
+| **LED matrix** | This file already calls it the only real 1U rack option | HUB75 + ESP32 |
+| **Headless sensor node** | Every board here is a *display*; nothing feeds them | XIAO ESP32-C6, ~$5 |
+
+### Reflective beats bright, and it is not AMOLED
+
+The instinct for "readable outdoors" is a brighter panel, and it is wrong — or
+rather it is the expensive half of right. **AMOLED and sunlight readability pull
+in opposite directions**: winning by brightness burns battery and runs hot
+outdoors, which is precisely backwards for a portable device. The Hammerhead
+Karoo proves brute force *can* work, and it is plugged into a 15-hour battery to
+do it.
+
+**RLCD is the other answer.** A mirror layer behind the pixels reflects ambient
+light, so the brighter the environment the higher the contrast — the modern
+relative of the transflective MIP panels Garmin and Wahoo have always used. And
+unlike e-paper it keeps fast refresh with no ghosting, so live numbers and a
+moving map still work.
+
+That makes the RLCD board the **highest-value single addition to this
+collection**, because it does not merely enable a new app — it answers the
+open go/no-go question in
+[bike-buddy](esp32-2432s028r-cyd/apps/bike-buddy/), which is currently specified
+against a panel that may well be unreadable in the only conditions it will ever
+be used in.
+
+### E-paper is the missing regime, not the missing board
+
+Everything here redraws continuously and dies the moment USB does. E-paper
+inverts that: **18–25 µA between refreshes**, so a small cell runs for weeks or
+months, and the image survives power loss entirely. That enables a class of app
+none of the five can attempt — a wall calendar, a room sign, a dashboard that
+updates hourly and is never plugged in.
+
+| Board | Pick it for |
+|---|---|
+| **Inkplate** | Best docs and the least yak-shaving — charger, RTC, microSD and Qwiic already on board, Adafruit GFX-compatible, panels recycled from decommissioned e-readers |
+| **LilyGO T5 E-Paper S3 Pro** | Most per dollar — 4.7" touch, 1500mAh, **SX1262 LoRa**, BQ25896 + BQ27220 fuel gauge, MagSafe |
+| **M5Paper** | Wanting a finished, enclosed device rather than a bare board |
+
+**Check the revision before ordering.** The original TTGO T5-4.7 is EOL, and
+there are community reports of blank screens under ESPHome's `t547` platform
+after a chip change — the same "verify before ordering" rule as the Elecrow rows
+above, for the same reason.
+
+### A fuel gauge deletes a documented constraint
+
+Worth noting because it is concrete rather than theoretical: bike-buddy's README
+states flatly that the device **cannot** show a battery indicator, because a dumb
+USB power bank exposes no state of charge and you must not design a gauge you
+cannot feed. Any of the AXP2101 or BQ27220 boards above report charge state and
+battery voltage directly — so that constraint is a property of the *power
+source*, not of the app, and the right board removes it.
+
 ## 2U rack display — the honest options
 
 A 2U front panel is a **482 × 89 mm strip** (1U = 44.45 mm, so 2U = 88.9 mm),
@@ -129,3 +197,15 @@ run the backlight below full.
 
 Two boards cover the useful ground: the C6 for radio work and the CYD for touch.
 Everything past that is want, not need.
+
+**That ordering is about the boards in the table, though, and the table is all
+one category.** Measured against [what none of them do](#what-none-of-them-do),
+two purchases buy more than any of the four above:
+
+1. **The RLCD board** — it *answers* a question already written down rather than
+   posing a new one, which is the only reason to buy hardware before you need it.
+2. **An e-paper board** — the one wholly absent design regime, and the T5 S3 Pro
+   closes the LoRa gap in the same order.
+
+Add a **XIAO ESP32-C6** (~$5) to either order as a near-free third. Every board in
+this file is a display; nothing in it is a sensor node.
