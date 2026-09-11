@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Edit this, then re-upload it WITHOUT recompiling:",
+    "  PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs",
+    "",
+    "Six rows show at once -- that is what fits at text size 2, and size 1 is",
+    "already known to be too small to read on this panel. A longer list pages",
+    "through six at a time every 8 seconds. 24 symbols maximum.",
+    "Labels are capped at 5 characters, which is the width of the symbol box.",
+    "",
+    "stocks: Yahoo symbols, one HTTPS request EACH. The firmware holds the",
+    "        refresh to about one request a minute, so 12 stocks means a",
+    "        12-minute refresh -- long lists trade freshness for breadth.",
+    "coins:  CoinGecko ids (the id, not the ticker) -- all of them travel in a",
+    "        single request, so they are nearly free. Find an id at",
+    "        https://api.coingecko.com/api/v3/coins/list"
+  ],
+
+  "stocks": ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD"],
+
+  "coins": [
+    { "id": "bitcoin", "label": "BTC" },
+    { "id": "ethereum", "label": "ETH" },
+    { "id": "solana", "label": "SOL" },
+    { "id": "cardano", "label": "ADA" }
+  ]
+}

@@ -1,15 +1,38 @@
-# ticker — idea
+# ticker — built
 
 <img src="preview.svg" alt="ticker preview" width="172">
 
+A watchlist panel: symbol, last price, signed percent change, green or red.
+Six rows on screen; a longer list pages through six at a time.
 
-A vertical list of watchlist symbols: ticker, last price, percent change, green
-or red. Scrolls slowly if the list is longer than the screen.
+**Flashed and verified** — 12 symbols (8 stocks, 4 coins) all fetching, 43.1°C
+die temperature, ~305KB heap free, 40.9% of the 3MB app partition.
 
-**Why this board:** a 172×320 portrait panel is the right shape for a ranked
-list. Not the 10–12 rows originally claimed here, though — at size 1 those are
-too small to read on this panel, so the real budget is **6–8 rows at size 2**.
-See [Readability](#readability-comes-first).
+## The watchlist is a file on the device, not source code
+
+[`data/watchlist.json`](data/watchlist.json) lives on the board's LittleFS
+partition, so **changing symbols does not need a rebuild**:
+
+```sh
+# firmware (only when src/ changes)
+pio run -e ticker -t upload
+
+# the watchlist (after editing data/watchlist.json)
+PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs
+```
+
+`huge_app.csv` already leaves an `0xE0000` (896KB) data partition spare, which
+LittleFS formats on first use — no partition change was needed.
+
+The `PLATFORMIO_DATA_DIR` prefix is there because `data_dir` is a `[platformio]`
+option and cannot be set per-env. With one app using a filesystem, overriding it
+at the call site beats pointing the whole project at one app's data directory.
+
+`addRow()` is a **trust boundary** — that file is hand-edited, so labels longer
+than the 5-glyph symbol box are rejected, empty ids are rejected, and the
+24-symbol cap is enforced rather than assumed. Rejected entries are named in the
+serial log instead of vanishing. If the file is missing or malformed the screen
+says so *and prints the uploadfs command*, rather than going blank.
 
 ## The API question, tested rather than assumed
 
@@ -24,47 +47,83 @@ Measured from a laptop before writing any firmware:
 
 **Yahoo returns HTTP 429 with no User-Agent.** An MCU sends none by default, so
 without an explicit header it rate-limits immediately and presents as a broken
-app rather than a rejected request. Set one.
+app rather than a rejected request. The firmware sets one.
 
-So the shape is fixed by the APIs: **crypto is one cheap request, stocks are one
-request per symbol.** Eight stocks means eight TLS handshakes at roughly 40KB of
-heap each, so they must run sequentially on a reused client, not concurrently.
-At 1–2s each that is 10–15s for a full refresh — fine for a panel, but it blocks
-the single core, so the clock in the corner will visibly jump.
+That asymmetry drives the whole polling design: **coins are one cheap request,
+stocks are one request per symbol.** So:
 
-**Poll on market hours.** The board already has NTP and a real TZ, so there is no
-excuse for hitting a closed market every five minutes: refresh every 5 min
-between 09:30 and 16:00 ET on weekdays, hourly otherwise, and treat crypto
-separately since it never closes. That also keeps a long way clear of the 429.
+- Stock fetches are **sequential on a single reused `NetworkClientSecure`** —
+  each TLS session costs ~40KB of a 512KB heap, so they cannot overlap.
+- The refresh interval has a **floor of roughly one request per minute**
+  (`stockEvery = max(interval, nStocks × 60s)`). Twelve stocks every five
+  minutes would be 144 requests/hour and Yahoo starts answering 429. Long lists
+  trade freshness for breadth, deliberately and visibly.
+- **Polling follows market hours.** 5 min between 09:30 and 16:00 ET on
+  weekdays, hourly otherwise; coins keep their own 5-minute cadence because
+  crypto never closes. `marketOpen()` is asserted in `selfCheck()`.
 
-## Readability comes first
+## Scrolling: why it pages instead of sliding
 
-The preview below shows eleven rows at size 1, and that is now known to be too
-small to read on this panel — the same complaint that got desk-clock's forecast
-enlarged. So the design is **six to eight symbols at size 2**, not a dense list:
+The ask was a smooth scroll for a longer list. Three options, in order of cost:
 
-- symbol at size 2 on the left (4 chars, 48px)
-- price at size 2 right-aligned (72px), coloured green or red
-- percent change at size 1 beneath, or the price colour alone
+1. **ST7789 hardware vertical scroll** (`VSCRDEF`/`VSCRSAR`) — free, no CPU.
+   **Doesn't apply.** It wraps *within* the 320-line frame, so 12 symbols at a
+   38px pitch (456px) cannot fit regardless; and Arduino_GFX exposes no scroll
+   API, so it would mean raw panel commands. Also scrolls along the native axis,
+   which is sideways once the board is rotated to landscape.
+2. **Pixel-wise slide** — repaints the entire row region every frame. That is
+   172×250px over SPI on one core already down-clocked to 80MHz for heat.
+   Expensive, and the thing it buys is decoration.
+3. **Paged window with a staggered redraw** — what shipped. Every 8s the page
+   flips and the six rows redraw top-to-bottom with a 22ms stagger, so it reads
+   as movement rather than a blink. **It costs nothing extra** — the same
+   redraws, just spaced out.
 
-That fits 172px with margins and gives ~8 rows of 30px. Fewer symbols, legible.
-Pick the eight that matter rather than paging — a list is the natural form for a
-ticker, and paging was already rejected for desk-clock.
+The header shows `1/2` so a flip can't be mistaken for prices changing. The row
+cache is keyed **per screen slot, not per symbol**, so turning the page
+invalidates it — otherwise a slot holding an unchanged string would keep the
+previous page's symbol.
 
-**Hard parts**
+## Readability
 
-- Delayed data is likely (Yahoo is ~15 min behind on some exchanges). Show a
-  "delayed" marker rather than implying live prices; the preview already does.
-- Back off hard on 429, and never retry a rate-limit tightly.
-- TLS on 512KB of SRAM: each HTTPS connection costs a chunk of heap. Reuse one
-  `WiFiClientSecure` across the sequential per-symbol fetches and skip
-  certificate pinning. Batching is **not** available for stocks — the only
-  multi-symbol endpoint now returns 401, which is why the design is sequential.
-- Don't repaint the whole list per update — per-row dirty rects, or the scroll
-  stutters.
+Six rows at text size 2 is the budget, and it is a layout fact rather than a
+preference — `checkLayout()` asserts that both orientations hold exactly one
+page, that the symbol box cannot reach the price box, and that the footer does
+not land on the last row. Size 1 (6×8px glyphs) is already known to be too small
+to read on this panel, which is the complaint that got desk-clock's forecast
+enlarged.
 
-**Pieces:** `WiFiClientSecure`, `ArduinoJson` (use a filter to skip fields —
-whole-response parsing will exhaust heap), Arduino_GFX.
+Landscape uses two columns of three, so a page is six rows in both orientations.
 
-**Effort:** small once the data source is settled; picking the API is the
-decision, not the code.
+## What the self-check caught
+
+`selfCheck()` runs before the display initialises and asserts on failure, so a
+layout bug is a boot loop with a line number rather than a subtly wrong screen.
+Two real finds during this build:
+
+- **A landscape overflow.** Rows ended at y=132 but the footer started at y=130.
+  The two asserts together pin the only legal window, 132–140.
+- **A bad assertion of mine, not bad code.** `formatPct(2.35f)` was expected to
+  give `+2.4%`; it correctly gives `+2.3%`, because `2.35f` is really
+  `2.3499999`. Don't assert what a half-way float literal rounds to — the test
+  values now sit off the boundary, with a comment saying why.
+
+`formatPrice()` has a 7-character box and shrinks precision as the number grows,
+because `0.4215` and `79010` have to fit the same space. Percent change is
+**always signed**, so green/red is never the only cue.
+
+## Hard parts, still true
+
+- Delayed data is likely (Yahoo runs ~15 min behind on some exchanges). The
+  footer says `delayed, Nm ago` rather than implying live prices.
+- Back off hard on 429 and never retry a rate-limit tightly. The request floor
+  above is the main defence; the HTTP code is named in the serial log.
+- A misspelled symbol returns 200 with no price field. That is logged as
+  `no price in payload (bad symbol?)` so it isn't mistaken for a network fault —
+  the row just shows `--` in the dim colour.
+- `client.setInsecure()` is deliberate: these are public read-only quotes, and
+  certificate pinning on a desk device whose flash can be dumped buys nothing.
+  See [SECURITY.md](../../../SECURITY.md).
+
+**Pieces:** `NetworkClientSecure`, `ArduinoJson` v7 with filters, `LittleFS`,
+`<ui.h>` for schemes/rotation/gestures, `<netjoin.h>` for the BSSID-pinned join.
