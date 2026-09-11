@@ -53,3 +53,5 @@ Each app README has a `preview.svg` wireframe drawn at the panel's real 240×320
 | [pomodoro](apps/pomodoro/) | Work timer with touch controls and an audible chime |
 | [soundboard](apps/soundboard/) | Tap-to-play sample grid over the speaker header |
 | [sd-file-browser](apps/sd-file-browser/) | Browse and view files on the card |
+| [ticker](apps/ticker/) | The C6 watchlist, with per-row sparklines, a heatmap and tap-to-detail |
+| [bike-buddy](apps/bike-buddy/) | Mountain bike computer: GPS, BLE sensors, offline map, no phone |

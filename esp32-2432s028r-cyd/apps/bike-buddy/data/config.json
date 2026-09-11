@@ -1,0 +1,178 @@
+{
+  "_readme": [
+    "Every setting for bike-buddy. Edit, then reload it WITHOUT recompiling:",
+    "  PLATFORMIO_DATA_DIR=apps/bike-buddy/data pio run -e bike-buddy -t uploadfs",
+    "",
+    "Read through the shared appcfg.h loader. Any key may be left out -- the",
+    "firmware default applies. A value outside its allowed range is REJECTED and",
+    "named on the serial log, not silently clamped.",
+    "",
+    "There are no secrets in this app at all: no Wi-Fi, no API keys, nothing to",
+    "put in secrets.h. That is the point of the design -- see the README on why",
+    "the iPhone is deliberately not in the loop.",
+    "",
+    "Several keys here are CALIBRATION, not preference. A bike computer that",
+    "cannot be calibrated to the actual bike reports confident wrong numbers,",
+    "which is worse than reporting none."
+  ],
+
+  "_units": "'metric' or 'imperial'. Affects display only; the log is always SI.",
+  "units": "metric",
+
+  "_wheel": [
+    "Rolling circumference in millimetres, 800-2500. CALIBRATION, and the most",
+    "important number in this file: every distance and every wheel-sensor speed",
+    "scales directly off it.",
+    "",
+    "MEASURE IT. Mark the tyre, roll the bike one full rotation with your weight",
+    "on it, measure the marks. Do not use the size printed on the sidewall --",
+    "tyre width, pressure and rider weight move this by a couple of percent, and",
+    "a couple of percent is a wrong distance on every ride forever.",
+    "",
+    "2136 is a 29x2.4 at trail pressure, which is a starting point and not an",
+    "answer."
+  ],
+  "wheel": { "circumferenceMm": 2136 },
+
+  "_speed": [
+    "source  'auto', 'wheel' or 'gps'.",
+    "",
+    "'auto' prefers the CSC wheel sensor and falls back to GPS when it drops.",
+    "That is the right default under tree cover, where GPS speed lags a second",
+    "or two and goes noisy -- which is exactly the terrain this device is for.",
+    "GPS still owns distance-along-route and position regardless."
+  ],
+  "speed": { "source": "auto" },
+
+  "_barometer": [
+    "Elevation and live grade come from the BMP280, not from GPS. GPS altitude",
+    "is the worst number GPS produces -- plus or minus 10-20m, and it wanders",
+    "while you stand still, which makes both total ascent and live grade junk.",
+    "",
+    "zeroAtStart   take the trailhead as the reference on boot.",
+    "seaLevelHpa   used when zeroAtStart is false, 950-1050. CALIBRATION: this",
+    "              drifts with the weather over a single day, which is why it is",
+    "              a setting and not a constant.",
+    "gradeWindowM  distance over which grade is averaged, 10-200. Too short and",
+    "              the number flickers on every root; too long and it lags the",
+    "              pitch you are actually on."
+  ],
+  "barometer": { "zeroAtStart": true, "seaLevelHpa": 1013.25, "gradeWindowM": 30 },
+
+  "_sensors": [
+    "BLE MAC addresses of the sensors to connect to, as a plain allow-list.",
+    "Empty string means 'not fitted' and the field simply does not draw.",
+    "",
+    "These are standard GATT profiles -- heart rate 0x180D, cadence and wheel",
+    "speed 0x1816, power 0x1818 -- so any mainstream strap or sensor works and",
+    "there is no vendor cloud in the path. Naming them by MAC rather than",
+    "scanning-and-picking keeps the pairing UX at zero, which matters on a",
+    "device with no keyboard and one tap gesture.",
+    "",
+    "Straps also report their own battery over BAS 0x180F; that is what the",
+    "SYSTEM page shows, since the board itself runs off a dumb USB bank with no",
+    "state of charge to read."
+  ],
+  "sensors": {
+    "heartRate": "",
+    "cadence": "",
+    "power": ""
+  },
+
+  "_imu": [
+    "enabled     the accelerometer and gyro are optional; everything else works",
+    "            without them.",
+    "airtimeG    freefall threshold as a fraction of g, 0.1-0.5. Total",
+    "            acceleration below this counts as airborne.",
+    "airtimeMs   how long it has to stay there to count as a jump, 50-1000.",
+    "            Suspension mutes the first few milliseconds, so airtime is",
+    "            measured from the threshold crossing, not from takeoff.",
+    "",
+    "LEAN ANGLE DOES NOT COME FROM THE ACCELEROMETER. It is atan(v * yawRate /",
+    "g) -- a bike leans until lateral g reads about zero, so a car-style g-meter",
+    "would sit dead still through the best corner of the ride. See the README.",
+    "",
+    "Impact detection flags the ride log. It is NOT crash detection: there is no",
+    "connectivity here to call anyone with."
+  ],
+  "imu": { "enabled": true, "airtimeG": 0.3, "airtimeMs": 100 },
+
+  "_pages": [
+    "default        which page to sit on: map, climb, numbers, trip, system.",
+    "autoClimb      switch to CLIMB when a climb starts and back when it tops",
+    "               out. Free, because the climbs are precomputed on the host.",
+    "               Tapping away from CLIMB suppresses it for that climb --",
+    "               automatic help that overrides a deliberate action stops",
+    "               being help.",
+    "returnSeconds  bounce back to 'default' after this long on SYSTEM or TRIP,",
+    "               0-600, 0 to disable. Stops you descending a mountain looking",
+    "               at your free heap."
+  ],
+  "pages": { "default": "numbers", "autoClimb": true, "returnSeconds": 30 },
+
+  "_autopause": [
+    "TWO thresholds, not one. A single threshold flickers between moving and",
+    "stopped on a slow technical climb and ruins the moving average.",
+    "",
+    "pauseBelowKph   stop the moving timer under this, 0.5-10.",
+    "resumeAboveKph  start it again over this, 1-20. Must exceed pauseBelowKph;",
+    "                an inverted pair is rejected.",
+    "dwellMs         how long the condition must hold either way, 500-10000."
+  ],
+  "autopause": { "pauseBelowKph": 1.5, "resumeAboveKph": 3.0, "dwellMs": 3000 },
+
+  "_route": [
+    "gpx   the planned route, drawn on MAP.",
+    "prof  distance/elevation pairs sampled from the DEM at prep time, plus the",
+    "      precomputed climb list. Under 5KB for a 30km route, and it is the",
+    "      ENTIRE input to the CLIMB page -- no tiles involved, which is why",
+    "      that page ships before the map does.",
+    "",
+    "offRouteM  how far off the line before the page stops counting down to a",
+    "           summit and says OFF ROUTE instead, 10-500. Distance-to-top is",
+    "           meaningless once you are not on the route, and a confident wrong",
+    "           number is the failure mode this whole repo guards against.",
+    "",
+    "Both empty means free-ride: breadcrumb and numbers, no route, no climbs."
+  ],
+  "route": { "gpx": "", "prof": "", "offRouteM": 60 },
+
+  "_map": [
+    "tileDir  where the prepared JPEG tiles live on the card.",
+    "zoom     16 puts a tile at roughly 400m at mid-latitudes; a 10km square is",
+    "         then about 500 tiles, ~10MB. 14-17.",
+    "",
+    "Tiles are RENDERED locally from an OSM extract plus a DEM, not downloaded:",
+    "tile servers' usage policies forbid bulk fetching, and more to the point",
+    "you cannot restyle somebody else's PNG. The styling -- hillshade base,",
+    "index contours only, trails coloured by mtb:scale -- is the whole reason",
+    "this is legible at 240px."
+  ],
+  "map": { "tileDir": "/tiles", "zoom": 16 },
+
+  "_brightness": [
+    "auto      follow the LDR.",
+    "min, max  the range it maps between, 8-255.",
+    "",
+    "NOTE THE HIGH FLOOR. This is an outdoor device: the failure mode is a",
+    "washed-out screen in direct sun, not a too-bright one at night. Power is",
+    "not scarce here -- a 5000mAh bank runs this about 20 hours -- so there is",
+    "no reason to dim outdoors.",
+    "",
+    "Do NOT add a sleep or deep-dim mode without checking your power bank. Most",
+    "banks cut output below ~50-70mA. The device draws 120-180mA, so it is",
+    "clear -- but 'saving power' can drop it under the threshold and the bank",
+    "switches off mid-ride."
+  ],
+  "brightness": { "auto": true, "min": 60, "max": 255 },
+
+  "_log": [
+    "flushSeconds  how often the track log is flushed to the card, 1-60.",
+    "",
+    "The log is appended one line per fix and flushed on this interval rather",
+    "than held open, because losing power mid-write can take the filesystem",
+    "down with it. A truncated append-only log is still a valid partial ride;",
+    "a corrupted card is not."
+  ],
+  "log": { "flushSeconds": 5 }
+}

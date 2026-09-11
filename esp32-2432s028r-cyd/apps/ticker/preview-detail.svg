@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker DETAIL page: 128px logo, company name, large price, intraday chart with previous-close reference, day and 52-week range bars, and a prev/list/next button bar">
+  <!-- 240x320 native. One stock's own page, reached by TAPPING it in the list
+       or the heatmap - same gesture in both, no modes.
+       Everything here is free: meta in the response already being fetched
+       carries longName, day high/low, 52-week high/low, volume and the
+       exchange. The C6 reads two fields out of that object and drops the rest.
+       Navigation is three explicit buttons, not tap zones: resistive touch
+       wants an obvious chunky target, and this is a desk device where aiming
+       is affordable - the opposite call from bike-buddy. -->
+  <rect width="240" height="320" fill="#0b0f14"/>
+
+  <!-- header -->
+  <rect width="240" height="26" fill="#161d26"/>
+  <text x="8" y="18" font-family="monospace" font-size="11" fill="#e6edf3">NVDA</text>
+  <text x="232" y="18" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="end">NASDAQ  14:32</text>
+
+  <!-- 128px logo: raw RGB565 off the SD card, 32KB, no PNG decoder in the
+       firmware. At this size a wordmark is legible, which is why the 24px row
+       badge is only ever a badge. -->
+  <rect x="8" y="34" width="80" height="80" rx="8" fill="#1c2531"/>
+  <text x="48" y="86" font-family="monospace" font-size="34" fill="#3fb950" text-anchor="middle">N</text>
+
+  <text x="100" y="54" font-family="monospace" font-size="10" fill="#8b98a5">NVIDIA Corp</text>
+  <text x="100" y="88" font-family="monospace" font-size="26" fill="#e6edf3">184.62</text>
+  <!-- change is always signed AND printed both ways: colour is never the only cue -->
+  <text x="100" y="108" font-family="monospace" font-size="11" fill="#3fb950">+4.34  +2.41%</text>
+
+  <!-- intraday chart: the sparkline's data given room to be a chart -->
+  <polygon points="10,210 30,206 50,214 70,200 90,192 110,196 130,180 150,172 170,178 190,160 210,152 230,148 230,234 10,234"
+           fill="#3fb950" fill-opacity="0.12"/>
+  <!-- previous close. NOT decoration: the percent change is measured from this
+       line, so without it the chart's shape does not mean anything. -->
+  <line x1="10" y1="212" x2="230" y2="212" stroke="#4d5560" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="230" y="209" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="end">prev 180.28</text>
+
+  <polyline points="10,210 30,206 50,214 70,200 90,192 110,196 130,180 150,172 170,178 190,160 210,152 230,148"
+            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
+
+  <text x="12" y="140" font-family="monospace" font-size="7" fill="#6e7681">186.40</text>
+  <text x="12" y="232" font-family="monospace" font-size="7" fill="#6e7681">179.85</text>
+  <text x="10" y="243" font-family="monospace" font-size="7" fill="#6e7681">09:30</text>
+  <text x="230" y="243" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="end">16:00</text>
+
+  <!-- range bars: what a phone app would spend on a table, spent on position -->
+  <text x="8" y="258" font-family="monospace" font-size="8" fill="#8b98a5">DAY</text>
+  <text x="36" y="258" font-family="monospace" font-size="8" fill="#6e7681">179.85</text>
+  <rect x="80" y="251" width="86" height="5" rx="2.5" fill="#2d353f"/>
+  <circle cx="142" cy="253.5" r="4" fill="#e6edf3" stroke="#0b0f14" stroke-width="1"/>
+  <text x="174" y="258" font-family="monospace" font-size="8" fill="#6e7681">186.40</text>
+
+  <text x="8" y="278" font-family="monospace" font-size="8" fill="#8b98a5">52W</text>
+  <text x="36" y="278" font-family="monospace" font-size="8" fill="#6e7681">86.62</text>
+  <rect x="80" y="271" width="86" height="5" rx="2.5" fill="#2d353f"/>
+  <circle cx="157" cy="273.5" r="4" fill="#e6edf3" stroke="#0b0f14" stroke-width="1"/>
+  <text x="174" y="278" font-family="monospace" font-size="8" fill="#6e7681">195.95</text>
+
+  <!-- three chunky targets, 80x32 each -->
+  <rect x="0" y="288" width="240" height="32" fill="#161d26"/>
+  <line x1="80" y1="288" x2="80" y2="320" stroke="#0b0f14" stroke-width="1"/>
+  <line x1="160" y1="288" x2="160" y2="320" stroke="#0b0f14" stroke-width="1"/>
+  <text x="40" y="308" font-family="monospace" font-size="10" fill="#8b98a5" text-anchor="middle">&#8249; PREV</text>
+  <text x="120" y="308" font-family="monospace" font-size="10" fill="#e6edf3" text-anchor="middle">LIST</text>
+  <text x="200" y="308" font-family="monospace" font-size="10" fill="#8b98a5" text-anchor="middle">NEXT &#8250;</text>
+</svg>

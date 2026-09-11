@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker LIST layout: six rows of logo badge, symbol, intraday sparkline, price and signed percent change">
+  <!-- 240x320 native. Six rows at a 42px pitch, each carrying a 24px logo badge
+       and a sparkline that the 172px C6 panel had no room for.
+       The badge is RECOGNITION, not identification - the symbol text stays
+       beside it, so a wordmark reduced to an unreadable smudge costs nothing
+       and a missing small logo is a non-event.
+       The series is free: it arrives in the same one-request-per-symbol Yahoo
+       call the C6 already makes, which reads two fields out of it and discards
+       ~78 intraday closes. Each sparkline is scaled to its OWN min/max - a
+       shared scale would flatten a $12 stock beside a $600 one.
+       Tapping a row opens that stock's own page. The symbol is resolved at
+       touch-DOWN and the page timer freezes while the touch is held, because
+       the slot is not the symbol. -->
+  <rect width="240" height="320" fill="#0b0f14"/>
+
+  <!-- header: page number so a page flip can't read as prices changing -->
+  <rect width="240" height="26" fill="#161d26"/>
+  <text x="8" y="18" font-family="monospace" font-size="11" fill="#e6edf3">WATCHLIST</text>
+  <text x="232" y="18" font-family="monospace" font-size="10" fill="#8b98a5" text-anchor="end">1/2  14:32</text>
+
+  <!-- row 1: up -->
+  <rect x="6" y="40" width="22" height="22" rx="4" fill="#10241a"/>
+  <text x="17" y="56" font-family="monospace" font-size="13" fill="#3fb950" text-anchor="middle">N</text>
+  <text x="32" y="50" font-family="monospace" font-size="15" fill="#e6edf3">NVDA</text>
+  <polyline points="74,58 80,56 86,57 92,52 98,54 104,48 110,45 116,47 122,42 128,39 134,38"
+            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="232" y="48" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">184.62</text>
+  <text x="232" y="62" font-family="monospace" font-size="10" fill="#3fb950" text-anchor="end">+2.41%</text>
+  <line x1="6" y1="70" x2="232" y2="70" stroke="#161d26" stroke-width="1"/>
+
+  <!-- row 2: down -->
+  <rect x="6" y="82" width="22" height="22" rx="4" fill="#1c2531"/>
+  <text x="17" y="98" font-family="monospace" font-size="13" fill="#e6edf3" text-anchor="middle">A</text>
+  <text x="32" y="92" font-family="monospace" font-size="15" fill="#e6edf3">AAPL</text>
+  <polyline points="74,84 80,86 86,85 92,89 98,88 104,92 110,95 116,93 122,97 128,100 134,102"
+            fill="none" stroke="#f85149" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="232" y="90" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">271.08</text>
+  <text x="232" y="104" font-family="monospace" font-size="10" fill="#f85149" text-anchor="end">-1.13%</text>
+  <line x1="6" y1="112" x2="232" y2="112" stroke="#161d26" stroke-width="1"/>
+
+  <!-- row 3 -->
+  <rect x="6" y="124" width="22" height="22" rx="4" fill="#2a1618"/>
+  <text x="17" y="140" font-family="monospace" font-size="13" fill="#f85149" text-anchor="middle">T</text>
+  <text x="32" y="134" font-family="monospace" font-size="15" fill="#e6edf3">TSLA</text>
+  <polyline points="74,143 80,141 86,142 92,136 98,133 104,135 110,129 116,126 122,128 128,123 134,122"
+            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="232" y="132" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">412.55</text>
+  <text x="232" y="146" font-family="monospace" font-size="10" fill="#3fb950" text-anchor="end">+4.02%</text>
+  <line x1="6" y1="154" x2="232" y2="154" stroke="#161d26" stroke-width="1"/>
+
+  <!-- row 4: a genuinely flat day, which must not look like a missing series -->
+  <rect x="6" y="166" width="22" height="22" rx="4" fill="#14212e"/>
+  <text x="17" y="182" font-family="monospace" font-size="13" fill="#58a6ff" text-anchor="middle">M</text>
+  <text x="32" y="176" font-family="monospace" font-size="15" fill="#e6edf3">MSFT</text>
+  <polyline points="74,178 80,177 86,178 92,176 98,177 104,175 110,176 116,174 122,175 128,173 134,173"
+            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="232" y="174" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">498.30</text>
+  <text x="232" y="188" font-family="monospace" font-size="10" fill="#3fb950" text-anchor="end">+0.18%</text>
+  <line x1="6" y1="196" x2="232" y2="196" stroke="#161d26" stroke-width="1"/>
+
+  <!-- row 5: nulls in the close array leave a real gap. Drawing THROUGH the gap
+       would invent prices that never printed. -->
+  <rect x="6" y="208" width="22" height="22" rx="4" fill="#2a2213"/>
+  <text x="17" y="224" font-family="monospace" font-size="13" fill="#d29922" text-anchor="middle">B</text>
+  <text x="32" y="218" font-family="monospace" font-size="15" fill="#e6edf3">BTC</text>
+  <polyline points="74,212 80,214 86,213 92,217 98,216"
+            fill="none" stroke="#f85149" stroke-width="1.5" stroke-linejoin="round"/>
+  <polyline points="116,222 122,224 128,226 134,228"
+            fill="none" stroke="#f85149" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="232" y="216" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">104,820</text>
+  <text x="232" y="230" font-family="monospace" font-size="10" fill="#f85149" text-anchor="end">-3.27%</text>
+  <line x1="6" y1="238" x2="232" y2="238" stroke="#161d26" stroke-width="1"/>
+
+  <!-- row 6: not fetched yet. Dashed and dim, so "no data" can never be mistaken
+       for "didn't move" - a solid flat line would read as a real quote. -->
+  <rect x="6" y="250" width="22" height="22" rx="4" fill="#161d26"/>
+  <text x="17" y="266" font-family="monospace" font-size="13" fill="#4d5560" text-anchor="middle">S</text>
+  <text x="32" y="260" font-family="monospace" font-size="15" fill="#4d5560">SOL</text>
+  <line x1="74" y1="262" x2="134" y2="262" stroke="#2d353f" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <text x="232" y="258" font-family="monospace" font-size="15" fill="#4d5560" text-anchor="end">--</text>
+  <text x="232" y="272" font-family="monospace" font-size="10" fill="#4d5560" text-anchor="end">--</text>
+
+  <!-- footer: says the prices are delayed rather than implying they're live -->
+  <rect x="0" y="288" width="240" height="32" fill="#161d26"/>
+  <circle cx="12" cy="304" r="4" fill="#3fb950"/>
+  <text x="24" y="308" font-family="monospace" font-size="8" fill="#8b98a5">delayed, 3m ago</text>
+  <text x="232" y="308" font-family="monospace" font-size="8" fill="#3fb950" text-anchor="end">MARKET OPEN</text>
+</svg>

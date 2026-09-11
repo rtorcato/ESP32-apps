@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="bike-buddy CLIMB page: live grade, distance and ascent to the top, and the profile ahead coloured by gradient">
+  <!-- 240x320 native. CLIMB page, 2 of 5 - the page you look at while riding,
+       where MAP is the one you look at when you stop.
+       The whole page is driven by route.prof: distance/elevation pairs sampled
+       from the DEM at prep time, under 5KB for a 30km route, and a climb list
+       computed on the Mac. No tiles involved at all, which is why this ships in
+       v1 and the map doesn't.
+       The ridden part is flat grey; only what's LEFT gets grade colour, because
+       what's left is the only part you can still do anything about. -->
+  <rect width="240" height="320" fill="#0b0f14"/>
+
+  <!-- header -->
+  <rect width="240" height="26" fill="#161d26"/>
+  <text x="8" y="18" font-family="monospace" font-size="11" fill="#e6edf3">CLIMB</text>
+  <circle cx="104" cy="13" r="2.5" fill="#2d353f"/>
+  <circle cx="114" cy="13" r="2.5" fill="#e6edf3"/>
+  <circle cx="124" cy="13" r="2.5" fill="#2d353f"/>
+  <circle cx="134" cy="13" r="2.5" fill="#2d353f"/>
+  <circle cx="144" cy="13" r="2.5" fill="#2d353f"/>
+  <text x="232" y="18" font-family="monospace" font-size="9" fill="#8b98a5" text-anchor="end">SAT 9  14:32</text>
+
+  <!-- live grade, from the barometer: what's under you right now -->
+  <text x="10" y="46" font-family="monospace" font-size="8" fill="#8b98a5">GRADE</text>
+  <text x="8" y="88" font-family="monospace" font-size="40" fill="#d29922">7.2</text>
+  <text x="78" y="88" font-family="monospace" font-size="16" fill="#8b98a5">%</text>
+
+  <!-- what's left, from the DEM: the number the page exists for -->
+  <text x="232" y="46" font-family="monospace" font-size="8" fill="#8b98a5" text-anchor="end">TO TOP</text>
+  <text x="232" y="68" font-family="monospace" font-size="16" fill="#e6edf3" text-anchor="end">1.4 km</text>
+  <text x="232" y="88" font-family="monospace" font-size="12" fill="#8b98a5" text-anchor="end">+186 m</text>
+
+  <!-- climb identity comes from the precomputed list, not from live analysis -->
+  <text x="8" y="112" font-family="monospace" font-size="11" fill="#e6edf3">CEDAR RIDGE</text>
+  <text x="232" y="112" font-family="monospace" font-size="9" fill="#6e7681" text-anchor="end">CAT 3</text>
+  <line x1="8" y1="120" x2="232" y2="120" stroke="#161d26" stroke-width="1"/>
+
+  <!-- profile. X is DISTANCE, resampled evenly at prep time - plotting by GPX
+       point index would stretch the technical bits and compress the fireroad. -->
+  <!-- ridden: flat grey -->
+  <polygon points="10,238 30,232 30,250 10,250" fill="#242c36"/>
+  <polygon points="30,232 50,226 50,250 30,250" fill="#242c36"/>
+  <polygon points="50,226 70,214 70,250 50,250" fill="#242c36"/>
+  <polygon points="70,214 90,206 90,250 70,250" fill="#242c36"/>
+  <polygon points="90,206 110,190 110,250 90,250" fill="#242c36"/>
+  <!-- ahead: coloured by gradient band -->
+  <polygon points="110,190 130,180 130,250 110,250" fill="#d29922"/>
+  <polygon points="130,180 150,158 150,250 130,250" fill="#f85149"/>
+  <polygon points="150,158 170,146 170,250 150,250" fill="#db6d28"/>
+  <polygon points="170,146 190,138 190,250 170,250" fill="#d29922"/>
+  <polygon points="190,138 210,134 210,250 190,250" fill="#3fb950"/>
+  <polygon points="210,134 230,132 230,250 210,250" fill="#3fb950"/>
+
+  <polyline points="10,238 30,232 50,226 70,214 90,206 110,190 130,180 150,158 170,146 190,138 210,134 230,132"
+            fill="none" stroke="#e6edf3" stroke-width="1.5" stroke-linejoin="round"/>
+  <line x1="10" y1="250" x2="230" y2="250" stroke="#2d353f" stroke-width="1"/>
+
+  <!-- you are here -->
+  <line x1="110" y1="190" x2="110" y2="250" stroke="#e6edf3" stroke-width="0.8" stroke-dasharray="2 2"/>
+  <circle cx="110" cy="190" r="3.5" fill="#e6edf3" stroke="#0b0f14" stroke-width="1"/>
+
+  <text x="12" y="140" font-family="monospace" font-size="7" fill="#6e7681">480 m</text>
+  <text x="12" y="246" font-family="monospace" font-size="7" fill="#6e7681">310 m</text>
+  <text x="10" y="262" font-family="monospace" font-size="7" fill="#6e7681">0</text>
+  <text x="230" y="262" font-family="monospace" font-size="7" fill="#6e7681" text-anchor="end">2.4 km</text>
+
+  <text x="10" y="280" font-family="monospace" font-size="10" fill="#8b98a5">AVG 8.1%</text>
+  <text x="96" y="280" font-family="monospace" font-size="10" fill="#8b98a5">MAX 14%</text>
+  <text x="232" y="280" font-family="monospace" font-size="10" fill="#8b98a5" text-anchor="end">VAM 720</text>
+
+  <!-- footer: identical on all five pages -->
+  <rect x="0" y="288" width="240" height="32" fill="#161d26"/>
+  <text x="8" y="311" font-family="monospace" font-size="17" fill="#e6edf3">18.4</text>
+  <text x="52" y="311" font-family="monospace" font-size="8" fill="#6e7681">km/h</text>
+  <text x="112" y="311" font-family="monospace" font-size="11" fill="#8b98a5">12.4 km</text>
+  <text x="232" y="311" font-family="monospace" font-size="11" fill="#8b98a5" text-anchor="end">1:04:37</text>
+</svg>
