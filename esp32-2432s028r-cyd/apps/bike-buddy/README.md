@@ -154,6 +154,11 @@ Copernicus GLO-30 or SRTM DEM, run through `gdaldem hillshade`, `gdal_contour`
 and a trail style, gives you tiles drawn *for* 240px. That's a prep script on the
 Mac, run once per riding area — the firmware stays a blitter.
 
+> **Before building this pipeline, read
+> [Prior art](#prior-art-and-what-to-steal-from-it).** An existing ESP32 project
+> stores OSM as compact *vector* data instead of raster tiles, which is probably
+> the better answer for trails — raster only genuinely wins for the hillshade.
+
 The device side is unchanged and cheap: at zoom 16 a tile covers roughly 400m at
 mid-latitudes, so a 10km square is about 500 tiles, **~10MB as JPEG**. Use JPEG,
 not PNG: `JPEGDEC` decodes MCU blocks **straight to the display**, which is the
@@ -299,6 +304,50 @@ that can't be matched to the actual bike reports confident wrong numbers, which
 is worse than reporting none — the tyre sidewall's printed size is off by a
 couple of percent once you account for width, pressure and rider weight, and a
 couple of percent is a wrong distance on every ride you ever record.
+
+## Prior art, and what to steal from it
+
+**This is a crowded field and nothing here is unsold.** Worth knowing before
+spending a season on it.
+
+Commercially the category is mature: Garmin's Edge line (850 compact, 1050
+flagship, Explore 2), Wahoo's ELEMNT ROAM 3 / BOLT 3 / Ace, and the Hammerhead
+Karoo, which is the usual enthusiast pick for trail navigation — 3.2" 800×480,
+SRAM AXS integration, 15h+. COROS DURA sits at the endurance end with battery
+measured in days. You will not beat any of them on maps, routing, ruggedness,
+ecosystem or battery, and **Garmin's MTB metrics already cover jump and
+roughness-style scores**, so even the "nobody sells this" features mostly are
+sold.
+
+One of those data points is *good* news, though, and it revises the
+[readability](#readability-decides-whether-this-is-worth-building) worry above:
+**the Karoo is a bright backlit colour touchscreen and it works fine on trails.**
+Reviews put Garmin ahead on midday brightness and the Karoo ahead on resolution,
+with an anti-glare coating doing real work. So backlit is not disqualifying —
+*dim* is. If the CYD fails the sun test, the answer is a brighter panel with a
+matte coating, not abandoning the idea.
+
+The open-source ESP32 field is busy too, and two projects have already solved
+this app's single hardest part:
+
+| Project | What it already does |
+|---|---|
+| [lspr98/bike-computer-32](https://github.com/lspr98/bike-computer-32) | ESP32-C3, OSM **offline maps**, GPX track rendering, multi-GNSS — plus a C++ tool that converts OSM into an ESP-optimised format |
+| [jgauchia/IceNav-v3](https://github.com/jgauchia/IceNav-v3) | ESP32-S3 GPS navigator, OSM offline maps, PlatformIO, multi-board, serial/telnet CLI |
+
+**Read `bike-computer-32`'s converter before writing the GDAL tile pipeline
+above.** It stores maps as compact **vector** data rather than raster tiles, and
+for trails that is very likely the better answer: no JPEG decoder, far less card
+space, and the style stays changeable on-device instead of being baked into a PNG
+at prep time. Raster only genuinely wins for the hillshade layer, which cannot be
+expressed as lines at all — so the honest design is probably **vector trails and
+contours over a raster hillshade**, not the all-raster plan above.
+
+What survives the comparison, and is worth building for: lean angle from
+`v · ω` rather than an accelerometer, the DEM-sampled `route.prof` driving a
+climb page with no map pipeline behind it, and this repo's own `appcfg.h` /
+`ui.h` conventions. That is a real device — it is just not a product, and the
+reason to build it is that it is yours.
 
 **Hard parts**
 
