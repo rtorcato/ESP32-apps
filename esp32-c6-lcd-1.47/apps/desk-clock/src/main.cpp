@@ -15,6 +15,7 @@
 // still erases an exact box -- there is no fillScreen() in loop(), which is
 // what stops the large digits from flickering.
 #include <board.h>
+#include <netjoin.h>
 #include <ui.h>
 #include <secrets.h>
 
@@ -649,11 +650,8 @@ void setup() {
   // not hide the compiled-in copy; see SECURITY.md for what actually helps.
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
-  // Power save is applied *after* association, not before. Parking the radio
-  // between beacons while the four-way handshake is still in flight is a good
-  // way to make that handshake time out, which is exactly the failure this app
-  // already struggles with.
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  netTune();  // full TX power, MIN_MODEM -- see lib/board/netjoin.h
+  netJoinBest(WIFI_SSID, WIFI_PASS);
   // 20s, not 10: the WPA2 handshake can time out once (204) and succeed on the
   // next attempt. A 10s window reported a failure that would have connected,
   // and I misread that as a wrong password twice.
@@ -662,11 +660,6 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
-#if POWER_SAVE
-    // Now that we're associated, park the radio between beacon intervals. Costs
-    // a little inbound latency, which a 15-minute poll never notices.
-    WiFi.setSleep(WIFI_PS_MAX_MODEM);
-#endif
     configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
     struct tm t;
     bool synced = false;
@@ -700,8 +693,8 @@ void setup() {
   // -- so halving the clock costs nothing observable.
   setCpuFrequencyMhz(80);
 #endif
-  Serial.printf("power: cpu %uMHz, wifi sleep %s, die %.1fC\n", getCpuFrequencyMhz(),
-                POWER_SAVE ? "MAX_MODEM" : "default", temperatureRead());
+  Serial.printf("power: cpu %uMHz, wifi sleep MIN_MODEM, die %.1fC\n",
+                getCpuFrequencyMhz(), temperatureRead());
 }
 
 void loop() {
@@ -738,12 +731,17 @@ void loop() {
   static uint32_t lastRetry = 0;
   static uint16_t retries = 0;
   if (state == State::NoWifi) {
-    if (lastRetry == 0 || millis() - lastRetry > WIFI_RETRY_MS) {
+    // Back off: retrying every 20s forever at full power is its own heat
+    // source, and measured the board ran ~9 C hotter while failing than while
+    // connected. Doubles to a 2 minute ceiling.
+    uint32_t wait = netRetryDelay(retries, WIFI_RETRY_MS);
+    if (lastRetry == 0 || millis() - lastRetry > wait) {
       lastRetry = millis();
       retries++;
-      Serial.printf("wifi retry #%u\n", retries);
+      Serial.printf("wifi retry #%u (next in %lus)\n", retries,
+                    (unsigned long)(wait / 1000));
       WiFi.disconnect();
-      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      netJoinBest(WIFI_SSID, WIFI_PASS);  // re-scan, so a better AP wins
     }
   } else {
     retries = 0;
@@ -819,8 +817,11 @@ void loop() {
   static uint32_t lastTemp = 0;
   if (millis() - lastTemp > TEMP_LOG_MS) {
     lastTemp = millis();
-    Serial.printf("die %.1fC  cpu %uMHz  bl %u  heap %u\n", temperatureRead(),
-                  getCpuFrequencyMhz(), uiBacklightApplied, ESP.getFreeHeap());
+    // RSSI and state belong here: "is it connected and how well" is the
+    // question this log gets asked every single time.
+    Serial.printf("die %.1fC  bl %u  heap %u  wifi %s %ddBm\n", temperatureRead(),
+                  uiBacklightApplied, ESP.getFreeHeap(),
+                  WiFi.status() == WL_CONNECTED ? "up" : "DOWN", WiFi.RSSI());
   }
 
   delay(100);

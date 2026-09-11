@@ -18,6 +18,7 @@
 //
 // Needs one of apps/host-monitor/agent/ running on the host being watched.
 #include <board.h>
+#include <netjoin.h>
 #include <ui.h>
 #include <secrets.h>
 
@@ -608,16 +609,14 @@ void setup() {
   WiFi.onEvent(onWiFiEvent);
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  netTune();  // full TX power, MIN_MODEM -- see lib/board/netjoin.h
+  netJoinBest(WIFI_SSID, WIFI_PASS);
   // 20s: the WPA2 handshake can time out once and succeed on retry.
   for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
-#if POWER_SAVE
-    WiFi.setSleep(WIFI_PS_MAX_MODEM);  // after association, never before
-#endif
     // Needed before queryHost() can answer, and lets the board be found as
     // host-monitor.local too.
     MDNS.begin("host-monitor");
@@ -668,11 +667,11 @@ void loop() {
   static uint32_t lastRetry = 0;
   static uint16_t retries = 0;
   if (state == State::NoWifi) {
-    if (lastRetry == 0 || millis() - lastRetry > WIFI_RETRY_MS) {
+    if (lastRetry == 0 || millis() - lastRetry > netRetryDelay(retries, WIFI_RETRY_MS)) {
       lastRetry = millis();
       Serial.printf("wifi retry #%u\n", ++retries);
       WiFi.disconnect();
-      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      netJoinBest(WIFI_SSID, WIFI_PASS);  // re-scan, so a better AP wins
     }
   } else {
     retries = 0;

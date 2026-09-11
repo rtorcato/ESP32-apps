@@ -129,6 +129,32 @@ between beacon intervals while the four-way handshake is still in flight is a
 good way to make that handshake time out. `WiFi.setSleep(WIFI_PS_MAX_MODEM)`
 belongs in the branch that runs once `WL_CONNECTED` is true.
 
+**Pin to the strongest BSSID — use `lib/board/netjoin.h`.** Where two APs
+broadcast one SSID, letting the stack choose means it can latch onto the far one
+or bounce between them, and that shows up as reason 34 `MISSING_ACKS` plus
+repeated 204 `HANDSHAKE_TIMEOUT` — which reads exactly like a wrong password.
+Measured here: a link that sat at −76/−86 dBm with constant reconnects became a
+steady −53 dBm that connects first try. Re-scan on every retry so a genuinely
+better AP still wins.
+
+**Use `WIFI_PS_MIN_MODEM`. Both obvious alternatives are wrong.** Measured on
+this board:
+
+| Setting | Result |
+|---|---|
+| `MAX_MODEM` | ~2 °C cooler, but drops ACKs on a marginal link → reason 34 |
+| `setSleep(false)` | Rock solid, and **+12 °C** (43 °C → 55 °C) |
+| **`MIN_MODEM`** | Wakes for every beacon, sleeps between. Nothing missed, ~44 °C |
+
+And a reasoning trap worth naming: the heat table above shows "the radio costs
+about 1 °C", but that compared radio *off* against `MAX_MODEM` — **not** against
+no-sleep. Reusing that number to justify `setSleep(false)` is how the 12 °C
+regression happened.
+
+**Back off the retry interval.** Retrying every 20s forever at full TX power is
+its own heat source — the board ran ~9 °C hotter while failing than while
+connected. `netRetryDelay()` doubles to a 2 minute ceiling.
+
 **Signal strength is the hidden variable.** The same firmware connected first
 try at −58 dBm and failed a 20s window at −86 dBm. Log `WiFi.RSSI()` on every
 connect, because "it worked yesterday" often means "it was 28 dB stronger
