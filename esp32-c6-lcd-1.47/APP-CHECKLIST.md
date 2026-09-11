@@ -245,6 +245,21 @@ press is 250ms of apparent lag. Measured here, the redraw after release is only
 ~52 ms, so the lag was pure perception. `uiPressDot()` draws a small corner dot
 the instant the button goes down; the hold hints take over from 2s.
 
+**An app may repurpose a gesture, but it must relabel the hint.** `uiPoll()`
+shows what releasing now would do, so a hold that promises `COLOUR` and switches
+layout instead is a lie the UI tells. Claim the gesture by checking for it
+*before* calling `uiHandle()` (the pattern `ui.h` already documents for
+`Setup`), and set `uiHoldSchemeLabel`. ticker does both: it pins one scheme —
+black, white symbols, green and red numbers — and spends the 2s hold on cycling
+its layout.
+
+**Not every app wants nine themes.** Selectable schemes are right for a clock
+that lives in a bedroom; for a data panel where colour *is* the data, a fixed
+palette is better and frees the gesture. Pin it with `uiApply(uiRot(), 0,
+false)` after `uiBegin()` — `persist=false`, so pinning doesn't become an NVS
+write on every boot — and note that this also overrides whatever a previous app
+left in the same NVS namespace.
+
 **Measure before blaming a subsystem.** I attributed this lag to the two NVS
 writes in `uiApply()` and deferred them out of the press path — which was worth
 doing anyway, since it collapses a run of taps into one write — but the

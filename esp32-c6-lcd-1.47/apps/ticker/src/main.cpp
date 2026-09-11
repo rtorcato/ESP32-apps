@@ -21,6 +21,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <NetworkClientSecure.h>
 #include <WiFi.h>
 #include <assert.h>
@@ -39,6 +40,19 @@ static const uint8_t MAX_LABEL = 5;  // glyphs; the symbol box is 5 wide at size
 
 static const uint32_t PAGE_MS = 8000;   // how long each page stays up
 static const uint16_t CASCADE_MS = 22;  // per-row stagger when a page flips
+static const uint32_t SOLO_MS = 5000;   // how long one symbol holds the screen
+
+// Layouts, cycled by the 2s hold. ui.h calls that gesture UiPress::Scheme
+// because most apps here use it for colour; ticker pins one scheme (black with
+// green and red, nothing else) and spends the gesture on this instead.
+// Add a layout by adding an enum value, a geometry constant, a draw function
+// and a checkX() in selfCheck -- nothing else dispatches on it.
+enum class Mode : uint8_t { List, Solo };
+static const uint8_t MODE_COUNT = 2;
+static Mode mode = Mode::List;
+static const char *modeName() { return mode == Mode::Solo ? "SOLO" : "LIST"; }
+
+static const int16_t LOGO_PX = 96;  // must match tools/make-logos.py --size
 
 // Yahoo 429s an anonymous client, so this is required rather than polite.
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
@@ -55,6 +69,7 @@ static const uint32_t LOG_MS = 60UL * 1000;
 #define GH(s) (8 * (s))
 
 static Arduino_GFX *gfx;
+static Preferences cfg;  // ticker's own namespace; ui.h keeps rotation in its
 
 // ── the watchlist, loaded from LittleFS ──────────────────────────────────
 struct Row {
@@ -131,6 +146,21 @@ static bool loadWatchlist() {
   nPages = (nRows + ROWS_PER_PAGE - 1) / ROWS_PER_PAGE;
   Serial.printf("watchlist: %u stocks + %u coins over %u page(s) (%s)\n", nStocks, nCoins,
                 nPages, coinIds[0] ? coinIds : "no coins");
+
+  // Inventory the logos at boot rather than discovering a gap when the solo
+  // layout reaches that symbol. A missing logo is fine -- the symbol is drawn
+  // large instead -- but it should be a line in the log, not a surprise.
+  uint8_t haveLogo = 0;
+  const size_t want = (size_t)LOGO_PX * LOGO_PX * 2;
+  for (uint8_t i = 0; i < nRows; i++) {
+    char path[40];
+    snprintf(path, sizeof path, "/logo/%s.565", rows[i].label);
+    File lf = LittleFS.open(path, "r");
+    if (lf && lf.size() == want) haveLogo++;
+    else Serial.printf("no logo for %s (text fallback)\n", rows[i].label);
+    if (lf) lf.close();
+  }
+  Serial.printf("logos: %u/%u present\n", haveLogo, nRows);
   return true;
 }
 
@@ -165,8 +195,37 @@ static const Layout LANDSCAPE = {
     /*foot  */ 134, 12,
 };
 
+// One symbol filling the screen: logo, ticker, a big price, the change. The
+// text block is centred on cx; in landscape the logo sits left of it and the
+// footer tucks in underneath the logo, because 172px of height cannot stack a
+// logo, three text sizes and three footer lines in one column.
+struct SoloLayout {
+  int16_t logoX, logoY;
+  int16_t cx;  // centre of the text block
+  int16_t ySym, yPrice, yPct;
+  int16_t yFoot0, footStep;
+};
+
+static const SoloLayout PORTRAIT_SOLO = {
+    /*logo */ (172 - LOGO_PX) / 2, 22,
+    /*cx   */ 86,
+    /*text */ 130, 166, 210,
+    /*foot */ 264, 15,
+};
+
+static const SoloLayout LANDSCAPE_SOLO = {
+    /*logo */ 20, 38,
+    /*cx   */ 222,
+    /*text */ 40, 76, 120,
+    /*foot */ 140, 11,
+};
+
 static const Layout *L = &PORTRAIT;
-static void syncLayout() { L = uiLandscape() ? &LANDSCAPE : &PORTRAIT; }
+static const SoloLayout *S = &PORTRAIT_SOLO;
+static void syncLayout() {
+  L = uiLandscape() ? &LANDSCAPE : &PORTRAIT;
+  S = uiLandscape() ? &LANDSCAPE_SOLO : &PORTRAIT_SOLO;
+}
 
 static uint32_t lastStock = 0, lastCoin = 0, lastOk = 0;
 static uint16_t failures = 0;
@@ -305,6 +364,91 @@ static void turnPage(uint8_t to) {
   drawRows(true);
 }
 
+// ── solo layout ──────────────────────────────────────────────────────────
+// Logos are pre-converted to raw RGB565 by tools/make-logos.py and shipped on
+// LittleFS, so the firmware carries no PNG decoder, opens no second endpoint
+// and needs no decode buffer. A missing file is an ordinary case, not an
+// error: the symbol is simply drawn large instead.
+static uint16_t *logoBuf = nullptr;
+static char logoFor[MAX_LABEL + 2] = "";
+static bool logoOk = false;
+
+static bool loadLogo(const char *label) {
+  if (strcmp(label, logoFor) == 0) return logoOk;  // already in the buffer
+  snprintf(logoFor, sizeof logoFor, "%s", label);
+  logoOk = false;
+
+  const size_t want = (size_t)LOGO_PX * LOGO_PX * 2;
+  if (!logoBuf) {
+    logoBuf = (uint16_t *)malloc(want);  // 18KB of ~305KB, allocated once
+    if (!logoBuf) {
+      Serial.println("logo: malloc failed");
+      return false;
+    }
+  }
+  char path[40];
+  snprintf(path, sizeof path, "/logo/%s.565", label);
+  File f = LittleFS.open(path, "r");
+  if (!f) return false;  // no logo for this symbol; caller falls back to text
+  // Check the length before trusting it: a truncated upload would otherwise
+  // blit whatever was left in the buffer from the previous symbol.
+  if (f.size() != want) {
+    Serial.printf("logo %s: %u bytes, want %u -- rerun tools/make-logos.py\n", label,
+                  (unsigned)f.size(), (unsigned)want);
+    f.close();
+    return false;
+  }
+  logoOk = f.read((uint8_t *)logoBuf, want) == want;
+  f.close();
+  return logoOk;
+}
+
+static void fieldCentre(int16_t cx, int16_t y, uint8_t maxChars, uint8_t size, uint16_t fg,
+                        const char *s) {
+  int16_t boxW = GW(size) * maxChars;
+  gfx->fillRect(cx - boxW / 2, y, boxW, GH(size), uiTheme()->bg);
+  gfx->setTextSize(size);
+  gfx->setTextColor(fg);
+  gfx->setCursor(cx - GW(size) * (int16_t)strlen(s) / 2, y);
+  gfx->print(s);
+}
+
+static uint8_t soloIdx = 0;
+static char cSolo[40];
+
+static void drawSolo(bool full) {
+  if (full) {
+    gfx->fillScreen(uiTheme()->bg);
+    cSolo[0] = '\0';
+    logoFor[0] = '\0';  // force the blit; fillScreen just erased it
+  }
+  Row &r = rows[soloIdx];
+
+  char price[12], pct[12], key[40];
+  if (r.valid) {
+    formatPrice(r.price, price, sizeof price);
+    formatPct(r.pct, pct, sizeof pct);
+  } else {
+    snprintf(price, sizeof price, "--");
+    pct[0] = '\0';
+  }
+  snprintf(key, sizeof key, "%s|%s|%s", r.label, price, pct);
+  if (strcmp(key, cSolo) == 0) return;
+  strcpy(cSolo, key);
+
+  if (loadLogo(r.label))
+    gfx->draw16bitRGBBitmap(S->logoX, S->logoY, logoBuf, LOGO_PX, LOGO_PX);
+  else
+    gfx->fillRect(S->logoX, S->logoY, LOGO_PX, LOGO_PX, uiTheme()->bg);
+
+  // Symbol white, price and change green or red -- the only colours this app
+  // uses, and the percent stays signed so colour is never the sole cue.
+  uint16_t fg = !r.valid ? uiTheme()->dim : r.pct >= 0 ? uiTheme()->good : uiTheme()->bad;
+  fieldCentre(S->cx, S->ySym, MAX_LABEL, 3, uiTheme()->fg, r.label);
+  fieldCentre(S->cx, S->yPrice, 7, 4, fg, price);
+  fieldCentre(S->cx, S->yPct, 7, 2, fg, pct);
+}
+
 static void drawHead(const struct tm *t, bool haveTime) {
   char buf[20];
   if (haveTime) strftime(buf, sizeof buf, "%H:%M", t);
@@ -314,26 +458,28 @@ static void drawHead(const struct tm *t, bool haveTime) {
   fieldRight(L->w - 8, L->yHead, 5, 1, uiTheme()->muted, buf);
 }
 
-static void drawFooter(const struct tm *t, bool haveTime) {
+// y0/step are passed in rather than read from L, because the two layouts put
+// the footer in different places -- solo has to tuck it under the logo.
+static void drawFooter(const struct tm *t, bool haveTime, int16_t y0, int16_t step) {
   char buf[40];
   bool open = haveTime && marketOpen(*t);
 
   snprintf(buf, sizeof buf, "market %s", !haveTime ? "?" : open ? "open" : "closed");
   if (strcmp(buf, cFoot[0]) != 0) {
     strcpy(cFoot[0], buf);
-    field(8, L->yFoot0, 20, 1, open ? uiTheme()->good : uiTheme()->muted, buf);
+    field(8, y0, 20, 1, open ? uiTheme()->good : uiTheme()->muted, buf);
   }
   // Say it is delayed rather than implying live prices.
   snprintf(buf, sizeof buf, "delayed, %lum ago",
            lastOk ? (unsigned long)((millis() - lastOk) / 60000) : 0UL);
   if (strcmp(buf, cFoot[1]) != 0) {
     strcpy(cFoot[1], buf);
-    field(8, L->yFoot0 + L->footStep, 20, 1, uiTheme()->dim, buf);
+    field(8, y0 + step, 20, 1, uiTheme()->dim, buf);
   }
   snprintf(buf, sizeof buf, "%.9s %ddBm", WiFi.SSID().c_str(), WiFi.RSSI());
   if (strcmp(buf, cFoot[2]) != 0) {
     strcpy(cFoot[2], buf);
-    field(8, L->yFoot0 + L->footStep * 2, 20, 1, uiTheme()->muted, buf);
+    field(8, y0 + step * 2, 20, 1, uiTheme()->muted, buf);
   }
 }
 
@@ -450,6 +596,34 @@ static void checkLayout(const Layout *l) {
   assert((l->h - 62 - 16) / 11 >= 7);  // panel line count
 }
 
+// Solo puts a 96px logo and three text sizes on one screen, which is the
+// layout most likely to overflow -- and the 172px-tall landscape case is the
+// tight one. Every element is checked against the panel and against the
+// element below it.
+static void checkSolo(const SoloLayout *s, int16_t w, int16_t h) {
+  assert(s->logoX >= 0 && s->logoX + LOGO_PX <= w);
+  assert(s->logoY >= 0 && s->logoY + LOGO_PX <= h);
+
+  // Widest string each field can hold, centred on cx, must stay on screen.
+  assert(s->cx - GW(3) * MAX_LABEL / 2 >= 0 && s->cx + GW(3) * MAX_LABEL / 2 <= w);
+  assert(s->cx - GW(4) * 7 / 2 >= 0 && s->cx + GW(4) * 7 / 2 <= w);
+  assert(s->cx - GW(2) * 7 / 2 >= 0 && s->cx + GW(2) * 7 / 2 <= w);
+
+  // Vertical stack: symbol, price, change, then the footer.
+  assert(s->ySym + GH(3) <= s->yPrice);
+  assert(s->yPrice + GH(4) <= s->yPct);
+  assert(s->yPct + GH(2) <= s->yFoot0);
+  assert(s->yFoot0 + s->footStep * 2 + GH(1) <= h);
+
+  // The logo must not land on the text. In portrait it sits above it; in
+  // landscape it sits to the left, so one of the two has to hold.
+  bool above = s->logoY + LOGO_PX <= s->ySym;
+  bool beside = s->logoX + LOGO_PX <= s->cx - GW(4) * 7 / 2;
+  assert(above || beside);
+  // ...and the footer goes under whichever it is.
+  assert(s->yFoot0 >= s->logoY + LOGO_PX || above);
+}
+
 static void selfCheck() {
   char b[16];
   // Price has a 7-character box, and these are the shapes that stress it.
@@ -504,6 +678,8 @@ static void selfCheck() {
 
   checkLayout(&PORTRAIT);
   checkLayout(&LANDSCAPE);
+  checkSolo(&PORTRAIT_SOLO, 172, 320);
+  checkSolo(&LANDSCAPE_SOLO, 320, 172);
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
@@ -518,7 +694,17 @@ void setup() {
   gfx = boardDisplay();
   gfx->begin();
   uiBegin(gfx, "ticker");
+
+  // One scheme only: black background, white symbols, green and red numbers.
+  // uiBegin() restores whatever was last persisted, so pin it every boot --
+  // persist=false keeps this from becoming an NVS write on every power-up.
+  uiApply(uiRot(), 0, false);
+  uiHoldSchemeLabel = "release: LAYOUT";
+
+  cfg.begin("tickercfg", false);
+  mode = (Mode)(cfg.getUChar("mode", 0) % MODE_COUNT);
   syncLayout();
+  Serial.printf("layout: %s\n", modeName());
 
   if (!loadWatchlist()) {
     Serial.printf("config error: %s %s\n", cfgErr, cfgErrDetail);
@@ -581,7 +767,18 @@ static void drawFailPanel() {
 
 void loop() {
   uiTick();
-  if (uiHandle(uiPoll())) {
+  // Claim the 2s hold for the layout before delegating -- ui.h's own comment
+  // establishes this pattern for Setup. Everything else (tap to rotate, long
+  // hold to blank) still belongs to uiHandle().
+  UiPress p = uiPoll();
+  if (p == UiPress::Scheme && uiScreenOn()) {
+    mode = (Mode)(((uint8_t)mode + 1) % MODE_COUNT);
+    cfg.putUChar("mode", (uint8_t)mode);
+    soloIdx = 0;
+    invalidateCache();
+    state = State::Boot;
+    Serial.printf("layout -> %s\n", modeName());
+  } else if (uiHandle(p)) {
     syncLayout();
     invalidateCache();
     state = State::Boot;  // forces a full repaint below
@@ -600,7 +797,10 @@ void loop() {
   if (want != state) {
     state = want;
     invalidateCache();
-    if (uiScreenOn() && state == State::Running) drawChrome();
+    if (uiScreenOn() && state == State::Running) {
+      if (mode == Mode::List) drawChrome();
+      else drawSolo(true);
+    }
   }
 
   if (state == State::NoConfig) {
@@ -624,19 +824,32 @@ void loop() {
   }
 
   if (uiScreenOn()) {
-    if (state == State::Running) {
+    if (state != State::Running) {
+      drawFailPanel();
+    } else if (mode == Mode::List) {
       drawHead(&t, haveTime);
       drawRows();
-      drawFooter(&t, haveTime);
+      drawFooter(&t, haveTime, L->yFoot0, L->footStep);
     } else {
-      drawFailPanel();
+      drawSolo(false);
+      drawFooter(&t, haveTime, S->yFoot0, S->footStep);
     }
   }
 
-  static uint32_t lastPage = 0;
-  if (state == State::Running && nPages > 1 && millis() - lastPage > PAGE_MS) {
-    lastPage = millis();
-    turnPage((page + 1) % nPages);
+  // Each layout advances on its own clock: the list turns a page, solo moves to
+  // the next symbol.
+  static uint32_t lastAdvance = 0;
+  if (state == State::Running && uiScreenOn()) {
+    if (mode == Mode::List && nPages > 1 && millis() - lastAdvance > PAGE_MS) {
+      lastAdvance = millis();
+      turnPage((page + 1) % nPages);
+    } else if (mode == Mode::Solo && nRows > 1 && millis() - lastAdvance > SOLO_MS) {
+      lastAdvance = millis();
+      soloIdx = (soloIdx + 1) % nRows;
+      // Not a full repaint: fieldCentre clears its own box and the logo
+      // overwrites its own square, so a black flash every 5s is avoidable.
+      drawSolo(false);
+    }
   }
 
   // Crypto and stocks on separate clocks: one market closes, the other never
@@ -670,7 +883,10 @@ void loop() {
       if (ok) {
         lastOk = millis();
         failures = 0;
-        if (uiScreenOn() && state == State::Running) drawRows();
+        if (uiScreenOn() && state == State::Running) {
+          if (mode == Mode::List) drawRows();
+          else drawSolo(false);
+        }
       } else {
         failures++;
       }

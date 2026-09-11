@@ -124,6 +124,13 @@ inline uint8_t uiBacklightApplied = 0;
 // Set false to silence the per-press serial log once the gestures are trusted.
 inline bool uiLogButton = true;
 
+// What the 2s hold does, as shown in the hold hint. Defaults to cycling the
+// colour scheme, which is what most apps here want -- but an app that claims
+// UiPress::Scheme for something else (ticker uses it to switch layout, and
+// pins a single scheme) must say so, or the overlay promises COLOUR and
+// something else happens.
+inline const char *uiHoldSchemeLabel = "release: COLOUR";
+
 // ── state ────────────────────────────────────────────────────────────────
 namespace uidetail {
 inline Arduino_GFX *gfx = nullptr;
@@ -377,7 +384,7 @@ inline UiPress uiPoll() {
       // Stage 0 is just "I saw that" -- a dot, not a box, because a box
       // flashing over the content on every tap is worse than the lag it fixes.
       if (stage == 0) uiPressDot(true);
-      else if (stage == 1) uiHoldHint("release: COLOUR");
+      else if (stage == 1) uiHoldHint(uiHoldSchemeLabel);
       else if (stage == 2) uiHoldHint("release: SCREEN OFF");
       else if (stage == 3) uiHoldHint("release: SETUP");
     }

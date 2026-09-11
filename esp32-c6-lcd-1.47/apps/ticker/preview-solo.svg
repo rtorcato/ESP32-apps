@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="ticker solo layout preview: one symbol filling the screen with its logo above, the ticker in white, a large price and percent change in green, and a footer giving market state, data age and wifi signal">
+  <!-- 172x320 native, portrait, the SOLO layout reached by a 2 second hold.
+       One symbol at a time, advancing every 5 seconds. Geometry matches
+       PORTRAIT_SOLO in src/main.cpp exactly: a 96px logo at y=22, the ticker at
+       text size 3 (y=130), the price at size 4 (y=166) and the change at size 2
+       (y=210).
+
+       Logos are pre-converted to raw RGB565 by tools/make-logos.py and read
+       from LittleFS, so the firmware carries no PNG decoder. Apple's mark ships
+       black-on-white, so the converter knocks the white out and inverts the
+       glyph. Flattened naively it would be black on a black screen, drawing
+       nothing at all. -->
+  <rect width="172" height="320" fill="#000000"/>
+
+  <!-- the logo: 96x96 at x=38, y=22. A white Apple glyph on black, which is
+       what the converter produces for this one. -->
+  <g transform="translate(38,22)">
+    <path fill="#f8fcf8" d="M62.3 51.1c-.1-9.9 8.1-14.6 8.5-14.9-4.6-6.8-11.8-7.7-14.4-7.8-6.5-.7-12.7 3.8-16 3.8-3.4 0-8.5-3.7-14-3.6-7.2.1-13.8 4.2-17.5 10.6-7.5 13-1.9 32.2 5.4 42.7 3.6 5.2 7.8 10.7 13.4 10.5 5.4-.2 7.4-3.5 13.9-3.5 6.4 0 8.3 3.5 13.9 3.4 5.7-.1 9.6-5.1 13.1-10.3 4.1-6 5.8-11.8 5.9-12.1-.1-.1-11.3-4.4-11.4-17.4z"/>
+    <path fill="#f8fcf8" d="M52.4 21.3c2.9-3.5 4.9-8.4 4.3-13.3-4.3.2-9.5 2.9-12.5 6.4-2.7 3.1-5 8.1-4.4 12.9 4.8.4 9.7-2.4 12.6-6z"/>
+  </g>
+
+  <!-- ticker in white; price and change in green or red, which are the only
+       colours this app uses. The percent stays signed so colour is never the
+       sole cue. -->
+  <text x="86" y="154" text-anchor="middle" font-family="monospace" font-size="20"
+        fill="#f8fcf8" textLength="48" lengthAdjust="spacing">AAPL</text>
+  <text x="86" y="198" text-anchor="middle" font-family="monospace" font-size="26"
+        fill="#3cdc64" textLength="120" lengthAdjust="spacing">334.4</text>
+  <text x="86" y="226" text-anchor="middle" font-family="monospace" font-size="16"
+        fill="#3cdc64" textLength="48" lengthAdjust="spacing">+1.2%</text>
+
+  <!-- same footer as the list layout -->
+  <text x="8" y="271" font-family="monospace" font-size="10" fill="#3cdc64"
+        textLength="66" lengthAdjust="spacing">market open</text>
+  <text x="8" y="286" font-family="monospace" font-size="10" fill="#696969"
+        textLength="90" lengthAdjust="spacing">delayed, 3m ago</text>
+  <text x="8" y="301" font-family="monospace" font-size="10" fill="#969696"
+        textLength="96" lengthAdjust="spacing">MatrixZer -60dBm</text>
+</svg>
