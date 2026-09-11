@@ -73,6 +73,7 @@ launchctl load ~/Library/LaunchAgents/com.rtorcato.host-monitor.plist
 cd esp32-c6-lcd-1.47/apps/host-monitor/agent
 python3 linux.py --selftest     # checks the parsers; runs on any OS
 python3 linux.py                # foreground, port 8787
+python3 linux.py --disk /volume1   # Synology: report the data volume, not root
 ```
 
 Keep it running with systemd (runs as `nobody`, `ProtectSystem=strict`):
@@ -120,6 +121,53 @@ reflash today. Runtime switching would need the URL in NVS plus a way to set it
 `DEMO_STATS 1` at the top of `src/main.cpp` renders a fixed capture from a real
 M4 mini and skips polling entirely. Useful for checking both orientations before
 the network path works.
+
+### Changing which host it watches
+
+Three ways, cheapest first:
+
+**Hold BOOT for 6 seconds** — a hint appears saying `release: SETUP`. The board
+raises a brief WPA2 access point and shows the details on screen:
+
+```
+wifi: host-monitor-setup
+pass: setup-panel
+open: http://192.168.4.1
+```
+
+Join it, set the agent URL, save, and it reboots into normal operation. The URL
+persists in NVS and overrides the compiled-in default. The portal closes itself
+after 3 minutes, and any button press cancels it, so you can't get stuck there.
+
+**Use a `.local` name** instead of an IP and DHCP stops mattering:
+
+```
+http://rt-mac-mini.local:8787/stats
+```
+
+`HTTPClient` alone can't do this — it hands the name to normal DNS, which does
+not answer for `.local`, so the connect just fails. The firmware resolves it
+over mDNS and substitutes the address, re-resolving whenever polls are failing,
+so a host that moves recovers on its own. The board also advertises itself as
+`host-monitor.local`.
+
+**Edit `HOST_AGENT_URL`** in `secrets.h` and reflash. Still the right choice for
+a permanent install.
+
+### Which machines make sense
+
+| Host | Works? | Notes |
+|---|---|---|
+| **Mac mini / always-on Mac** | Yes | `macos.py`. The intended target: always on, fixed address. |
+| **Linux server, Pi** | Yes | `linux.py` + the systemd unit. |
+| **Synology NAS** | With work | `/proc` is there, but **install Python 3 from Package Center or run it in Container Manager**, DSM's init is not stock systemd (use Task Scheduler or a container restart policy), and pass **`--disk /volume1`** or it reports the ~2GB system partition instead of your array. |
+| **MacBook** | Poorly | The agent runs fine; the laptop is the problem. It sleeps, and DHCP moves its address. A `.local` name fixes the address half; nothing fixes the sleeping half. |
+| **iPad / iPhone** | **No** | iPadOS cannot run a background HTTP server or read system-wide stats. Sandboxed Python apps can't help. |
+
+Worth repeating because it's the most common misunderstanding: **plugging the
+board into a computer only powers it.** An iPad USB-C port is a perfectly good
+power supply, and the panel will keep showing whatever host its URL points at —
+which has nothing to do with the device supplying the power.
 
 ### The JSON contract
 

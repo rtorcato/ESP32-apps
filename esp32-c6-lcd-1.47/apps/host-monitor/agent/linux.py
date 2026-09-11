@@ -4,8 +4,8 @@
 Same JSON contract as macos.py -- the firmware doesn't know or care which OS
 produced it, so the contract is the portable boundary. Standard library only.
 
-    python3 linux.py                      # foreground, port 8787
-    python3 linux.py --port 9000 --bind 192.168.1.50
+    python3 linux.py                          # foreground, port 8787
+    python3 linux.py --disk /volume1          # Synology: report the data volume
 
 GET /stats -> the JSON the firmware parses
 GET /       -> the same, so a browser shows something useful
@@ -111,9 +111,15 @@ def read(path: str) -> str:
         return ""  # a missing stat beats a 500 that tells the panel nothing
 
 
+# Which filesystem to report. Not always "/": on a Synology, root is a ~2GB
+# system partition, so reporting it would confidently show the wrong number --
+# pass --disk /volume1 there.
+DISK_PATH = "/"
+
+
 def disk_root() -> tuple[int, int]:
     try:
-        s = os.statvfs("/")
+        s = os.statvfs(DISK_PATH)
         return s.f_bavail * s.f_frsize, s.f_blocks * s.f_frsize
     except OSError:
         return 0, 0
@@ -269,8 +275,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument("--disk", default="/", help="filesystem to report (e.g. /volume1)")
     ap.add_argument("--selftest", action="store_true", help="test parsers and exit")
     args = ap.parse_args()
+
+    global DISK_PATH
+    DISK_PATH = args.disk
 
     if args.selftest:
         raise SystemExit(selftest())
@@ -280,7 +290,8 @@ def main():
 
     collect()  # prime the CPU and net counters so the first poll has deltas
     srv = ThreadingHTTPServer((args.bind, args.port), Handler)
-    print(f"host-monitor linux agent on http://{args.bind}:{args.port}/stats", flush=True)
+    print(f"host-monitor linux agent on http://{args.bind}:{args.port}/stats"
+          f"  disk={DISK_PATH}", flush=True)
     srv.serve_forever()
 
 

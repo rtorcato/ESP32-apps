@@ -22,7 +22,10 @@
 #include <secrets.h>
 
 #include <ArduinoJson.h>
+#include <ESPmDNS.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <assert.h>
 #include <time.h>
@@ -34,6 +37,17 @@
 #ifndef HOST_AGENT_URL
 #define HOST_AGENT_URL "http://10.0.10.92:8787/stats"
 #endif
+
+// The compiled-in URL is only the default. Hold BOOT 6s to open a setup portal
+// and change it at runtime; the choice lives in NVS. A `.local` hostname is
+// resolved over mDNS, which survives DHCP moving the host.
+static Preferences cfg;
+static char agentUrl[96];
+static char resolvedUrl[96];  // agentUrl with any .local name turned into an IP
+
+static const char *PORTAL_SSID = "host-monitor-setup";
+static const char *PORTAL_PASS = "setup-panel";  // >=8 chars, WPA2
+static const uint32_t PORTAL_TIMEOUT_MS = 3UL * 60 * 1000;
 
 static const uint32_t POLL_MS = 5UL * 1000;        // agent is cheap; 5s feels live
 static const uint32_t POLL_RETRY_MS = 10UL * 1000; // back off a little when failing
@@ -308,7 +322,7 @@ static void drawNoWifi() {
 static void drawNoAgent() {
   char ip[40], url[40], fails[40];
   snprintf(ip, sizeof ip, "board %s", WiFi.localIP().toString().c_str());
-  snprintf(url, sizeof url, "%.32s", HOST_AGENT_URL);
+  snprintf(url, sizeof url, "%.32s", agentUrl);
   snprintf(fails, sizeof fails, "%u failed polls", st.fails);
   const char *lines[] = {"can't reach the agent",
                          url,
@@ -323,6 +337,47 @@ static void drawNoAgent() {
                          "",
                          "retrying..."};
   drawPanel("NO AGENT", uiTheme()->warn, lines, 12);
+}
+
+// ── host URL ─────────────────────────────────────────────────────────────
+// A `.local` name has to be resolved by mDNS: HTTPClient hands the hostname to
+// normal DNS, which does not answer for .local, so the connect just fails.
+// Resolving once per poll cycle is cheap and means a host that changes IP keeps
+// working without a reflash.
+static void resolveAgentUrl() {
+  strncpy(resolvedUrl, agentUrl, sizeof resolvedUrl - 1);
+  resolvedUrl[sizeof resolvedUrl - 1] = '\0';
+
+  // Find the host portion: after "http://", up to ':' or '/'.
+  const char *p = strstr(agentUrl, "://");
+  if (!p) return;
+  p += 3;
+  const char *end = p;
+  while (*end && *end != ':' && *end != '/') end++;
+
+  char host[64];
+  size_t len = (size_t)(end - p);
+  if (len == 0 || len >= sizeof host) return;
+  memcpy(host, p, len);
+  host[len] = '\0';
+
+  const char *dot = strstr(host, ".local");
+  if (!dot || dot[6] != '\0') return;  // not a .local name; leave the URL alone
+
+  char bare[64];
+  size_t bl = (size_t)(dot - host);
+  memcpy(bare, host, bl);
+  bare[bl] = '\0';
+
+  IPAddress ip = MDNS.queryHost(bare, 2000);
+  if (ip == IPAddress((uint32_t)0)) {
+    Serial.printf("mdns: %s did not resolve\n", host);
+    return;
+  }
+  // Rebuild the URL with the address substituted for the name.
+  snprintf(resolvedUrl, sizeof resolvedUrl, "%.*s%s%s", (int)(p - agentUrl), agentUrl,
+           ip.toString().c_str(), end);
+  Serial.printf("mdns: %s -> %s\n", host, ip.toString().c_str());
 }
 
 // ── network ──────────────────────────────────────────────────────────────
@@ -345,7 +400,7 @@ static bool fetchStats() {
   HTTPClient http;
   http.setConnectTimeout(4000);
   http.setTimeout(4000);
-  if (!http.begin(client, HOST_AGENT_URL)) return false;
+  if (!http.begin(client, resolvedUrl)) return false;
 
   int code = http.GET();
   if (code != 200) {
@@ -390,6 +445,83 @@ static bool fetchStats() {
   st.fails = 0;
   st.fetchedAt = millis();
   return true;
+}
+
+// ── setup portal ─────────────────────────────────────────────────────────
+// A brief SoftAP with one form field, so the host can be changed without a
+// reflash. WPA2 rather than open: setting a poll URL is not much of a trust
+// boundary on a read-only panel, but a nameless open AP is still worth
+// avoiding, and the password costs one line. It closes itself after
+// PORTAL_TIMEOUT_MS so it cannot be left running.
+static void drawPortalScreen(const char *line1, const char *line2) {
+  char ssid[40], pass[40], url[40];
+  snprintf(ssid, sizeof ssid, "wifi: %s", PORTAL_SSID);
+  snprintf(pass, sizeof pass, "pass: %s", PORTAL_PASS);
+  snprintf(url, sizeof url, "open: http://%s", WiFi.softAPIP().toString().c_str());
+  const char *lines[] = {"Join this network and", "open the page below.", "",
+                         ssid, pass, url, "", line1, line2};
+  drawPanel("SETUP", uiTheme()->good, lines, 9);
+}
+
+static void runPortal() {
+  Serial.println("portal: starting");
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(PORTAL_SSID, PORTAL_PASS);
+  delay(300);
+  drawPortalScreen("waiting...", "");
+
+  WebServer server(80);
+  bool saved = false;
+
+  server.on("/", HTTP_GET, [&server]() {
+    String page = F("<!doctype html><meta name=viewport content='width=device-width'>"
+                    "<title>host-monitor setup</title>"
+                    "<style>body{font:16px system-ui;margin:2rem;max-width:30rem}"
+                    "input{width:100%;padding:.6rem;font:inherit}"
+                    "button{padding:.6rem 1rem;font:inherit;margin-top:1rem}"
+                    "code{background:#eee;padding:.1rem .3rem}</style>"
+                    "<h2>host-monitor</h2><form method=POST action=/save>"
+                    "<label>Agent URL<input name=url value='");
+    page += agentUrl;
+    page += F("'></label><button>Save &amp; reboot</button></form>"
+              "<p>Run an agent on the host first: <code>python3 macos.py</code> or "
+              "<code>python3 linux.py</code>.</p>"
+              "<p>A <code>.local</code> name is resolved over mDNS, so it survives the "
+              "host changing IP.</p>");
+    server.send(200, "text/html", page);
+  });
+
+  server.on("/save", HTTP_POST, [&server, &saved]() {
+    String u = server.arg("url");
+    u.trim();
+    if (u.length() < 8 || !u.startsWith("http")) {
+      server.send(400, "text/plain", "URL must start with http");
+      return;
+    }
+    u.toCharArray(agentUrl, sizeof agentUrl);
+    cfg.putString("url", agentUrl);
+    Serial.printf("portal: saved %s\n", agentUrl);
+    server.send(200, "text/html", "<p>Saved. Rebooting.</p>");
+    saved = true;
+  });
+
+  server.begin();
+  uint32_t start = millis();
+  while (millis() - start < PORTAL_TIMEOUT_MS && !saved) {
+    server.handleClient();
+    // Any button press cancels, so you are never stuck in the portal.
+    if (uiPoll() != UiPress::None) {
+      Serial.println("portal: cancelled");
+      break;
+    }
+    delay(5);
+  }
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  Serial.println("portal: closing, rebooting");
+  delay(200);
+  ESP.restart();  // simplest way back to a clean Wi-Fi client state
 }
 
 // ── self-check ───────────────────────────────────────────────────────────
@@ -463,6 +595,12 @@ void setup() {
   uiBegin(gfx, "hostmon");  // its own NVS namespace
   syncLayout();
 
+  // NVS overrides the compiled-in default, so the portal's choice sticks.
+  cfg.begin("hostmon-cfg", false);
+  String stored = cfg.getString("url", HOST_AGENT_URL);
+  stored.toCharArray(agentUrl, sizeof agentUrl);
+  strncpy(resolvedUrl, agentUrl, sizeof resolvedUrl - 1);
+
   const char *boot[] = {"connecting to wifi", WIFI_SSID, "", "BOOT cycles modes"};
   drawPanel("STARTING", uiTheme()->muted, boot, 4);
 
@@ -480,6 +618,10 @@ void setup() {
 #if POWER_SAVE
     WiFi.setSleep(WIFI_PS_MAX_MODEM);  // after association, never before
 #endif
+    // Needed before queryHost() can answer, and lets the board be found as
+    // host-monitor.local too.
+    MDNS.begin("host-monitor");
+    resolveAgentUrl();
   } else {
     Serial.printf("wifi FAILED, last reason %u\n", lastReason);
   }
@@ -489,7 +631,8 @@ void setup() {
         196413.3f, 4499.1f, "WindowServer", 41.0f, true, 0, 0};
   Serial.println("DEMO_STATS: rendering a fixed capture, not polling");
 #endif
-  Serial.printf("agent url %s\n", HOST_AGENT_URL);
+  Serial.printf("agent url %s (resolved %s)\n", agentUrl, resolvedUrl);
+  Serial.println("hold BOOT 6s for setup");
   Serial.println("selfcheck ok");
 
 #if POWER_SAVE
@@ -498,7 +641,10 @@ void setup() {
 }
 
 void loop() {
-  if (uiHandle(uiPoll())) {
+  UiPress press = uiPoll();
+  if (press == UiPress::Setup) {
+    runPortal();  // does not return: reboots
+  } else if (uiHandle(press)) {
     syncLayout();
     invalidateCache();
     state = State::Boot;
@@ -577,6 +723,7 @@ void loop() {
   if (!DEMO_STATS && state != State::NoWifi &&
       (lastPoll == 0 || millis() - lastPoll > period)) {
     lastPoll = millis();
+    if (!st.valid) resolveAgentUrl();  // a moved host needs re-resolving
     if (fetchStats()) {
       if (uiScreenOn() && state == State::Running) drawPage();
       // Green when healthy, amber when something is loaded, dim red when the

@@ -179,15 +179,18 @@ inline void uiSetScreen(bool on) {
 //   tap        -> next rotation
 //   hold 1.2s  -> next colour scheme
 //   hold 3s    -> blank the panel
+//   hold 6s    -> UiPress::Setup, returned to the app (uiHandle ignores it) for
+//                 apps that have something to configure
 //
 // Decided on release rather than at the threshold, because holding for the third
 // action would otherwise fire the second on the way past. A hint is drawn while
 // holding so the gestures don't have to be memorised, and every press is logged
 // with its measured duration -- if a gesture "doesn't work", the log says
 // whether the firmware saw a different duration than you intended.
-enum class UiPress { None, Rotate, Scheme, Blank };
+enum class UiPress { None, Rotate, Scheme, Blank, Setup };
 
-inline constexpr uint32_t UI_HOLD_SCHEME_MS = 1200, UI_HOLD_BLANK_MS = 3000;
+inline constexpr uint32_t UI_HOLD_SCHEME_MS = 1200, UI_HOLD_BLANK_MS = 3000,
+                          UI_HOLD_SETUP_MS = 6000;
 inline constexpr uint32_t UI_DEBOUNCE_MS = 25;
 
 inline void uiHoldHint(const char *s) {
@@ -224,12 +227,14 @@ inline UiPress uiPoll() {
       hinted = 0;
     } else {
       uint32_t held = now - downAt;
-      UiPress p = held >= UI_HOLD_BLANK_MS    ? UiPress::Blank
+      UiPress p = held >= UI_HOLD_SETUP_MS   ? UiPress::Setup
+                  : held >= UI_HOLD_BLANK_MS ? UiPress::Blank
                   : held >= UI_HOLD_SCHEME_MS ? UiPress::Scheme
                                               : UiPress::Rotate;
       if (uiLogButton) {
         Serial.printf("btn: held %lums -> %s\n", (unsigned long)held,
-                      p == UiPress::Blank ? "BLANK (3s)"
+                      p == UiPress::Setup   ? "SETUP (6s)"
+                      : p == UiPress::Blank  ? "BLANK (3s)"
                       : p == UiPress::Scheme ? "SCHEME (1.2s)"
                                              : "ROTATE (tap)");
       }
@@ -262,6 +267,9 @@ inline bool uiHandle(UiPress p) {
     return false;
   }
   switch (p) {
+    // Setup is deliberately not handled here: it is app-specific, so the app
+    // checks for it before delegating the rest to uiHandle().
+    case UiPress::Setup:  return false;
     case UiPress::Blank:  uiSetScreen(false); return false;
     case UiPress::Scheme: uiApply(uidetail::rot, uidetail::scheme + 1, true); return true;
     case UiPress::Rotate: uiApply(uidetail::rot + 1, uidetail::scheme, true); return true;

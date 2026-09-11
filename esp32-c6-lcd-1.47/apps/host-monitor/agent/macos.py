@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve Mac stats as JSON for the esp32-c6 mac-mini panel.
+"""Serve macOS host stats as JSON for the esp32-c6 host-monitor panel.
 
 Read-only and deliberately boring: it exposes no secrets and cannot change
 anything, so it needs no authentication. That is the whole reason to build the
@@ -9,8 +9,8 @@ bound interface and least privilege, and none of that has to exist yet.
 Standard library only, so there is nothing to install and nothing to keep
 updated.
 
-    python3 mac-stats-agent.py            # foreground, port 8787
-    python3 mac-stats-agent.py --port 9000 --bind 10.0.10.92
+    python3 macos.py                          # foreground, port 8787
+    python3 macos.py --port 9000 --disk /Volumes/Data
 
 GET /stats -> the JSON the firmware parses
 GET /       -> the same, so a browser shows something useful
@@ -68,9 +68,17 @@ def memory_used_pct() -> int:
     return round(100 * used / total) if total else 0
 
 
+# Which filesystem to report. Not always "/": on a NAS the root is a small
+# system partition and the interesting number is the data volume.
+DISK_PATH = "/"
+
+
 def disk_root() -> tuple[int, int]:
-    st = os.statvfs("/")
-    return st.f_bavail * st.f_frsize, st.f_blocks * st.f_frsize
+    try:
+        st = os.statvfs(DISK_PATH)
+        return st.f_bavail * st.f_frsize, st.f_blocks * st.f_frsize
+    except OSError:
+        return 0, 0
 
 
 def cpu_and_top() -> tuple[int, str, float]:
@@ -184,11 +192,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument("--disk", default="/", help="filesystem to report (e.g. /volume1)")
     args = ap.parse_args()
+
+    global DISK_PATH
+    DISK_PATH = args.disk
 
     net_rates()  # prime the counters so the first poll has a delta to report
     srv = ThreadingHTTPServer((args.bind, args.port), Handler)
-    print(f"mac-stats-agent on http://{args.bind}:{args.port}/stats", flush=True)
+    print(f"host-monitor macos agent on http://{args.bind}:{args.port}/stats"
+          f"  disk={DISK_PATH}", flush=True)
     srv.serve_forever()
 
 
