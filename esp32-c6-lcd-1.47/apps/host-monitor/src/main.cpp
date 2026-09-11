@@ -54,6 +54,24 @@ static const uint32_t POLL_MS = 5UL * 1000;        // agent is cheap; 5s feels l
 static const uint32_t POLL_RETRY_MS = 10UL * 1000; // back off a little when failing
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000; // re-begin() while disconnected
 static const uint32_t TEMP_LOG_MS = 60UL * 1000;
+static const uint32_t FEED_STALE_MS = 15UL * 1000;  // serial feed gone quiet
+
+// Where the stats come from.
+//
+//   1 = USB serial. The host runs one script and needs nothing else: no Wi-Fi,
+//       no IP, no URL, no firewall rule, no credentials. The port *is* the
+//       identity, so the panel follows whatever machine it is plugged into.
+//   0 = HTTP over Wi-Fi, for watching a machine that is not the one it is
+//       plugged into -- a NAS, or a server across the house.
+//
+// Serial is the default because it is the zero-configuration path.
+//
+// Some software on the host is unavoidable, and that is a hardware fact rather
+// than a design choice: the C6 has a USB Serial/JTAG controller, not USB-OTG
+// (SOC_USB_OTG_SUPPORTED is absent from its soc_caps.h), so it can only ever be
+// a CDC serial device. It cannot present as a keyboard or a disk to coax data
+// out of a host running nothing. Needing no *settings* is the achievable goal.
+#define HOST_SOURCE_SERIAL 1
 
 #define POWER_SAVE 1
 
@@ -394,42 +412,22 @@ static void onWiFiEvent(WiFiEvent_t e, WiFiEventInfo_t info) {
   Serial.printf("wifi disconnect reason %u\n", r);
 }
 
-static bool fetchStats() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  WiFiClient client;
-  HTTPClient http;
-  http.setConnectTimeout(4000);
-  http.setTimeout(4000);
-  if (!http.begin(client, resolvedUrl)) return false;
-
-  int code = http.GET();
-  if (code != 200) {
-    Serial.printf("agent http %d (%s)\n", code, http.errorToString(code).c_str());
-    http.end();
-    return false;
-  }
-
-  // Read to a String so a parse failure can show what actually arrived.
-  String body = http.getString();
-  http.end();
-
+// Parse and validate one stats document, whichever transport carried it.
+static bool applyStatsJson(const char *body) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body);
   if (err) {
-    Serial.printf("agent json %s -- body[0..160]: %s\n", err.c_str(),
-                  body.substring(0, 160).c_str());
+    Serial.printf("stats json %s\n", err.c_str());
     return false;
   }
-  // Validate before trusting: a 200 from something that isn't the agent parses
-  // fine and the `| default` operators would render it as plausible zeroes.
+  // Validate before trusting: anything that is not an agent parses fine, and the
+  // `| default` operators below would render it as plausible zeroes.
   if (!doc["uptime_s"].is<uint32_t>()) {
-    Serial.printf("agent payload not ours -- body[0..160]: %s\n",
-                  body.substring(0, 160).c_str());
+    Serial.println("stats payload not ours, ignoring");
     return false;
   }
 
-  snprintf(st.host, sizeof st.host, "%s", doc["host"] | "mac");
+  snprintf(st.host, sizeof st.host, "%s", doc["host"] | "host");
   st.uptime_s = doc["uptime_s"] | 0;
   st.load1 = doc["load"][0] | 0.0f;
   st.load5 = doc["load"][1] | 0.0f;
@@ -447,6 +445,49 @@ static bool fetchStats() {
   st.fetchedAt = millis();
   return true;
 }
+
+#if HOST_SOURCE_SERIAL
+// Collect a line if the host sent one. Non-blocking, because the panel has to
+// keep running and stay responsive when nothing is feeding it.
+static bool readStatsFromSerial() {
+  static char line[512];
+  static size_t len = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      line[len] = '\0';
+      size_t had = len;
+      len = 0;
+      if (had > 2 && line[0] == '{' && applyStatsJson(line)) return true;
+      continue;
+    }
+    if (len < sizeof line - 1) line[len++] = c;
+    else len = 0;  // overlong line: drop it rather than splicing two together
+  }
+  return false;
+}
+#else
+static bool fetchStats() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  WiFiClient client;
+  HTTPClient http;
+  http.setConnectTimeout(4000);
+  http.setTimeout(4000);
+  if (!http.begin(client, resolvedUrl)) return false;
+
+  int code = http.GET();
+  if (code != 200) {
+    Serial.printf("agent http %d (%s)\n", code, http.errorToString(code).c_str());
+    http.end();
+    return false;
+  }
+  String body = http.getString();
+  http.end();
+  return applyStatsJson(body.c_str());
+}
+#endif
 
 // ── setup portal ─────────────────────────────────────────────────────────
 // A brief SoftAP with one form field, so the host can be changed without a
@@ -605,6 +646,9 @@ void setup() {
   const char *boot[] = {"connecting to wifi", WIFI_SSID, "", "BOOT cycles modes"};
   drawPanel("STARTING", uiTheme()->muted, boot, 4);
 
+#if HOST_SOURCE_SERIAL
+  Serial.println("source: USB serial. Run an agent with --serial on the host.");
+#else
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(onWiFiEvent);
   WiFi.persistent(false);
@@ -630,6 +674,7 @@ void setup() {
         196413.3f, 4499.1f, "WindowServer", 41.0f, true, 0, 0};
   Serial.println("DEMO_STATS: rendering a fixed capture, not polling");
 #endif
+#endif
   Serial.printf("agent url %s (resolved %s)\n", agentUrl, resolvedUrl);
   Serial.println("hold BOOT 6s for setup");
   Serial.println("selfcheck ok");
@@ -651,9 +696,14 @@ void loop() {
     state = State::Boot;
   }
 
+#if HOST_SOURCE_SERIAL
+  // No radio in this mode, so the only failure is "nothing is feeding me".
+  State want = st.valid ? State::Running : State::NoAgent;
+#else
   State want = WiFi.status() != WL_CONNECTED ? State::NoWifi
                : !st.valid                   ? State::NoAgent
                                              : State::Running;
+#endif
 
   if (want != state) {
     state = want;
@@ -719,6 +769,31 @@ void loop() {
     }
   }
 
+  // Green when healthy, amber when something is loaded, dim red when there is
+  // no host -- readable from across the room without reading anything.
+  auto showLevel = [] {
+    int worst = max(st.cpu_pct, st.mem_pct);
+    if (worst >= 85) led(20, 0, 0);
+    else if (worst >= 60) led(16, 8, 0);
+    else led(0, 14, 4);
+  };
+
+#if HOST_SOURCE_SERIAL
+  // Nothing to poll: a line arriving from the host is the only trigger.
+  if (!DEMO_STATS) {
+    if (readStatsFromSerial()) {
+      if (uiScreenOn() && state == State::Running) drawPage();
+      showLevel();
+    } else if (st.valid && millis() - st.fetchedAt > FEED_STALE_MS) {
+      // Go stale rather than leaving a frozen number looking authoritative --
+      // the feed stops whenever the script is killed or the host sleeps.
+      st.valid = false;
+      st.fails++;
+      Serial.println("host feed went quiet");
+      led(12, 0, 0);
+    }
+  }
+#else
   static uint32_t lastPoll = 0;
   uint32_t period = st.valid ? POLL_MS : POLL_RETRY_MS;
   if (!DEMO_STATS && state != State::NoWifi &&
@@ -727,18 +802,14 @@ void loop() {
     if (!st.valid) resolveAgentUrl();  // a moved host needs re-resolving
     if (fetchStats()) {
       if (uiScreenOn() && state == State::Running) drawPage();
-      // Green when healthy, amber when something is loaded, dim red when the
-      // Mac is unreachable -- readable from across the room without reading.
-      int worst = max(st.cpu_pct, st.mem_pct);
-      if (worst >= 85) led(20, 0, 0);
-      else if (worst >= 60) led(16, 8, 0);
-      else led(0, 14, 4);
+      showLevel();
     } else {
       st.fails++;
       if (st.fails >= 3) st.valid = false;  // tolerate a blip before blanking
       led(12, 0, 0);
     }
   }
+#endif
 
   static uint32_t lastTemp = 0;
   if (millis() - lastTemp > TEMP_LOG_MS) {

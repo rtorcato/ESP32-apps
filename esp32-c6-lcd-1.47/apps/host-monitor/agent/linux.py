@@ -212,6 +212,63 @@ def collect() -> dict:
     }
 
 
+
+# ── serial feed ──────────────────────────────────────────────────────────
+# Writing to the board over USB instead of serving HTTP.
+#
+# This is the zero-configuration path: no Wi-Fi, no IP address, no URL, no
+# firewall rule. Plug the board in, run this, and it works -- and it follows
+# whatever machine it is plugged into, because the port *is* the identity.
+#
+# The port is a character device, so plain file I/O is enough and pyserial is
+# not needed. Baud rate is meaningless over USB CDC.
+SERIAL_GLOBS = ("/dev/cu.usbmodem*", "/dev/tty.usbmodem*", "/dev/ttyACM*", "/dev/ttyUSB*")
+
+
+def find_port() -> str | None:
+    import glob as _glob
+    for pattern in SERIAL_GLOBS:
+        hits = sorted(_glob.glob(pattern))
+        if hits:
+            return hits[0]
+    return None
+
+
+def serial_feed(port: str | None, interval: float) -> int:
+    """Write one JSON line per interval to the board, reopening if it vanishes.
+
+    Reopening matters: the port disappears when the board is reflashed or
+    replugged, and a feed that dies on the first disconnect is a feed you have
+    to remember to restart.
+    """
+    import time as _time
+
+    collect()  # prime the counters so the first line has real deltas
+    fh = None
+    while True:
+        try:
+            if fh is None:
+                p = port or find_port()
+                if not p:
+                    print("waiting for the board to appear...", flush=True)
+                    _time.sleep(2)
+                    continue
+                fh = open(p, "wb", buffering=0)
+                print(f"feeding {p}", flush=True)
+            fh.write((json.dumps(collect()) + "\n").encode())
+        except (OSError, BrokenPipeError) as e:
+            print(f"port closed ({e}); will reopen", flush=True)
+            try:
+                if fh:
+                    fh.close()
+            except OSError:
+                pass
+            fh = None
+            _time.sleep(2)
+            continue
+        _time.sleep(interval)
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         if self.path.split("?")[0] not in ("/", "/stats"):
@@ -276,6 +333,10 @@ def main():
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--disk", default="/", help="filesystem to report (e.g. /volume1)")
+    ap.add_argument("--serial", action="store_true",
+                    help="feed the board over USB instead of serving HTTP (no network at all)")
+    ap.add_argument("--port-path", default=None, help="serial device, if auto-detect picks wrong")
+    ap.add_argument("--interval", type=float, default=2.0, help="seconds between samples")
     ap.add_argument("--selftest", action="store_true", help="test parsers and exit")
     args = ap.parse_args()
 
@@ -287,6 +348,9 @@ def main():
 
     if not os.path.isdir("/proc"):
         raise SystemExit("no /proc -- this is the Linux agent; use macos.py on a Mac")
+
+    if args.serial:
+        raise SystemExit(serial_feed(args.port_path, args.interval))
 
     collect()  # prime the CPU and net counters so the first poll has deltas
     srv = ThreadingHTTPServer((args.bind, args.port), Handler)

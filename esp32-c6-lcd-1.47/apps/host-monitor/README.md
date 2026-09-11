@@ -44,7 +44,61 @@ scheme and blanking. A glanceable panel shouldn't need touching anyway.
 Bars are colour-thresholded — green under 60%, amber to 85, red above — which
 does more for readability at a glance than any amount of styling.
 
-### Setup
+### Setup — USB, no network
+
+Default is `HOST_SOURCE_SERIAL 1`: the board reads stats over the **USB cable it
+is already plugged into**. Two commands, no configuration at all — no Wi-Fi, no
+IP address, no URL, no firewall rule, no credentials:
+
+```sh
+cd esp32-c6-lcd-1.47/apps/host-monitor/agent
+python3 macos.py --serial          # or: python3 linux.py --serial
+```
+
+It finds the board's port itself, and reopens it if the board is replugged or
+reflashed. Standard library only — writing to a serial device is plain file I/O,
+so pyserial is not needed either.
+
+**The port is the identity**, which is the nice part: the panel shows whatever
+machine it is plugged into. Move the cable to another computer, run the script
+there, and it follows. Nothing to reconfigure.
+
+If the feed stops — script killed, laptop asleep, cable pulled — the panel goes
+to `NO HOST` after 15s rather than leaving a frozen number looking current.
+
+### Why a script is unavoidable
+
+This is a hardware limit, not a design choice. **No operating system volunteers
+its stats over USB**; a host treats a USB device as a peripheral and tells it
+essentially nothing about itself. The usual workarounds need the board to
+pretend to be something else, and on this chip it cannot:
+
+```
+ESP32-C6:  SOC_USB_SERIAL_JTAG_SUPPORTED 1     (no OTG)
+ESP32-S3:  SOC_USB_OTG_SUPPORTED 1
+```
+
+The C6 has a **USB Serial/JTAG controller only** — not the USB-OTG peripheral
+the S2/S3 have. So it can only ever be a CDC serial device: no HID keyboard, no
+mass-storage volume, no network gadget. There is no trick to extract data from a
+host running nothing.
+
+What the board *could* know with genuinely zero host software is only whether a
+host is enumerated and awake, plus its own die temperature and uptime. That is
+not a monitor.
+
+So the achievable goal is **no settings**, not **no software** — and that is what
+serial mode delivers: one command, nothing to configure.
+
+### Watching a different machine (optional)
+
+Set `HOST_SOURCE_SERIAL 0` to use the HTTP path instead, for a host that is not
+the one it is plugged into — a NAS, or a server across the house. That brings
+back Wi-Fi, `HOST_AGENT_URL`, mDNS and the setup portal, and on a segmented
+network it needs a firewall rule. Serial mode uses about **53KB less heap**
+(362KB free versus 309KB) because no Wi-Fi stack is initialised.
+
+### Setup — HTTP over Wi-Fi
 
 **1. Run an agent on the host you want to watch.** Standard library only on
 both platforms, so there is nothing to install.
