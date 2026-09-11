@@ -702,7 +702,14 @@ void loop() {
   static int lastMinute = -1;
 
   // uiHandle() owns blank/wake/theme/rotate and says whether we must repaint.
-  if (uiHandle(uiPoll())) {
+  uiTick();  // deferred NVS write, never in the press path
+
+  // Timed end to end: the complaint was a lag between pressing and the screen
+  // changing, and the only way to tell whether that is the redraw, the flash
+  // write or the loop period is to measure each.
+  uint32_t pressT0 = millis();
+  bool changed = uiHandle(uiPoll());
+  if (changed) {
     syncLayout();
     invalidateCache();
     state = State::Boot;  // force the full redraw below
@@ -723,6 +730,16 @@ void loop() {
       drawChrome();
       drawWeather();
     }
+  }
+  if (changed) {
+    // Redraw the clock/date now rather than waiting for the next pass, so the
+    // measurement covers the whole visible change.
+    struct tm now;
+    if (uiScreenOn() && state == State::Running && getLocalTime(&now, 0)) {
+      drawClock(now);
+      drawDate(now);
+    }
+    Serial.printf("btn: press to redraw %lums\n", (unsigned long)(millis() - pressT0));
   }
 
   // Re-issue begin() while disconnected. setAutoReconnect(true) was NOT enough:

@@ -640,6 +640,8 @@ void setup() {
 }
 
 void loop() {
+  uiTick();  // deferred NVS write, never in the press path
+
   UiPress press = uiPoll();
   if (press == UiPress::Setup) {
     runPortal();  // does not return: reboots

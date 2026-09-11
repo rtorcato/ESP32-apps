@@ -238,6 +238,19 @@ release + press and every fragment looks like a tap.
 **Log every press with its measured duration.** One line turns "the gesture
 doesn't work" into a fact.
 
+**Acknowledge the press instantly, and decide the gesture on release.** Deciding
+on release is what stops a hold-for-the-third-action from firing the second on
+the way past — but it means nothing happens until the user lets go, and a 250ms
+press is 250ms of apparent lag. Measured here, the redraw after release is only
+~52 ms, so the lag was pure perception. `uiPressDot()` draws a small corner dot
+the instant the button goes down; the hold hints take over from 2s.
+
+**Measure before blaming a subsystem.** I attributed this lag to the two NVS
+writes in `uiApply()` and deferred them out of the press path — which was worth
+doing anyway, since it collapses a run of taps into one write — but the
+instrumented figure showed the nvs commit costs **3 ms**. The theory was wrong
+and one `Serial.printf` of elapsed milliseconds settled it.
+
 ## Failure states
 
 **An app with no data must say so, loudly and specifically.** A blank or nearly

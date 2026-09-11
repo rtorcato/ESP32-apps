@@ -131,7 +131,13 @@ inline Preferences prefs;
 inline uint8_t scheme = 0;
 inline uint8_t rot = 0;
 inline bool screenOn = true;
+inline bool cfgDirty = false;   // rotation/scheme changed, not yet written to NVS
+inline uint32_t cfgDirtyAt = 0;
 }  // namespace uidetail
+
+// Monotonic milliseconds. Defined here because both uiApply() and the button
+// ISR need it, and esp_timer_get_time() is safe to call from an ISR.
+inline uint32_t uiNowMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
 
 inline const Theme *uiTheme() { return &UI_SCHEMES[uidetail::scheme]; }
 inline uint8_t uiScheme() { return uidetail::scheme; }
@@ -170,12 +176,29 @@ inline void uiApply(uint8_t newRot, uint8_t newScheme, bool persist) {
   if (uidetail::gfx) uidetail::gfx->setRotation(uidetail::rot);
   uiBacklightApplied = uiBacklightNow();
   backlight(uiBacklightApplied);
+  // Deliberately does NOT write NVS here. Two nvs commits are a flash write
+  // costing tens to hundreds of ms, and doing them before the app redraws is
+  // felt as a lag between pressing the button and the screen changing. Mark it
+  // dirty and let uiTick() persist once the user stops pressing -- which also
+  // collapses a run of taps into one write instead of two per tap.
   if (persist) {
-    uidetail::prefs.putUChar("rot", uidetail::rot);
-    uidetail::prefs.putUChar("scheme", uidetail::scheme);
+    uidetail::cfgDirty = true;
+    uidetail::cfgDirtyAt = uiNowMs();
   }
   Serial.printf("ui: %s, scheme %u/%u %s, bl %u\n", uiRotName(), uidetail::scheme,
                 UI_SCHEME_COUNT, uiSchemeName(), uiBacklightApplied);
+}
+
+// Call once per loop(). Persists rotation/scheme after things settle, so the
+// flash write never sits between a button press and the redraw.
+inline void uiTick() {
+  if (!uidetail::cfgDirty) return;
+  if (uiNowMs() - uidetail::cfgDirtyAt < 1500) return;
+  uidetail::cfgDirty = false;
+  uint32_t t0 = uiNowMs();
+  uidetail::prefs.putUChar("rot", uidetail::rot);
+  uidetail::prefs.putUChar("scheme", uidetail::scheme);
+  Serial.printf("ui: saved (nvs write %lums)\n", (unsigned long)(uiNowMs() - t0));
 }
 
 // Defined further down with the rest of the button handling; declared here
@@ -241,6 +264,21 @@ inline constexpr uint32_t UI_HOLD_SCHEME_MS = 2000, UI_HOLD_BLANK_MS = 4500,
 inline constexpr uint32_t UI_DEBOUNCE_MS = 25;
 
 
+// Instant acknowledgement that the press registered.
+//
+// Measured, the redraw after release takes ~52ms -- imperceptible. But the
+// gesture is only decided *on release* (so that holding for the third action
+// does not trigger the second on the way past), which means a 250ms press is
+// 250ms of nothing happening. That reads as lag even though it isn't. A small
+// corner dot the instant the button goes down fixes the perception without a
+// box flashing over the content on every tap.
+inline void uiPressDot(bool on) {
+  if (!uidetail::gfx) return;
+  int16_t r = 4;
+  int16_t x = uidetail::gfx->width() - r - 3, y = r + 3;
+  uidetail::gfx->fillCircle(x, y, r, on ? uiTheme()->fg : uiTheme()->bg);
+}
+
 inline void uiHoldHint(const char *s) {
   if (!uidetail::gfx) return;
   int16_t w = 6 * (int16_t)strlen(s) + 10, h = 8 + 10;
@@ -285,8 +323,6 @@ inline uint32_t uiEdgesRaw() { return uidetail::edgesRaw; }
 inline uint32_t uiEdgesUsed() { return uidetail::edgesUsed; }
 inline bool uiButtonDownNow() { return digitalRead(BTN_BOOT) == LOW; }
 
-inline uint32_t uiNowMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
-
 IRAM_ATTR inline void uiButtonIsr() {
   uidetail::edgesRaw++;
   uint32_t now = uiNowMs();
@@ -327,8 +363,9 @@ inline UiPress uiPoll() {
     }
   }
 
-  // While still held, show what releasing now would do.
-  static uint8_t hinted = 0;
+  // While still held, show what releasing now would do. Starts at 255 so the
+  // first transition into stage 0 always draws.
+  static uint8_t hinted = 255;
   if (uidetail::down) {
     uint32_t held = uiNowMs() - uidetail::pressStart;
     uint8_t stage = held >= UI_HOLD_SETUP_MS    ? 3
@@ -337,13 +374,17 @@ inline UiPress uiPoll() {
                                                 : 0;
     if (stage != hinted && uidetail::screenOn) {
       hinted = stage;
-      if (stage == 1) uiHoldHint("release: COLOUR");
+      // Stage 0 is just "I saw that" -- a dot, not a box, because a box
+      // flashing over the content on every tap is worse than the lag it fixes.
+      if (stage == 0) uiPressDot(true);
+      else if (stage == 1) uiHoldHint("release: COLOUR");
       else if (stage == 2) uiHoldHint("release: SCREEN OFF");
       else if (stage == 3) uiHoldHint("release: SETUP");
     }
     return UiPress::None;
   }
-  hinted = 0;
+  if (hinted == 0 && uidetail::screenOn) uiPressDot(false);  // clear the dot
+  hinted = 255;
 
   uint32_t held = uidetail::pendingHeld;
   if (held == 0) return UiPress::None;
