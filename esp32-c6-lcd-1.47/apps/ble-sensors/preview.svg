@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="ble-sensors: a row per BLE thermometer with temperature, humidity, battery and time since last advertisement">
+  <!-- 172x320 native. Five sensor rows of 52px: label, big temperature,
+       humidity and battery on the right, and time since the last advert. No
+       Wi-Fi and no host: this panel is a radio receiver with a screen. -->
+  <rect width="172" height="320" fill="#0b0f14"/>
+
+  <!-- header: scanning indicator and how many sensors are being heard -->
+  <rect width="172" height="22" fill="#161d26"/>
+  <circle cx="10" cy="11" r="4" fill="#58a6ff"/>
+  <text x="20" y="15" font-family="monospace" font-size="10" fill="#e6edf3"
+        textLength="30" lengthAdjust="spacing">BLE</text>
+  <text x="164" y="15" font-family="monospace" font-size="9" fill="#8b98a5"
+        text-anchor="end">5 heard</text>
+
+  <!-- row 1 -->
+  <text x="8" y="40" font-family="monospace" font-size="9" fill="#8b98a5">Living room</text>
+  <text x="8" y="64" font-family="monospace" font-size="19" fill="#e6edf3"
+        textLength="66" lengthAdjust="spacing">21.4</text>
+  <circle cx="80" cy="50" r="2" fill="none" stroke="#e6edf3"/>
+  <text x="164" y="46" font-family="monospace" font-size="9" fill="#8b98a5"
+        text-anchor="end">44% rh</text>
+  <text x="164" y="62" font-family="monospace" font-size="8" fill="#3fb950"
+        text-anchor="end">batt 87% &#183; 12s</text>
+  <line x1="8" y1="72" x2="164" y2="72" stroke="#1b232d"/>
+
+  <!-- row 2 -->
+  <text x="8" y="92" font-family="monospace" font-size="9" fill="#8b98a5">Bedroom</text>
+  <text x="8" y="116" font-family="monospace" font-size="19" fill="#e6edf3"
+        textLength="66" lengthAdjust="spacing">19.8</text>
+  <circle cx="80" cy="102" r="2" fill="none" stroke="#e6edf3"/>
+  <text x="164" y="98" font-family="monospace" font-size="9" fill="#8b98a5"
+        text-anchor="end">51% rh</text>
+  <text x="164" y="114" font-family="monospace" font-size="8" fill="#3fb950"
+        text-anchor="end">batt 92% &#183; 8s</text>
+  <line x1="8" y1="124" x2="164" y2="124" stroke="#1b232d"/>
+
+  <!-- row 3: cold, so the reading is tinted -->
+  <text x="8" y="144" font-family="monospace" font-size="9" fill="#8b98a5">Garage</text>
+  <text x="8" y="168" font-family="monospace" font-size="19" fill="#58a6ff"
+        textLength="66" lengthAdjust="spacing">4.1</text>
+  <circle cx="80" cy="154" r="2" fill="none" stroke="#58a6ff"/>
+  <text x="164" y="150" font-family="monospace" font-size="9" fill="#8b98a5"
+        text-anchor="end">78% rh</text>
+  <text x="164" y="166" font-family="monospace" font-size="8" fill="#d29922"
+        text-anchor="end">batt 31% &#183; 22s</text>
+  <line x1="8" y1="176" x2="164" y2="176" stroke="#1b232d"/>
+
+  <!-- row 4 -->
+  <text x="8" y="196" font-family="monospace" font-size="9" fill="#8b98a5">Basement</text>
+  <text x="8" y="220" font-family="monospace" font-size="19" fill="#e6edf3"
+        textLength="66" lengthAdjust="spacing">17.2</text>
+  <circle cx="80" cy="206" r="2" fill="none" stroke="#e6edf3"/>
+  <text x="164" y="202" font-family="monospace" font-size="9" fill="#8b98a5"
+        text-anchor="end">63% rh</text>
+  <text x="164" y="218" font-family="monospace" font-size="8" fill="#3fb950"
+        text-anchor="end">batt 76% &#183; 30s</text>
+  <line x1="8" y1="228" x2="164" y2="228" stroke="#1b232d"/>
+
+  <!-- row 5: gone quiet. A dead coin cell leaves the last reading looking
+       authoritative, so a stale row must say so rather than just sit there. -->
+  <text x="8" y="248" font-family="monospace" font-size="9" fill="#4d5560">Shed</text>
+  <text x="8" y="272" font-family="monospace" font-size="19" fill="#4d5560"
+        textLength="66" lengthAdjust="spacing">--.-</text>
+  <text x="164" y="254" font-family="monospace" font-size="9" fill="#4d5560"
+        text-anchor="end">-- rh</text>
+  <text x="164" y="270" font-family="monospace" font-size="8" fill="#f85149"
+        text-anchor="end">silent 41m</text>
+
+  <!-- footer: no network at all, which is the point -->
+  <rect x="0" y="294" width="172" height="26" fill="#161d26"/>
+  <text x="8" y="304" font-family="monospace" font-size="7" fill="#6e7681">BTHome v2 &#183; passive scan</text>
+  <text x="8" y="315" font-family="monospace" font-size="7" fill="#4d5560">no wifi &#183; no host &#183; no pairing</text>
+</svg>

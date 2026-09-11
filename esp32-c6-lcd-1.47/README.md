@@ -198,6 +198,7 @@ so what you see is what actually fits. New apps should follow
 | [host-monitor](apps/host-monitor/) | **Built** (v+h) | Mac/Linux host stats, two auto-cycling pages |
 | [ticker](apps/ticker/) | Idea | Scrolling stock/crypto price list |
 | [wifi-scanner](apps/wifi-scanner/) | Idea | Live ranked list of nearby APs |
+| [ble-sensors](apps/ble-sensors/) | Idea | BLE thermometers, passive scan — **no Wi-Fi, no host** |
 | [zigbee-hub](apps/zigbee-hub/) | Idea | Read 802.15.4 sensors direct, no hub |
 | [sd-photo-frame](apps/sd-photo-frame/) | Idea | Slideshow off the TF card |
 | [notifier](apps/notifier/) | Idea | MQTT/webhook alerts on screen + LED |
