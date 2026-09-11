@@ -140,6 +140,7 @@ inline uint8_t rot = 0;
 inline bool screenOn = true;
 inline bool cfgDirty = false;   // rotation/scheme changed, not yet written to NVS
 inline uint32_t cfgDirtyAt = 0;
+inline uint32_t lastBlCheck = 0;  // last day/night backlight re-evaluation
 }  // namespace uidetail
 
 // Monotonic milliseconds. Defined here because both uiApply() and the button
@@ -164,9 +165,16 @@ inline const char *uiRotName() {
   }
 }
 
+// An app may override the backlight level entirely. ticker dims when the market
+// is shut, which ui.h has no way to know about -- and the backlight is the one
+// dial on this board that measurably moves power (8C between duty 0 and 140,
+// measured; see APP-CHECKLIST.md). Leave null to use the scheme's day/night.
+inline uint8_t (*uiBacklightHook)() = nullptr;
+
 // Backlight duty for right now: scheme-specific, day or night. Falls back to the
 // day level before the clock is set, since 1970 is not a useful hour.
 inline uint8_t uiBacklightNow() {
+  if (uiBacklightHook) return uiBacklightHook();
   struct tm t;
   if (!getLocalTime(&t, 50)) return uiTheme()->blDay;
   bool night = (t.tm_hour >= uiNightFrom || t.tm_hour < uiNightTo);
@@ -199,6 +207,24 @@ inline void uiApply(uint8_t newRot, uint8_t newScheme, bool persist) {
 // Call once per loop(). Persists rotation/scheme after things settle, so the
 // flash write never sits between a button press and the redraw.
 inline void uiTick() {
+  // Re-evaluate the backlight on a timer.
+  //
+  // This was a real bug: uiBacklightNow() was consulted in uiApply() and
+  // uiSetScreen() and nowhere else, so the night dimming only ever took effect
+  // if someone happened to press the button after 23:00. A board left alone
+  // overnight -- the normal case for a desk clock -- burned the day level until
+  // morning. Checked every 30s, and it only touches the PWM when the computed
+  // level actually changes, so this costs nothing in the steady state.
+  if (uidetail::screenOn && uiNowMs() - uidetail::lastBlCheck > 30000) {
+    uidetail::lastBlCheck = uiNowMs();
+    uint8_t want = uiBacklightNow();
+    if (want != uiBacklightApplied) {
+      Serial.printf("ui: backlight %u -> %u\n", uiBacklightApplied, want);
+      uiBacklightApplied = want;
+      backlight(want);
+    }
+  }
+
   if (!uidetail::cfgDirty) return;
   if (uiNowMs() - uidetail::cfgDirtyAt < 1500) return;
   uidetail::cfgDirty = false;

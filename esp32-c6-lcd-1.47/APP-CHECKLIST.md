@@ -66,10 +66,51 @@ Measured with `temperatureRead()` at steady state, not estimated:
 | Radio **off**, backlight 140 | 43.1 °C |
 | Radio off + backlight 0 | 38.1 °C, falling → floor ≈ 37 °C |
 
+Swept again later, holding everything else fixed (80MHz, `MIN_MODEM`, Wi-Fi up,
+~3 minutes per step to reach steady state):
+
+| Backlight duty | Die temp | LED current vs 140 |
+|---|---|---|
+| 140 | 45.1 °C | — |
+| 100 | ~43.5 °C | −29 % |
+| 60 | ~40.5 °C | −57 % |
+| 0 | 37.1 °C | −100 % |
+
+So the panel is worth ~8 °C across its full range, roughly linear in duty, and
+the SoC-only floor is confirmed at 37 °C.
+
 **The backlight is the dial. Almost nothing else is.**
 
 - Backlight 200 → 140 is worth ~6 °C. Keep `blDay` modest; per-scheme values are
   in `ui.h`.
+- **Duty is proportional to LED current, so the saving is real even where the
+  die barely moves.** The backlight LEDs sit on the panel, not on the die, so
+  the internal sensor *under-reports* what dimming saves. The die thermometer is
+  the only instrument here; a USB power meter would settle actual mA, and until
+  someone puts one inline, treat duty as the honest proxy and temperature as a
+  lower bound on the benefit.
+- **A dark UI can go much dimmer than a light one.** ticker runs duty 96 on a
+  black screen with high-contrast text and stays perfectly legible, against the
+  shared themes' 140.
+
+**Automatic light sleep is not available.** `esp_pm_configure()` with
+`light_sleep_enable = true` returns **`ESP_ERR_NOT_SUPPORTED`** on this
+Arduino-ESP32 core — `CONFIG_PM_ENABLE`/tickless idle are not compiled in. Tested,
+not assumed. Getting it would mean a custom IDF build, so the tricks left are the
+backlight, not polling when the screen is blanked, and a longer `delay()` in
+`loop()` so the idle task can park the core.
+
+**Don't do network work while the screen is blanked.** A blanked panel is a
+panel nobody is reading, so polling is pure waste — and it needs no catch-up
+logic if the interval timers keep running, because the first pass after a wake
+is already overdue and refetches on its own.
+
+**Trim Wi-Fi transmit power only when the measured RSSI says there is margin.**
+`netTune()` asks for 19.5 dBm because a weak spot once failed to associate at
+all; at −50 to −62 dBm most of that is margin spent as heat, so dropping to
+13 dBm is free. Gate it on the actual RSSI rather than doing it unconditionally,
+and don't expect to see it on the die thermometer — the transmitter is only
+active in short bursts.
 - CPU 160 → 80MHz is worth ~2 °C. Take it — nothing here is compute-bound and
   80MHz is the floor that still supports Wi-Fi.
 - **The radio costs ~1 °C *when parked with `MAX_MODEM`*.** That qualifier is

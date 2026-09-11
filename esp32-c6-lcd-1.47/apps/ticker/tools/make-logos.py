@@ -117,25 +117,51 @@ def bmp_to_rgba(d: bytes):
     return w, h, px
 
 
+def _unpack565(buf: bytes, i: int):
+    """One RGB565 pixel back to 8-bit rgb, for the visibility check."""
+    v = struct.unpack_from("<H", buf, i)[0]
+    return ((v >> 11) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+
+
 def luma(r: int, g: int, b: int) -> int:
     return (299 * r + 587 * g + 114 * b) // 1000
 
 
+def is_glyph(p, mode: str) -> bool:
+    """Is this pixel part of the mark, as opposed to its background?
+
+    Getting this predicate right is the whole job, because every decision below
+    depends on separating mark from background -- and the background is encoded
+    three different ways across one ordinary watchlist.
+    """
+    r, g, b, a = p
+    if mode == "white":
+        return min(r, g, b) <= WHITE_BG  # anything not near-white
+    if mode == "alpha":
+        return a >= 32  # the alpha channel says so
+    return max(r, g, b) > 24  # opaque, no alpha: near-black IS the background
+
+
 def classify(px, w, h):
-    """Decide how this logo has to be treated. Returns (white_bg, invert_glyph).
+    """Decide how this logo has to be treated. Returns (mode, invert_glyph).
 
     Read the background from the BORDER, never from the whole-image average.
-    Averaging was the first attempt and it was quietly wrong: Solana's PNG has
-    no alpha channel, so its black background counted as visible pixels, the
-    mean came out at luma 24, and the "too dark, invert it" rule flipped the
-    entire image to a white square. A file that looks fine and renders wrong.
+    Three cases turn up across one normal watchlist, and a black screen
+    punishes two of them:
 
-    Two real cases turn up in one ordinary watchlist:
-      transparent/black border -> composite onto black, change nothing
-      opaque white border      -> the logo was drawn for a light background, so
-                                  knock the white out to black, and invert the
-                                  glyph if it is too dark to show up (Apple's
-                                  mark is solid black).
+      white   opaque light background (Apple). Knock it out to black.
+      alpha   transparent background (most). Composite onto black.
+      opaque  no alpha channel at all (Solana). Near-black is the background.
+
+    Then, independently: if the mark itself is too dark, invert it. Both halves
+    are needed and I got this wrong twice in opposite directions. First I
+    averaged luminance over the whole image, which flipped Solana to a white
+    square -- its baked-in black background counted as mark. Then I replaced
+    the luminance test with border detection alone, which left Palantir, Joby,
+    Rocket Lab and SpaceX invisible: transparent border, so no knock-out, and a
+    solid black mark composited onto a black screen. The background tells you
+    WHICH pixels are the mark; the mark's own luminance tells you whether it
+    needs inverting. Two questions, not one.
     """
     ring = []
     for x in range(w):
@@ -143,37 +169,50 @@ def classify(px, w, h):
     for y in range(h):
         ring += [px[y * w], px[y * w + w - 1]]
 
-    opaque = [p for p in ring if p[3] >= 32]
-    if not opaque:
-        return False, False  # fully transparent border: the ordinary case
-    whiteish = sum(1 for r, g, b, _ in opaque if min(r, g, b) > WHITE_BG)
-    if whiteish * 2 < len(opaque):
-        return False, False
+    opaque_ring = [p for p in ring if p[3] >= 32]
+    whiteish = sum(1 for r, g, b, _ in opaque_ring if min(r, g, b) > WHITE_BG)
+    # The border must be mostly OPAQUE before its colour means anything. Testing
+    # only the opaque border pixels was the third version of this bug: Joby's
+    # mark is near-white on a transparent background and it touches the frame
+    # edge, so the handful of opaque border pixels were all pale, the image was
+    # read as "white background", and the mark itself got knocked out to black.
+    # A transparent border is a transparent background, whatever colour the few
+    # opaque pixels in it happen to be.
+    border_painted = len(opaque_ring) * 2 >= len(ring)
+    if border_painted and whiteish * 2 >= len(opaque_ring):
+        mode = "white"
+    elif any(p[3] < 250 for p in px):
+        mode = "alpha"
+    else:
+        mode = "opaque"
 
-    glyph = [p for p in px if p[3] >= 32 and min(p[0], p[1], p[2]) <= WHITE_BG]
+    glyph = [p for p in px if is_glyph(p, mode)]
     if not glyph:
-        return True, False  # all background, nothing to draw
+        return mode, False  # all background, nothing to draw
     mean = sum(luma(r, g, b) for r, g, b, _ in glyph) / len(glyph)
-    return True, mean < DARK_LUMA
+    return mode, mean < DARK_LUMA
 
 
-def to_rgb565(px, w, h, white_bg: bool, invert_glyph: bool) -> bytes:
+def to_rgb565(px, w, h, mode: str, invert_glyph: bool) -> bytes:
     """Flatten to a black background and pack little-endian RGB565.
 
     Little-endian because the ESP32 is, and the firmware casts the file straight
     to uint16_t* for draw16bitRGBBitmap. Byte-swapped here would show as a
     confetti-coloured logo, which is a maddening thing to debug on hardware.
+
+    Inversion applies to the mark ONLY. Inverting the background too is exactly
+    how a transparent logo turns into a white square.
     """
     out = bytearray(w * h * 2)
-    for i, (r, g, b, a) in enumerate(px):
-        if white_bg:
-            if min(r, g, b) > WHITE_BG:
-                r = g = b = 0  # the light background becomes the black screen
-            elif invert_glyph:
-                r, g, b = 255 - r, 255 - g, 255 - b
+    for i, p in enumerate(px):
+        r, g, b, a = p
+        if not is_glyph(p, mode):
+            r = g = b = 0  # background becomes the black screen
             a = 255
-        # Alpha onto black, last, so a transparent pixel stays black instead of
-        # becoming a white box.
+        elif invert_glyph:
+            r, g, b = 255 - r, 255 - g, 255 - b
+        # Alpha onto black, last, so a part-transparent edge fades to the
+        # background rather than to a bright fringe.
         r, g, b = r * a // 255, g * a // 255, b * a // 255
         v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
         struct.pack_into("<H", out, i * 2, v)
@@ -198,7 +237,7 @@ def main() -> int:
     tmp = pathlib.Path("/tmp/ticker-logos")
     tmp.mkdir(exist_ok=True)
 
-    ok = skipped = 0
+    ok = skipped = faint = 0
     for label, url in targets:
         print(f"{label}:")
         png = fetch(url)
@@ -212,17 +251,28 @@ def main() -> int:
             skipped += 1
             continue
 
-        white_bg, invert = classify(px, w, h)
+        mode, invert = classify(px, w, h)
         dest = OUTDIR / f"{label}.565"
-        dest.write_bytes(to_rgb565(px, w, h, white_bg, invert))
-        note = ("white background knocked out" if white_bg and not invert
-                else "white background knocked out, dark glyph inverted" if white_bg
-                else "transparent, composited onto black")
-        print(f"    {w}x{h}  {note}"
-              f"  -> {dest.relative_to(HERE)} ({dest.stat().st_size} bytes)")
+        data = to_rgb565(px, w, h, mode, invert)
+        dest.write_bytes(data)
+
+        # Verify rather than assume: the whole point of the invert rule is that
+        # the mark survives on a black screen, so check that it actually did.
+        # A logo that converts "successfully" into 18KB of near-black is the
+        # failure this tool exists to prevent.
+        vis = sum(1 for i in range(0, len(data), 2)
+                  if max(_unpack565(data, i)) >= 40) * 100 // (w * h)
+        warn = "  <-- WARNING: nearly invisible on black" if vis < 6 else ""
+        print(f"    {w}x{h}  bg={mode}{', mark inverted' if invert else ''}"
+              f"  {vis}% visible  -> {dest.relative_to(HERE)}{warn}")
         ok += 1
+        if vis < 6:
+            faint += 1
 
     total = sum(f.stat().st_size for f in OUTDIR.glob("*.565"))
+    if faint:
+        print(f"\n{faint} logo(s) came out nearly invisible on black -- the border "
+              f"detection in classify() did not catch their background shape.")
     print(f"\n{ok} logo(s), {skipped} skipped, {total} bytes total "
           f"({total * 100 // 0xE0000}% of the 896KB data partition)")
     print("now: PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs")

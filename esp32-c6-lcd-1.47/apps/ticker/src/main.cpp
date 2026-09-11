@@ -35,7 +35,7 @@ static const char *TZ_STRING = "EST5EDT,M3.2.0/2,M11.1.0/2";  // also US market 
 // fact, asserted in checkLayout() -- but it caps rows ON SCREEN, not symbols:
 // a longer list pages through six at a time.
 static const uint8_t ROWS_PER_PAGE = 6;
-static const uint8_t MAX_SYMBOLS = 24;
+static const uint8_t MAX_SYMBOLS = 32;
 static const uint8_t MAX_LABEL = 5;  // glyphs; the symbol box is 5 wide at size 2
 
 static const uint32_t PAGE_MS = 8000;   // how long each page stays up
@@ -53,6 +53,18 @@ static Mode mode = Mode::List;
 static const char *modeName() { return mode == Mode::Solo ? "SOLO" : "LIST"; }
 
 static const int16_t LOGO_PX = 96;  // must match tools/make-logos.py --size
+
+// Backlight duty, overridable from watchlist.json. This is the only dial on
+// this board that measurably moves power: measured steady-state die
+// temperature is 45.1C at duty 140, 43.5 at 100, 40.5 at 60 and 37.1 at 0, so
+// the panel is worth ~8C and the SoC floor is 37C. Duty is proportional to LED
+// current, so the saving is real even where the die sensor barely registers it.
+//
+// Defaults are well below the theme's 140 because this screen is mostly black
+// with high-contrast text, which stays legible far dimmer than a light UI.
+static uint8_t blOpen = 96;    // market open: the only time it needs to be bright
+static uint8_t blClosed = 64;  // shut, but daytime -- crypto still moves
+static uint8_t blNight = 24;   // ui.h's night window
 
 // Yahoo 429s an anonymous client, so this is required rather than polite.
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
@@ -136,6 +148,16 @@ static bool loadWatchlist() {
     cfgErr = "watchlist is empty";
     return false;
   }
+
+  // Clamped, not trusted: this file is hand-edited and a duty of 0 would read
+  // as a dead board rather than a dim one.
+  JsonObject b = doc["brightness"];
+  if (!b.isNull()) {
+    blOpen = constrain((int)(b["open"] | blOpen), 8, 255);
+    blClosed = constrain((int)(b["closed"] | blClosed), 8, 255);
+    blNight = constrain((int)(b["night"] | blNight), 8, 255);
+  }
+  Serial.printf("brightness: open %u, closed %u, night %u\n", blOpen, blClosed, blNight);
 
   coinIds[0] = '\0';
   for (uint8_t i = 0; i < nRows; i++) {
@@ -257,6 +279,15 @@ static bool marketOpen(const struct tm &t) {
   if (t.tm_wday == 0 || t.tm_wday == 6) return false;  // weekend
   int mins = t.tm_hour * 60 + t.tm_min;
   return mins >= (9 * 60 + 30) && mins < (16 * 60);
+}
+
+// Installed as ui.h's backlight hook, so uiTick() re-evaluates it every 30s
+// and a change takes effect on its own rather than waiting for a button press.
+static uint8_t tickerBacklight() {
+  struct tm t;
+  if (!getLocalTime(&t, 0)) return blClosed;  // no clock yet: assume the quiet case
+  if (t.tm_hour >= uiNightFrom || t.tm_hour < uiNightTo) return blNight;
+  return marketOpen(t) ? blOpen : blClosed;
 }
 
 // ── drawing ──────────────────────────────────────────────────────────────
@@ -706,6 +737,12 @@ void setup() {
   syncLayout();
   Serial.printf("layout: %s\n", modeName());
 
+  // The hook reads blOpen/blClosed/blNight at call time, so installing it
+  // before loadWatchlist() overrides them is fine. It cannot be *applied* yet
+  // though: it needs the clock to know whether the market is open, so the
+  // actual level is set at the end of setup(), after NTP.
+  uiBacklightHook = tickerBacklight;
+
   if (!loadWatchlist()) {
     Serial.printf("config error: %s %s\n", cfgErr, cfgErrDetail);
     return;  // loop() draws the panel; nothing else can usefully run
@@ -728,9 +765,27 @@ void setup() {
     for (int i = 0; i < 40 && !getLocalTime(&t, 250); i++) {}
   }
 #if POWER_SAVE
+  // 80MHz is the floor, not a choice: the Wi-Fi stack requires at least this.
   setCpuFrequencyMhz(80);
+
+  // Transmit power is set to 19.5dBm by netTune(), which exists because a weak
+  // spot once failed to associate at all. This board sits at -50dBm, so most of
+  // that is margin being spent as heat -- but only trim it when the measured
+  // signal actually says there is margin, and leave it alone when there isn't.
+  // Small next to the backlight, and not separately measurable with a die
+  // thermometer, but it costs nothing and cannot hurt at this range.
+  if (WiFi.status() == WL_CONNECTED && WiFi.RSSI() > -65) {
+    WiFi.setTxPower(WIFI_POWER_13dBm);
+    Serial.printf("tx power -> 13dBm (rssi %ddBm, ample margin)\n", WiFi.RSSI());
+  }
 #endif
+
+  // Now that NTP has run, tickerBacklight() can tell open from closed.
+  uiBacklightApplied = uiBacklightNow();
+  backlight(uiBacklightApplied);
+  Serial.printf("backlight -> %u\n", uiBacklightApplied);
 }
+
 
 static void drawFailPanel() {
   static char key[32];
@@ -854,44 +909,74 @@ void loop() {
 
   // Crypto and stocks on separate clocks: one market closes, the other never
   // does, and polling a shut exchange every five minutes only risks the 429.
-  if (state != State::NoWifi) {
-    uint32_t stockEvery = (haveTime && marketOpen(t)) ? STOCK_OPEN_MS : STOCK_SHUT_MS;
-    // One HTTPS request per stock, so a long list must not become a burst --
-    // 20 symbols every 5 min is 240 requests/hour and Yahoo will start
-    // answering 429. Hold the floor at roughly one request a minute.
-    if (stockEvery < nStocks * 60000UL) stockEvery = nStocks * 60000UL;
-    bool doStocks = nStocks && (lastStock == 0 || millis() - lastStock > stockEvery);
-    bool doCoins = nCoins && (lastCoin == 0 || millis() - lastCoin > COIN_MS);
+  // Nothing is fetched while the screen is blanked. Twelve TLS handshakes and
+  // twelve HTTP GETs every few minutes for a panel nobody is looking at is the
+  // clearest waste in the app, and it needs no catch-up logic: the interval
+  // timers keep running, so the first loop after a wake is already overdue and
+  // refetches immediately.
+  // Stocks are swept ONE PER LOOP PASS, never in a burst.
+  //
+  // Measured: Yahoo served 22 sequential requests spaced 0.3s apart without a
+  // single 429, so the old one-request-per-minute floor was far too cautious --
+  // the original 429 was the missing User-Agent, not the rate. But 22 blocking
+  // requests back to back freeze loop() for ~26s, and while the ISR does latch
+  // a button press so nothing is lost, the clock stops and the press is acted
+  // on up to half a minute late. One per pass keeps loop() alive, finishes the
+  // sweep in ~30s anyway, and fills the rows in progressively.
+  static bool sweeping = false;
+  static uint8_t sweepIdx = 0;
+  static uint32_t lastOne = 0;
 
-    if (doStocks || doCoins) {
+  if (state != State::NoWifi && uiScreenOn()) {
+    uint32_t stockEvery = (haveTime && marketOpen(t)) ? STOCK_OPEN_MS : STOCK_SHUT_MS;
+    // A guard against a pathological list rather than a rate limit: keep the
+    // sweep under about a quarter of the interval. At 22 stocks this works out
+    // to 110s, well inside the 5-minute interval, so it never actually bites.
+    if (stockEvery < nStocks * 5000UL) stockEvery = nStocks * 5000UL;
+
+    if (!sweeping && nStocks && (lastStock == 0 || millis() - lastStock > stockEvery)) {
+      sweeping = true;
+      sweepIdx = 0;
+    }
+
+    auto redraw = [&]() {
+      if (state != State::Running) return;
+      if (mode == Mode::List) drawRows();
+      else drawSolo(false);
+    };
+
+    if (nCoins && (lastCoin == 0 || millis() - lastCoin > COIN_MS)) {
+      lastCoin = millis();
       NetworkClientSecure client;
       client.setInsecure();  // public read-only quotes; pinning buys nothing here
-      bool ok = false;
-
-      if (doCoins) {
-        lastCoin = millis();
-        ok |= fetchCoins(client);
-      }
-      if (doStocks) {
-        lastStock = millis();
-        for (uint8_t i = 0; i < nRows; i++) {
-          if (rows[i].coin) continue;
-          ok |= fetchStock(client, rows[i]);
-          delay(250);  // sequential and unhurried: 429 is the enemy, not latency
-        }
-      }
+      bool ok = fetchCoins(client);
       if (ok) {
         lastOk = millis();
         failures = 0;
-        if (uiScreenOn() && state == State::Running) {
-          if (mode == Mode::List) drawRows();
-          else drawSolo(false);
-        }
+        redraw();
       } else {
         failures++;
       }
-      Serial.printf("fetch %s (failures %u, heap %u)\n", ok ? "ok" : "FAILED", failures,
+      Serial.printf("coins %s (failures %u, heap %u)\n", ok ? "ok" : "FAILED", failures,
                     ESP.getFreeHeap());
+    } else if (sweeping && millis() - lastOne > 250) {
+      lastOne = millis();
+      if (sweepIdx >= nStocks) {  // stocks are stored first, so this is the end
+        sweeping = false;
+        lastStock = millis();
+        Serial.printf("sweep done (%u stocks, heap %u)\n", nStocks, ESP.getFreeHeap());
+      } else {
+        NetworkClientSecure client;
+        client.setInsecure();
+        if (fetchStock(client, rows[sweepIdx])) {
+          lastOk = millis();
+          failures = 0;
+          redraw();
+        } else {
+          failures++;
+        }
+        sweepIdx++;
+      }
     }
   }
 
@@ -906,5 +991,8 @@ void loop() {
     Serial.println();
   }
 
-  delay(20);
+  // 50ms rather than 20: the button is edge-captured in an ISR so nothing is
+  // missed, the clock only changes once a minute, and delay() yields to the
+  // idle task which parks the core. Small, but free.
+  delay(50);
 }

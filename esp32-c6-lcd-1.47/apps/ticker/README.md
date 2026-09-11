@@ -13,9 +13,70 @@ symbols, green and red numbers — and **two layouts**, cycled by a 2s hold:
 
 The chosen layout persists in NVS, so it survives a power cycle.
 
-**Flashed and verified** — 12 symbols (8 stocks, 4 coins) all fetching, 12/12
-logos present, 44.1°C die temperature, ~305KB heap free, 41.0% of the 3MB app
-partition.
+**Flashed and verified** — 26 symbols (22 stocks, 4 coins) all fetching, 26/26
+logos present, 43–44°C die temperature, ~287KB heap free (the 18KB logo buffer
+accounts for the drop), 41.1% of the 3MB app partition.
+
+Stocks are swept **one request per loop pass**, not in a burst. Yahoo tolerates
+the rate fine — measured, 22 requests spaced 0.3s apart drew zero 429s, so the
+original 429 really was just the missing User-Agent — but 22 *blocking* requests
+back to back freeze `loop()` for ~26s. The ISR still latches a button press so
+nothing is lost, yet the clock stops and the press lands half a minute late. One
+per pass keeps the UI alive, finishes in ~30s regardless, and fills the rows in
+progressively.
+
+## Energy
+
+Measured on this board by sweeping one variable at a time, ~3 minutes per step:
+
+| Backlight duty | Die temp | LED current vs 140 |
+|---|---|---|
+| 140 (shared theme default) | 45.1 °C | — |
+| **96 (ticker's `open`)** | ~43.5 °C | **−31 %** |
+| 64 (`closed`) | ~40.5 °C | −54 % |
+| 24 (`night`) | ~38 °C | −83 % |
+| 0 | 37.1 °C | −100 % |
+
+The panel is worth about 8 °C across its whole range and the SoC-only floor is
+37 °C, so **the backlight is the only dial that moves much.** Three things
+follow, and one caveat matters more than the table:
+
+- **The die sensor under-reports what dimming saves.** The backlight LEDs are on
+  the panel, not the die. Duty is proportional to LED current, so cutting duty
+  31 % genuinely cuts backlight power ~31 % even though the thermometer only
+  moves 1.6 °C. A USB power meter inline would give real mA; the die
+  temperature is a lower bound on the benefit, not a measure of it.
+- **A black screen tolerates far more dimming than a light one.** 96 is
+  comfortably legible here against the themes' 140. Push `open` to 60 in
+  `watchlist.json` for another ~3 °C if it's still too bright.
+- **The market-closed level is the easy win.** The stock rows don't change
+  between 16:00 and 09:30, or at all on weekends, so most of the week runs at
+  64 or 24 rather than 96 — no loss of information at all.
+
+Everything else, in order of what it's actually worth:
+
+| Change | Worth |
+|---|---|
+| Backlight 140 → 96/64/24 | ~1.6–7 °C, and the only measurable one |
+| Don't poll while the screen is blanked | 26 HTTPS requests per cycle saved; the biggest *radio* saving |
+| CPU 160 → 80MHz (already on) | ~2 °C. 80MHz is the floor Wi-Fi allows |
+| `WIFI_PS_MIN_MODEM` (already on) | vs no power save, **12 °C** |
+| Wi-Fi TX 19.5 → 13 dBm | small, and below the die sensor's resolution |
+| `loop()` `delay(20)` → `delay(50)` | small; lets the idle task park the core |
+
+**Automatic light sleep is not available.** `esp_pm_configure()` with
+`light_sleep_enable = true` returns `ESP_ERR_NOT_SUPPORTED` — tickless idle is
+not compiled into this Arduino core. Tested, not assumed; it would need a custom
+IDF build. Two things not done, both with a real cost: `WIFI_PS_MAX_MODEM` may
+beat `MIN_MODEM` but `MIN_MODEM` was chosen deliberately earlier and relitigating
+it needs its own measurement, and deep sleep can't be woken by this button
+(GPIO9 is not an RTC pin).
+
+Also fixed here, in `ui.h` and affecting every app: `uiBacklightNow()` was only
+ever consulted by `uiApply()` and `uiSetScreen()`, so **the night dimming only
+took effect if somebody happened to press the button after 23:00.** A board left
+alone overnight burned the day level until morning. `uiTick()` now re-evaluates
+every 30s and only touches the PWM when the level actually changes.
 
 ## Buttons
 

@@ -5,18 +5,37 @@
     "",
     "Six rows show at once -- that is what fits at text size 2, and size 1 is",
     "already known to be too small to read on this panel. A longer list pages",
-    "through six at a time every 8 seconds. 24 symbols maximum.",
+    "through six at a time every 8 seconds. 32 symbols maximum.",
     "Labels are capped at 5 characters, which is the width of the symbol box.",
     "",
-    "stocks: Yahoo symbols, one HTTPS request EACH. The firmware holds the",
-    "        refresh to about one request a minute, so 12 stocks means a",
-    "        12-minute refresh -- long lists trade freshness for breadth.",
+    "stocks: Yahoo symbols, one HTTPS request EACH, swept one per loop pass so",
+    "        the button and clock stay alive during a refresh. Measured: 22",
+    "        requests 0.3s apart drew zero 429s, so breadth is cheap here; a",
+    "        22-stock sweep takes about 30s and then idles until the next",
+    "        5-minute mark.",
     "coins:  CoinGecko ids (the id, not the ticker) -- all of them travel in a",
     "        single request, so they are nearly free. Find an id at",
     "        https://api.coingecko.com/api/v3/coins/list"
   ],
 
-  "stocks": ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD"],
+  "_brightness_comment": [
+    "Backlight duty, 8-255. This is the ONE dial that measurably moves power on",
+    "this board: measured steady-state die temperature is 45.1C at 140, 43.5 at",
+    "100, 40.5 at 60 and 37.1 at 0 -- so the panel is worth about 8C and the SoC",
+    "alone floors at 37C. Duty is proportional to LED current, so lowering it",
+    "saves real power even where the die sensor barely moves.",
+    "",
+    "Defaults sit well under the 140 the shared themes use, because a black",
+    "screen with high-contrast text stays readable much dimmer than a light UI.",
+    "Push 'open' down to 60 if it is still too bright; that is another ~3C."
+  ],
+  "brightness": { "open": 96, "closed": 64, "night": 24 },
+
+  "stocks": [
+    "AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD",
+    "UI", "RKLB", "SPCX", "ABNB", "LUNR", "PLTR", "PEP", "BNS",
+    "SNOW", "HOOD", "SOFI", "JOBY", "ARM", "NET"
+  ],
 
   "coins": [
     { "id": "bitcoin", "label": "BTC" },
