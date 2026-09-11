@@ -139,6 +139,72 @@ the entire logo to a white square. **Read the background from the border, never
 from the average.** The decision is made on the Mac, where there is full colour
 information, and costs the firmware zero bytes.
 
+## Settings
+
+Everything tunable lives in [`data/watchlist.json`](data/watchlist.json) on the
+device's filesystem, so changing any of it is an `uploadfs`, not a rebuild:
+
+| Key | What | Range |
+|---|---|---|
+| `brightness.open` / `.closed` / `.night` | backlight duty per market state | 8–255 |
+| `night.from` / `.to` | hours the night level applies | 0–23 |
+| `layout` | which layout to start in | `list` / `solo` |
+| `timing.pageSeconds` | **page speed** — how long six rows stay up | 2–600 |
+| `timing.soloSeconds` | how long one symbol holds the solo screen | 2–600 |
+| `timing.cascadeMs` | per-row stagger on a page flip; 0 = instant | 0–400 |
+| `refresh.openMinutes` / `.closedMinutes` / `.coinMinutes` | price refresh intervals | 1–240 / 1–1440 / 1–240 |
+| `timezone` | POSIX TZ, for the clock *and* the market window | — |
+| `market.open` / `.close` | trading window, `HH:MM`, Mon–Fri | 00:00–23:59 |
+| `stocks` / `coins` | the watchlist itself | ≤32 symbols |
+
+Any key may be omitted and the firmware default applies.
+
+**Two settings are deliberately absent.** Wi-Fi credentials stay in
+`secrets.h` — see [SECURITY.md](../../../SECURITY.md). Logo size is fixed at
+96px because the firmware and `tools/make-logos.py` have to agree on it.
+
+**`timezone` and `market` are coupled on purpose.** Market hours are evaluated
+in whatever zone `timezone` names, so pointing it somewhere non-Eastern means
+moving the window too. That used to be a buried comment saying "this breaks
+silently if you change TZ"; making the window a setting turns a hidden
+assumption into an adjustable one — and it means the panel can track a
+non-US exchange.
+
+### Bad values are rejected, not clamped
+
+The file is hand-edited, so reading it is a trust boundary. Every numeric
+setting goes through one `setting()` helper that range-checks, **keeps the
+previous value, and names what it rejected on the serial log.** Silently
+clamping a typo to the nearest legal value produces a setting that "doesn't
+work" with no explanation; saying so costs one line.
+
+Verified by feeding it a deliberately broken file:
+
+```
+setting brightness.open: 999 out of range 8..255, keeping 96
+setting brightness.closed: 0 out of range 8..255, keeping 64
+setting night.from: 25 out of range 0..23, keeping 23
+setting timing.pageSeconds: 0 out of range 2..600, keeping 8
+setting timing.soloSeconds: not a number, keeping 5
+setting refresh.openMinutes: 99999 out of range 1..240, keeping 5
+setting market: close 570 <= open 960, restoring 09:30-16:00
+setting layout: 'sideways' is not list or solo, ignored
+skipped stock 'TOOLONGNAME' (bad label or list full)
+```
+
+Every one of those would otherwise be a plausible-looking failure. A brightness
+of 0 reads as a dead board, which is why the floor is 8; an inverted market
+window would make `marketOpen()` permanently false and quietly disable both the
+open brightness and the 5-minute refresh at once.
+
+`layout` is only a starting point. A 2s hold switches layout and stores that in
+NVS, which then **wins over the file** — otherwise a config default would undo
+the user's own button press on every boot. The boot log says which is in force:
+
+```
+layout: SOLO (file default list, nvs override in effect)
+```
+
 ## The watchlist is a file on the device, not source code
 
 [`data/watchlist.json`](data/watchlist.json) lives on the board's LittleFS

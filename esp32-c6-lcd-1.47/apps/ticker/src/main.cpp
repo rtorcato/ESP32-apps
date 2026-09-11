@@ -27,8 +27,28 @@
 #include <assert.h>
 #include <time.h>
 
-// ── config ───────────────────────────────────────────────────────────────
-static const char *TZ_STRING = "EST5EDT,M3.2.0/2,M11.1.0/2";  // also US market time
+// ── settings ─────────────────────────────────────────────────────────────
+// Everything here is a DEFAULT. watchlist.json on the device's LittleFS
+// overrides any of it, so tuning the panel is an `uploadfs` rather than a
+// rebuild. The values below are what you get if the file says nothing.
+//
+// That file is hand-edited, which makes this a trust boundary: every read goes
+// through setting(), which range-checks, logs anything it rejects, and keeps
+// the previous value rather than clamping silently. A zero page interval or a
+// zero-length refresh would present as a broken app, not as a bad config.
+static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
+
+// Market hours, in tzString's zone. Configurable so the timezone above is not
+// silently load-bearing: point this at a non-Eastern zone and you must move
+// these too, which is exactly the coupling that used to be a buried comment.
+static uint16_t mktOpenMin = 9 * 60 + 30;
+static uint16_t mktCloseMin = 16 * 60;
+
+static uint32_t pageMs = 8000;   // how long each list page stays up
+static uint32_t soloMs = 5000;   // how long one symbol holds the solo screen
+static uint16_t cascadeMs = 22;  // per-row stagger when a page flips
+
+static uint8_t layoutDefault = 0;  // 0 = list, 1 = solo; NVS wins once set
 
 // Six rows is the readable budget on a 172px panel at text size 2, and size 1
 // is the density already rejected as too small to read. So six is a layout
@@ -38,9 +58,6 @@ static const uint8_t ROWS_PER_PAGE = 6;
 static const uint8_t MAX_SYMBOLS = 32;
 static const uint8_t MAX_LABEL = 5;  // glyphs; the symbol box is 5 wide at size 2
 
-static const uint32_t PAGE_MS = 8000;   // how long each page stays up
-static const uint16_t CASCADE_MS = 22;  // per-row stagger when a page flips
-static const uint32_t SOLO_MS = 5000;   // how long one symbol holds the screen
 
 // Layouts, cycled by the 2s hold. ui.h calls that gesture UiPress::Scheme
 // because most apps here use it for colour; ticker pins one scheme (black with
@@ -69,9 +86,9 @@ static uint8_t blNight = 24;   // ui.h's night window
 // Yahoo 429s an anonymous client, so this is required rather than polite.
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
 
-static const uint32_t STOCK_OPEN_MS = 5UL * 60 * 1000;   // market open: every 5 min
-static const uint32_t STOCK_SHUT_MS = 60UL * 60 * 1000;  // closed: hourly is plenty
-static const uint32_t COIN_MS = 5UL * 60 * 1000;         // crypto never closes
+static uint32_t stockOpenMs = 5UL * 60 * 1000;   // market open: every 5 min
+static uint32_t stockShutMs = 60UL * 60 * 1000;  // closed: hourly is plenty
+static uint32_t coinMs = 5UL * 60 * 1000;        // crypto never closes
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000;
 static const uint32_t LOG_MS = 60UL * 1000;
 
@@ -97,6 +114,36 @@ static uint8_t page = 0, nPages = 1;
 static char coinIds[MAX_SYMBOLS * 28];  // comma-joined, for the one coin request
 static const char *cfgErr = nullptr;
 static char cfgErrDetail[40] = "";
+
+// ── reading settings out of a hand-edited file ────────────────────────────
+// One integer setting. Absent keeps `cur`; out of range keeps `cur` AND says
+// so. Rejecting loudly beats clamping silently: a typo that quietly becomes
+// the nearest legal value is a setting that "doesn't work" with no explanation.
+static long setting(JsonVariant v, const char *name, long cur, long lo, long hi) {
+  if (v.isNull()) return cur;
+  if (!v.is<long>()) {
+    Serial.printf("setting %s: not a number, keeping %ld\n", name, cur);
+    return cur;
+  }
+  long x = v.as<long>();
+  if (x < lo || x > hi) {
+    Serial.printf("setting %s: %ld out of range %ld..%ld, keeping %ld\n", name, x, lo, hi, cur);
+    return cur;
+  }
+  return x;
+}
+
+// "HH:MM" -> minutes past midnight. Returns false on anything it doesn't fully
+// understand, so a malformed time leaves the default standing.
+static bool parseHhMm(const char *s, uint16_t *out) {
+  if (!s) return false;
+  int h = -1, m = -1;
+  char extra = 0;
+  if (sscanf(s, "%d:%d%c", &h, &m, &extra) != 2) return false;  // trailing junk rejected
+  if (h < 0 || h > 23 || m < 0 || m > 59) return false;
+  *out = (uint16_t)(h * 60 + m);
+  return true;
+}
 
 // Stocks are stored first so the divider between the two groups is a single
 // index, and so the sequential stock fetches are one contiguous loop.
@@ -149,15 +196,64 @@ static bool loadWatchlist() {
     return false;
   }
 
-  // Clamped, not trusted: this file is hand-edited and a duty of 0 would read
-  // as a dead board rather than a dim one.
+  // ── settings ──
+  // The floor of 8 on brightness is deliberate: 0 reads as a dead board rather
+  // than a dim one, and there is no way back from it without the serial log.
   JsonObject b = doc["brightness"];
-  if (!b.isNull()) {
-    blOpen = constrain((int)(b["open"] | blOpen), 8, 255);
-    blClosed = constrain((int)(b["closed"] | blClosed), 8, 255);
-    blNight = constrain((int)(b["night"] | blNight), 8, 255);
+  blOpen = (uint8_t)setting(b["open"], "brightness.open", blOpen, 8, 255);
+  blClosed = (uint8_t)setting(b["closed"], "brightness.closed", blClosed, 8, 255);
+  blNight = (uint8_t)setting(b["night"], "brightness.night", blNight, 8, 255);
+
+  // Night window lives in ui.h, shared with every other app on the board.
+  JsonObject n = doc["night"];
+  uiNightFrom = (uint8_t)setting(n["from"], "night.from", uiNightFrom, 0, 23);
+  uiNightTo = (uint8_t)setting(n["to"], "night.to", uiNightTo, 0, 23);
+
+  JsonObject tg = doc["timing"];
+  pageMs = (uint32_t)setting(tg["pageSeconds"], "timing.pageSeconds", pageMs / 1000, 2, 600) * 1000UL;
+  soloMs = (uint32_t)setting(tg["soloSeconds"], "timing.soloSeconds", soloMs / 1000, 2, 600) * 1000UL;
+  cascadeMs = (uint16_t)setting(tg["cascadeMs"], "timing.cascadeMs", cascadeMs, 0, 400);
+
+  JsonObject r = doc["refresh"];
+  stockOpenMs = (uint32_t)setting(r["openMinutes"], "refresh.openMinutes",
+                                  stockOpenMs / 60000, 1, 240) * 60000UL;
+  stockShutMs = (uint32_t)setting(r["closedMinutes"], "refresh.closedMinutes",
+                                  stockShutMs / 60000, 1, 1440) * 60000UL;
+  coinMs = (uint32_t)setting(r["coinMinutes"], "refresh.coinMinutes",
+                             coinMs / 60000, 1, 240) * 60000UL;
+
+  const char *tz = doc["timezone"];
+  if (tz && *tz) snprintf(tzString, sizeof tzString, "%s", tz);
+
+  JsonObject mk = doc["market"];
+  uint16_t hm;
+  if (parseHhMm(mk["open"].as<const char *>(), &hm)) mktOpenMin = hm;
+  else if (!mk["open"].isNull()) Serial.println("setting market.open: not HH:MM, ignored");
+  if (parseHhMm(mk["close"].as<const char *>(), &hm)) mktCloseMin = hm;
+  else if (!mk["close"].isNull()) Serial.println("setting market.close: not HH:MM, ignored");
+  if (mktCloseMin <= mktOpenMin) {
+    // An inverted window would make marketOpen() always false, which silently
+    // turns off the open brightness and the 5-minute refresh at once.
+    Serial.printf("setting market: close %u <= open %u, restoring 09:30-16:00\n", mktCloseMin,
+                  mktOpenMin);
+    mktOpenMin = 9 * 60 + 30;
+    mktCloseMin = 16 * 60;
   }
-  Serial.printf("brightness: open %u, closed %u, night %u\n", blOpen, blClosed, blNight);
+
+  const char *lay = doc["layout"];
+  if (lay) {
+    if (!strcasecmp(lay, "solo")) layoutDefault = 1;
+    else if (!strcasecmp(lay, "list")) layoutDefault = 0;
+    else Serial.printf("setting layout: '%s' is not list or solo, ignored\n", lay);
+  }
+
+  Serial.printf("settings: bl %u/%u/%u  night %02u-%02u  page %lus solo %lus cascade %ums\n",
+                blOpen, blClosed, blNight, uiNightFrom, uiNightTo,
+                (unsigned long)(pageMs / 1000), (unsigned long)(soloMs / 1000), cascadeMs);
+  Serial.printf("settings: refresh %lu/%lu/%lu min  market %02u:%02u-%02u:%02u  tz %s\n",
+                (unsigned long)(stockOpenMs / 60000), (unsigned long)(stockShutMs / 60000),
+                (unsigned long)(coinMs / 60000), mktOpenMin / 60, mktOpenMin % 60,
+                mktCloseMin / 60, mktCloseMin % 60, tzString);
 
   coinIds[0] = '\0';
   for (uint8_t i = 0; i < nRows; i++) {
@@ -278,7 +374,7 @@ static void formatPct(float p, char *out, size_t n) {
 static bool marketOpen(const struct tm &t) {
   if (t.tm_wday == 0 || t.tm_wday == 6) return false;  // weekend
   int mins = t.tm_hour * 60 + t.tm_min;
-  return mins >= (9 * 60 + 30) && mins < (16 * 60);
+  return mins >= mktOpenMin && mins < mktCloseMin;
 }
 
 // Installed as ui.h's backlight hook, so uiTick() re-evaluates it every 30s
@@ -383,7 +479,7 @@ static void drawRows(bool cascade = false) {
     field(x, y, MAX_LABEL, 2, uiTheme()->fg, rows[i].label);
     fieldRight(right, y, 7, 2, fg, price);
     fieldRight(right, y + 18, 7, 1, fg, pct);
-    if (cascade) delay(CASCADE_MS);
+    if (cascade) delay(cascadeMs);
   }
 }
 
@@ -678,7 +774,27 @@ static void selfCheck() {
     assert(strlen(b) <= 7);
   }
 
-  // Market hours. tm_wday: 0 = Sunday.
+  // "HH:MM" parsing, which is now the only route into market hours. Anything
+  // it half-understands must be rejected outright, or a typo silently shifts
+  // when the panel thinks the market is open.
+  uint16_t hm = 0;
+  assert(parseHhMm("09:30", &hm) && hm == 9 * 60 + 30);
+  assert(parseHhMm("00:00", &hm) && hm == 0);
+  assert(parseHhMm("23:59", &hm) && hm == 23 * 60 + 59);
+  assert(parseHhMm("9:5", &hm) && hm == 9 * 60 + 5);  // unpadded is fine
+  assert(!parseHhMm("24:00", &hm));
+  assert(!parseHhMm("09:60", &hm));
+  assert(!parseHhMm("-1:00", &hm));
+  assert(!parseHhMm("0930", &hm));
+  assert(!parseHhMm("09:30x", &hm));  // trailing junk
+  assert(!parseHhMm("", &hm));
+  assert(!parseHhMm(nullptr, &hm));
+
+  // Market hours. tm_wday: 0 = Sunday. These assertions read the live
+  // mktOpenMin/mktCloseMin, so state plainly that selfCheck() runs before
+  // loadWatchlist() and is therefore testing the compiled defaults -- if that
+  // order ever changes, this assert fails rather than the test going vacuous.
+  assert(mktOpenMin == 9 * 60 + 30 && mktCloseMin == 16 * 60);
   struct tm t = {};
   t.tm_wday = 3; t.tm_hour = 9; t.tm_min = 29;  assert(!marketOpen(t));
   t.tm_min = 30;                                assert(marketOpen(t));
@@ -733,9 +849,7 @@ void setup() {
   uiHoldSchemeLabel = "release: LAYOUT";
 
   cfg.begin("tickercfg", false);
-  mode = (Mode)(cfg.getUChar("mode", 0) % MODE_COUNT);
-  syncLayout();
-  Serial.printf("layout: %s\n", modeName());
+  syncLayout();  // depends only on rotation, so it is valid before the settings
 
   // The hook reads blOpen/blClosed/blNight at call time, so installing it
   // before loadWatchlist() overrides them is fine. It cannot be *applied* yet
@@ -743,10 +857,20 @@ void setup() {
   // actual level is set at the end of setup(), after NTP.
   uiBacklightHook = tickerBacklight;
 
+  // Must come before the mode and the timezone are used: this is what reads
+  // every setting, including layoutDefault and tzString.
   if (!loadWatchlist()) {
     Serial.printf("config error: %s %s\n", cfgErr, cfgErrDetail);
     return;  // loop() draws the panel; nothing else can usefully run
   }
+
+  // NVS wins over the file's `layout`, which is only a starting point: once the
+  // button has been held, that choice is the user's and a config default must
+  // not silently undo it on the next boot.
+  mode = (Mode)(cfg.getUChar("mode", layoutDefault) % MODE_COUNT);
+  Serial.printf("layout: %s (file default %s, %s)\n", modeName(),
+                layoutDefault ? "solo" : "list",
+                cfg.isKey("mode") ? "nvs override in effect" : "no nvs override");
 
   const char *boot[] = {"connecting to wifi", WIFI_SSID};
   drawPanel("STARTING", uiTheme()->muted, boot, 2);
@@ -760,7 +884,7 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm\n", WiFi.SSID().c_str(), WiFi.RSSI());
-    configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
+    configTzTime(tzString, "pool.ntp.org", "time.nist.gov");
     struct tm t;
     for (int i = 0; i < 40 && !getLocalTime(&t, 250); i++) {}
   }
@@ -895,10 +1019,10 @@ void loop() {
   // the next symbol.
   static uint32_t lastAdvance = 0;
   if (state == State::Running && uiScreenOn()) {
-    if (mode == Mode::List && nPages > 1 && millis() - lastAdvance > PAGE_MS) {
+    if (mode == Mode::List && nPages > 1 && millis() - lastAdvance > pageMs) {
       lastAdvance = millis();
       turnPage((page + 1) % nPages);
-    } else if (mode == Mode::Solo && nRows > 1 && millis() - lastAdvance > SOLO_MS) {
+    } else if (mode == Mode::Solo && nRows > 1 && millis() - lastAdvance > soloMs) {
       lastAdvance = millis();
       soloIdx = (soloIdx + 1) % nRows;
       // Not a full repaint: fieldCentre clears its own box and the logo
@@ -928,7 +1052,7 @@ void loop() {
   static uint32_t lastOne = 0;
 
   if (state != State::NoWifi && uiScreenOn()) {
-    uint32_t stockEvery = (haveTime && marketOpen(t)) ? STOCK_OPEN_MS : STOCK_SHUT_MS;
+    uint32_t stockEvery = (haveTime && marketOpen(t)) ? stockOpenMs : stockShutMs;
     // A guard against a pathological list rather than a rate limit: keep the
     // sweep under about a quarter of the interval. At 22 stocks this works out
     // to 110s, well inside the 5-minute interval, so it never actually bites.
@@ -945,7 +1069,7 @@ void loop() {
       else drawSolo(false);
     };
 
-    if (nCoins && (lastCoin == 0 || millis() - lastCoin > COIN_MS)) {
+    if (nCoins && (lastCoin == 0 || millis() - lastCoin > coinMs)) {
       lastCoin = millis();
       NetworkClientSecure client;
       client.setInsecure();  // public read-only quotes; pinning buys nothing here
