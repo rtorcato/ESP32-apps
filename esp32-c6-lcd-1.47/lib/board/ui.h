@@ -143,12 +143,17 @@ inline void uiApply(uint8_t newRot, uint8_t newScheme, bool persist) {
                 UI_SCHEME_COUNT, uiSchemeName(), uiBacklightApplied);
 }
 
+// Defined further down with the rest of the button handling; declared here
+// because uiBegin() attaches it.
+IRAM_ATTR inline void uiButtonIsr();
+
 // Call after gfx->begin(). `ns` is the NVS namespace -- give each app its own so
 // two apps on the same board don't fight over one stored rotation.
 inline void uiBegin(Arduino_GFX *g, const char *ns = "ui") {
   uidetail::gfx = g;
   uidetail::prefs.begin(ns, false);
   pinMode(BTN_BOOT, INPUT_PULLUP);
+  attachInterrupt(BTN_BOOT, uiButtonIsr, CHANGE);
   uiApply(uidetail::prefs.getUChar("rot", 0), uidetail::prefs.getUChar("scheme", 0), false);
 }
 
@@ -193,6 +198,7 @@ inline constexpr uint32_t UI_HOLD_SCHEME_MS = 1200, UI_HOLD_BLANK_MS = 3000,
                           UI_HOLD_SETUP_MS = 6000;
 inline constexpr uint32_t UI_DEBOUNCE_MS = 25;
 
+
 inline void uiHoldHint(const char *s) {
   if (!uidetail::gfx) return;
   int16_t w = 6 * (int16_t)strlen(s) + 10, h = 8 + 10;
@@ -204,54 +210,78 @@ inline void uiHoldHint(const char *s) {
   uidetail::gfx->print(s);
 }
 
+// Edge-captured in an interrupt, not sampled in loop().
+//
+// This started as a poll inside loop(), and it dropped quick taps: loop() has a
+// delay(100) plus a getLocalTime() that can block another 100ms plus drawing, so
+// the button was only looked at every ~250ms. A real tap that began and ended
+// between two samples was simply never seen, which feels like "the button needs
+// a long press to work". The ISR records the edges and the duration, and loop()
+// just collects a finished press whenever it gets round to it.
+namespace uidetail {
+inline volatile uint32_t pressStart = 0;   // ms, when the current press began
+inline volatile uint32_t lastEdge = 0;     // ms, for debouncing in the ISR
+inline volatile uint32_t pendingHeld = 0;  // non-zero: a completed press to collect
+inline volatile bool down = false;         // debounced level
+}  // namespace uidetail
+
+inline uint32_t uiNowMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+IRAM_ATTR inline void uiButtonIsr() {
+  uint32_t now = uiNowMs();
+  // Contact bounce arrives as a burst of edges; ignore anything too soon after
+  // the last accepted one.
+  if (now - uidetail::lastEdge < UI_DEBOUNCE_MS) return;
+  uidetail::lastEdge = now;
+
+  bool isDown = digitalRead(BTN_BOOT) == LOW;  // active low
+  if (isDown) {
+    uidetail::pressStart = now;
+    uidetail::down = true;
+  } else if (uidetail::down) {
+    uidetail::down = false;
+    uint32_t heldFor = now - uidetail::pressStart;
+    // Latch the duration for loop() to classify. Overwriting a previous
+    // unread press is fine: the newest gesture is the one the user meant.
+    if (heldFor >= UI_DEBOUNCE_MS) uidetail::pendingHeld = heldFor;
+  }
+}
+
 inline UiPress uiPoll() {
-  // Level must be stable for UI_DEBOUNCE_MS before a transition is accepted.
-  // Without this, contact bounce during a long hold registers as release +
-  // press, and every fragment shorter than 1.2s looks like a tap -- so a hold
-  // would appear to only ever rotate.
-  static bool pressed = false, lastRaw = false;
-  static uint32_t lastChange = 0, downAt = 0;
+  // While still held, show what releasing now would do.
   static uint8_t hinted = 0;
-
-  bool raw = digitalRead(BTN_BOOT) == LOW;  // active low
-  uint32_t now = millis();
-  if (raw != lastRaw) {
-    lastRaw = raw;
-    lastChange = now;
-  }
-
-  if (now - lastChange >= UI_DEBOUNCE_MS && raw != pressed) {
-    pressed = raw;
-    if (pressed) {
-      downAt = now;
-      hinted = 0;
-    } else {
-      uint32_t held = now - downAt;
-      UiPress p = held >= UI_HOLD_SETUP_MS   ? UiPress::Setup
-                  : held >= UI_HOLD_BLANK_MS ? UiPress::Blank
-                  : held >= UI_HOLD_SCHEME_MS ? UiPress::Scheme
-                                              : UiPress::Rotate;
-      if (uiLogButton) {
-        Serial.printf("btn: held %lums -> %s\n", (unsigned long)held,
-                      p == UiPress::Setup   ? "SETUP (6s)"
-                      : p == UiPress::Blank  ? "BLANK (3s)"
-                      : p == UiPress::Scheme ? "SCHEME (1.2s)"
-                                             : "ROTATE (tap)");
-      }
-      return p;
-    }
-  }
-
-  if (pressed) {
-    uint32_t held = now - downAt;
-    uint8_t stage = held >= UI_HOLD_BLANK_MS ? 2 : held >= UI_HOLD_SCHEME_MS ? 1 : 0;
+  if (uidetail::down) {
+    uint32_t held = uiNowMs() - uidetail::pressStart;
+    uint8_t stage = held >= UI_HOLD_SETUP_MS    ? 3
+                    : held >= UI_HOLD_BLANK_MS  ? 2
+                    : held >= UI_HOLD_SCHEME_MS ? 1
+                                                : 0;
     if (stage != hinted && uidetail::screenOn) {
       hinted = stage;
       if (stage == 1) uiHoldHint("release: COLOUR");
       else if (stage == 2) uiHoldHint("release: SCREEN OFF");
+      else if (stage == 3) uiHoldHint("release: SETUP");
     }
+    return UiPress::None;
   }
-  return UiPress::None;
+  hinted = 0;
+
+  uint32_t held = uidetail::pendingHeld;
+  if (held == 0) return UiPress::None;
+  uidetail::pendingHeld = 0;
+
+  UiPress p = held >= UI_HOLD_SETUP_MS    ? UiPress::Setup
+              : held >= UI_HOLD_BLANK_MS  ? UiPress::Blank
+              : held >= UI_HOLD_SCHEME_MS ? UiPress::Scheme
+                                          : UiPress::Rotate;
+  if (uiLogButton) {
+    Serial.printf("btn: held %lums -> %s\n", (unsigned long)held,
+                  p == UiPress::Setup    ? "SETUP (6s)"
+                  : p == UiPress::Blank  ? "BLANK (3s)"
+                  : p == UiPress::Scheme ? "COLOUR (1.2s)"
+                                         : "ROTATE (tap)");
+  }
+  return p;
 }
 
 // Handles the gestures an app never wants to special-case. Returns true if the

@@ -223,9 +223,17 @@ RTC-capable pins are GPIO0–7 (`SOC_RTCIO_PIN_COUNT == 8`), so deep sleep could
 only be woken by RESET or a timer. Blank the panel instead and leave the app
 running, so its data is current when the screen returns.
 
-**Debounce by requiring a stable level**, not by filtering short presses. Contact
-bounce during a hold registers as release + press, which makes every fragment
-look like a tap — so hold gestures appear not to work at all.
+**Capture button edges in an interrupt, never by polling in `loop()`.** This is
+the mistake that made the button feel broken: `loop()` has a `delay(100)` plus a
+`getLocalTime()` that can block another 100ms plus drawing, so the button was
+only sampled every ~250ms. A genuine quick tap that began *and ended* between
+two samples was never seen at all, which presents as "the button needs a long
+press to work". `ui.h` now records the edges and the held duration in an ISR and
+`loop()` collects a finished press whenever it gets round to it.
+
+**Debounce inside the ISR by ignoring edges too soon after the last.** Contact
+bounce arrives as a burst; without that filter a single hold registers as
+release + press and every fragment looks like a tap.
 
 **Log every press with its measured duration.** One line turns "the gesture
 doesn't work" into a fact.
