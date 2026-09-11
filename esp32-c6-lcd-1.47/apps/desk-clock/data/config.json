@@ -1,0 +1,44 @@
+{
+  "_readme": [
+    "Settings for desk-clock. Push a change to the board with:",
+    "  ./push-config desk-clock",
+    "",
+    "Every key is optional -- delete this file and the app runs on its compiled",
+    "defaults. Wi-Fi credentials are NOT here and must not be: they live in",
+    "lib/board/secrets.h, which is gitignored and compiled in, because this file",
+    "sits on a filesystem anyone holding the board can dump. See SECURITY.md.",
+    "",
+    "Out-of-range values are rejected and named on the serial log, not silently",
+    "clamped, so a typo tells you about itself."
+  ],
+
+  "_timezone": "POSIX TZ string. Also what the clock and the night window use.",
+  "timezone": "EST5EDT,M3.2.0/2,M11.1.0/2",
+
+  "_location": [
+    "Weather location. lat -90..90, lon -180..180 -- both range-checked because",
+    "a swapped pair is the classic mistake and open-meteo answers 400 for it",
+    "rather than anything that reads like 'you swapped your coordinates'.",
+    "place is the header label, 12 glyphs max (the width of its box)."
+  ],
+  "location": { "lat": 43.6532, "lon": -79.3832, "place": "TORONTO" },
+
+  "_units": "'metric' (Celsius) or 'imperial' (Fahrenheit).",
+  "units": "metric",
+
+  "_brightness": [
+    "OPTIONAL backlight override, 8-255. Omit either key and that level comes",
+    "from the active colour scheme instead -- the nine schemes each carry their",
+    "own day/night duty because the light one is unbearable at the dark one's",
+    "brightness, and a blanket override would throw that away.",
+    "",
+    "Backlight is the one dial that measurably moves power on this board:",
+    "duty 140 measures 45.1C at the die, 100 is 43.5C, 60 is 40.5C, 0 is 37.1C."
+  ],
+
+  "_night": "Hours (0-23) the night brightness applies. Wraps midnight.",
+  "night": { "from": 23, "to": 7 },
+
+  "_refresh": "Minutes between weather fetches, 1-240. open-meteo is free; don't hammer it.",
+  "refresh": { "weatherMinutes": 15 }
+}

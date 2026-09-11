@@ -1,0 +1,45 @@
+{
+  "_readme": [
+    "Settings for host-monitor. Push a change to the board with:",
+    "  ./push-config host-monitor",
+    "",
+    "Every key is optional -- delete this file and the app runs on its compiled",
+    "defaults. Two things are deliberately NOT here:",
+    "",
+    "  - Wi-Fi credentials and the setup-portal password. Both are WPA2",
+    "    credentials, so they belong in lib/board/secrets.h. This file sits on a",
+    "    filesystem anyone holding the board can dump. See SECURITY.md.",
+    "  - The transport (USB serial vs HTTP). That stays a compile-time choice,",
+    "    because the two paths pull in different libraries and a runtime switch",
+    "    would mean building both into every image.",
+    "",
+    "The default build reads stats over USB serial, which needs no network and",
+    "no Wi-Fi setup on the host -- so agent.url below only matters if you",
+    "rebuild with HOST_SOURCE_SERIAL 0."
+  ],
+
+  "_agent": "Where to fetch stats from in the HTTP build. A .local name is resolved by mDNS.",
+  "agent": { "url": "http://10.0.10.92:8787/stats" },
+
+  "_refresh": [
+    "pollSeconds   how often to ask the agent, 1-3600. It is cheap; 5s feels live.",
+    "retrySeconds  back-off while the agent is unreachable, 1-3600.",
+    "staleSeconds  how long a silent feed stays trusted, 2-3600. Forced to at",
+    "              least two polls, because a window shorter than the poll",
+    "              interval marks a healthy feed stale between updates and looks",
+    "              exactly like a dead agent."
+  ],
+  "refresh": { "pollSeconds": 5, "retrySeconds": 10, "staleSeconds": 15 },
+
+  "_timing": "Seconds each page of stats stays up, 2-600.",
+  "timing": { "pageSeconds": 6 },
+
+  "_brightness": [
+    "OPTIONAL backlight override, 8-255. Omit either key and that level comes",
+    "from the active colour scheme instead. Backlight is the one dial that",
+    "measurably moves power: duty 140 measures 45.1C at the die, 60 is 40.5C."
+  ],
+
+  "_night": "Hours (0-23) the night brightness applies. Wraps midnight.",
+  "night": { "from": 23, "to": 7 }
+}

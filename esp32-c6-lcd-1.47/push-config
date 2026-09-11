@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Push an app's data/ directory (config.json, and ticker's logos) to the board.
+#
+# This is NOT a firmware flash. It rewrites only the LittleFS partition, takes
+# about four seconds, and needs no rebuild -- which is the whole point of
+# keeping settings in a file rather than in the source.
+#
+#   ./push-config ticker        # push apps/ticker/data
+#   ./push-config               # list apps that have a config
+#
+# Firmware, for when src/ actually changed:
+#   pio run -e <app> -t upload
+set -euo pipefail
+cd "$(dirname "$0")"
+
+PIO="${PIO:-$HOME/.platformio-venv/bin/pio}"
+[ -x "$PIO" ] || PIO=pio
+
+list() {
+  for d in apps/*/data; do
+    [ -d "$d" ] || continue
+    app=$(basename "$(dirname "$d")")
+    if [ -f "$d/config.json" ]; then
+      printf '  %-14s %s\n' "$app" "$(du -sh "$d" | cut -f1) in $d"
+    else
+      printf '  %-14s %s\n' "$app" "(no config.json)"
+    fi
+  done
+}
+
+if [ $# -eq 0 ]; then
+  echo "usage: ./push-config <app>"
+  echo
+  echo "apps with a config:"
+  list
+  exit 1
+fi
+
+app=$1
+if [ ! -d "apps/$app/data" ]; then
+  echo "push-config: apps/$app/data does not exist" >&2
+  echo >&2
+  echo "apps with a config:" >&2
+  list >&2
+  exit 1
+fi
+
+# Fail before touching the board rather than after: uploadfs will happily build
+# an image from malformed JSON, and the app would then boot on its defaults and
+# look like the edit did nothing.
+for j in apps/"$app"/data/*.json; do
+  [ -f "$j" ] || continue
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$j" 2>/dev/null; then
+    echo "push-config: $j is not valid JSON -- not uploading" >&2
+    python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$j" || true
+    exit 1
+  fi
+  echo "push-config: $j is valid JSON"
+done
+
+echo "push-config: uploading apps/$app/data to the board..."
+"$PIO" run -e "$app" -t uploadfs
+echo
+echo "push-config: done. The board reboots on its own; watch it with:"
+echo "  $PIO device monitor -e $app"

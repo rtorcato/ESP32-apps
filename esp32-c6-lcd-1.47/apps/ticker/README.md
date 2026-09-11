@@ -48,7 +48,7 @@ follow, and one caveat matters more than the table:
   temperature is a lower bound on the benefit, not a measure of it.
 - **A black screen tolerates far more dimming than a light one.** 96 is
   comfortably legible here against the themes' 140. Push `open` to 60 in
-  `watchlist.json` for another ~3 °C if it's still too bright.
+  `config.json` for another ~3 °C if it's still too bright.
 - **The market-closed level is the easy win.** The stock rows don't change
   between 16:00 and 09:30, or at all on weekends, so most of the week runs at
   64 or 24 rather than 96 — no loss of information at all.
@@ -99,19 +99,19 @@ and a `checkX()` in `selfCheck()`. Nothing else dispatches on the mode.
 ## Logos
 
 `tools/make-logos.py` fetches each symbol's logo, converts it to raw RGB565 at
-96×96 and writes it into `data/logo/`, which then ships via `uploadfs`:
+96×96 and writes it into `data/logo/`, which then ships to the board:
 
 ```sh
 python3 tools/make-logos.py
-PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs
+./push-config ticker
 ```
 
 **The firmware carries no PNG decoder and fetches no images.** It opens
 `/logo/<LABEL>.565`, checks the length is exactly 96×96×2, and blits it. That
 keeps a decoder, a third TLS endpoint and an 18KB decode buffer off a 512KB
 single-core part, and a missing logo becomes an ordinary case — the symbol is
-drawn large instead — rather than a runtime failure. 12 logos is 221KB, 24% of
-the data partition. The boot log inventories them (`logos: 12/12 present`) and
+drawn large instead — rather than a runtime failure. 26 logos is 479KB, 52% of
+the data partition. The boot log inventories them (`logos: 26/26 present`) and
 names any that are missing.
 
 Sources, both tested and keyless: `financialmodelingprep.com/image-stock/` for
@@ -121,28 +121,45 @@ Coincap keys on the ticker rather than the CoinGecko id, so a coin's `label` is
 what gets looked up — a custom label that isn't a real ticker just falls back to
 text.
 
-**The conversion is where the interesting failure was.** These logos arrive in
-three different shapes and a black screen punishes two of them:
+**The conversion is where all the difficulty was**, and the failure mode is
+always the same: a file that converts "successfully" into 18KB of near-black.
+Logos arrive with their background encoded three different ways, and a black
+screen punishes two of them:
 
-- Most are transparent, and composite onto black correctly.
-- Apple's is **solid black on opaque white**. Flattened naively it produces a
-  perfectly valid file that draws *nothing*. The converter detects the light
-  background from the image border, knocks it out to black, and inverts the
-  dark glyph — giving a white Apple mark.
-- Solana's PNG has **no alpha channel at all**, so `sips` emits 24bpp rather
-  than 32bpp.
+| Background | Example | Handling |
+|---|---|---|
+| transparent (alpha) | most | composite onto black |
+| opaque light | Apple | knock the white out to black |
+| none at all (24bpp, no alpha) | Solana | treat near-black as background |
 
-My first heuristic averaged luminance over the whole image. That broke Solana
-precisely because it has no alpha: its black background counted as visible
-pixels, the mean came out at luma 24, and the "too dark, invert it" rule flipped
-the entire logo to a white square. **Read the background from the border, never
-from the average.** The decision is made on the Mac, where there is full colour
+On top of that, **a dark mark has to be inverted** or it draws nothing on black.
+Those are two separate questions — the background says *which* pixels are the
+mark, the mark's own luminance says whether it needs flipping — and I conflated
+them three times:
+
+1. **Averaged luminance over the whole image.** Flipped Solana to a white
+   square: with no alpha channel its baked-in black background counted as mark,
+   the mean came out at luma 24, and the "too dark, invert" rule fired on
+   everything.
+2. **Replaced the luminance test with border detection.** Left Palantir, Joby,
+   Rocket Lab and SpaceX invisible — transparent border, so no knock-out, and a
+   solid black mark composited onto a black screen.
+3. **Judged the border by its opaque pixels only.** Left Joby blank the other
+   way round: its near-white mark touches the frame edge, so the few opaque
+   border pixels were all pale, the image read as "white background", and the
+   mark itself was knocked out. **The border must be mostly opaque before its
+   colour means anything.**
+
+So the converter now **verifies its own output** rather than trusting the
+heuristic: it reports percent-visible per logo and warns on anything under 6%.
+All 26 pass. The whole decision happens on the Mac, where there is full colour
 information, and costs the firmware zero bytes.
 
 ## Settings
 
-Everything tunable lives in [`data/watchlist.json`](data/watchlist.json) on the
-device's filesystem, so changing any of it is an `uploadfs`, not a rebuild:
+Everything tunable lives in [`data/config.json`](data/config.json) on the
+device's filesystem. `./push-config ticker` applies a change in about four
+seconds with no rebuild:
 
 | Key | What | Range |
 |---|---|---|
@@ -207,23 +224,16 @@ layout: SOLO (file default list, nvs override in effect)
 
 ## The watchlist is a file on the device, not source code
 
-[`data/watchlist.json`](data/watchlist.json) lives on the board's LittleFS
+[`data/config.json`](data/config.json) lives on the board's LittleFS
 partition, so **changing symbols does not need a rebuild**:
 
 ```sh
-# firmware (only when src/ changes)
-pio run -e ticker -t upload
-
-# the watchlist (after editing data/watchlist.json)
-PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs
+./push-config ticker            # settings + logos, ~4s, no rebuild
+pio run -e ticker -t upload     # firmware, only when src/ changes
 ```
 
 `huge_app.csv` already leaves an `0xE0000` (896KB) data partition spare, which
 LittleFS formats on first use — no partition change was needed.
-
-The `PLATFORMIO_DATA_DIR` prefix is there because `data_dir` is a `[platformio]`
-option and cannot be set per-env. With one app using a filesystem, overriding it
-at the call site beats pointing the whole project at one app's data directory.
 
 `addRow()` is a **trust boundary** — that file is hand-edited, so labels longer
 than the 5-glyph symbol box are rejected, empty ids are rejected, and the

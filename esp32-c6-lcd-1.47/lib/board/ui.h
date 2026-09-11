@@ -171,14 +171,26 @@ inline const char *uiRotName() {
 // measured; see APP-CHECKLIST.md). Leave null to use the scheme's day/night.
 inline uint8_t (*uiBacklightHook)() = nullptr;
 
-// Backlight duty for right now: scheme-specific, day or night. Falls back to the
-// day level before the clock is set, since 1970 is not a useful hour.
-inline uint8_t uiBacklightNow() {
-  if (uiBacklightHook) return uiBacklightHook();
+// True inside the night window. Wraps midnight, so from=23 to=7 works.
+inline bool uiIsNight() {
+  struct tm t;
+  if (!getLocalTime(&t, 50)) return false;  // 1970 is not a useful hour
+  return t.tm_hour >= uiNightFrom || t.tm_hour < uiNightTo;
+}
+
+// The scheme's own day/night duty. Exposed so a hook can defer to it for the
+// levels config.json didn't override: the light scheme needs a much lower duty
+// than the dark one, and a blanket override would throw that away.
+inline uint8_t uiBacklightFromScheme() {
   struct tm t;
   if (!getLocalTime(&t, 50)) return uiTheme()->blDay;
-  bool night = (t.tm_hour >= uiNightFrom || t.tm_hour < uiNightTo);
-  return night ? uiTheme()->blNight : uiTheme()->blDay;
+  return uiIsNight() ? uiTheme()->blNight : uiTheme()->blDay;
+}
+
+// Backlight duty for right now.
+inline uint8_t uiBacklightNow() {
+  if (uiBacklightHook) return uiBacklightHook();
+  return uiBacklightFromScheme();
 }
 
 // Applies rotation, scheme and backlight together. Safe in all four rotations:

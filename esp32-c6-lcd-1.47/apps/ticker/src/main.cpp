@@ -1,8 +1,9 @@
 // ticker: a watchlist panel -- a few stocks and a few crypto, price and daily
 // change, green or red.
 //
-// The watchlist lives in data/watchlist.json on the device's LittleFS
-// partition, NOT in this file. Editing symbols is an `uploadfs`, not a rebuild.
+// The watchlist AND every setting live in data/config.json on the device's
+// LittleFS partition, not in this file: `./push-config ticker` applies a change
+// in about four seconds with no rebuild. See appcfg.h for the shared loader.
 //
 // The API shapes were measured before any of this was written, and they dictate
 // the design (see README):
@@ -14,6 +15,7 @@
 // orientation, exact-box redraws, a self-check over the pure formatters and both
 // layouts, and failure screens that name the cause rather than going blank.
 #include <board.h>
+#include <appcfg.h>
 #include <netjoin.h>
 #include <ui.h>
 #include <secrets.h>
@@ -28,14 +30,14 @@
 #include <time.h>
 
 // ── settings ─────────────────────────────────────────────────────────────
-// Everything here is a DEFAULT. watchlist.json on the device's LittleFS
-// overrides any of it, so tuning the panel is an `uploadfs` rather than a
-// rebuild. The values below are what you get if the file says nothing.
+// Everything here is a DEFAULT. data/config.json on the device's LittleFS
+// overrides any of it, so tuning the panel is a `./push-config ticker` rather
+// than a rebuild. The values below are what you get if the file says nothing.
 //
-// That file is hand-edited, which makes this a trust boundary: every read goes
-// through setting(), which range-checks, logs anything it rejects, and keeps
-// the previous value rather than clamping silently. A zero page interval or a
-// zero-length refresh would present as a broken app, not as a bad config.
+// Reading that file is a trust boundary and appcfg.h handles it: every cfgInt()
+// range-checks, logs anything it rejects, and keeps the previous value rather
+// than clamping silently. A zero page interval or a zero-length refresh would
+// present as a broken app, not as a bad config.
 static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
 
 // Market hours, in tzString's zone. Configurable so the timezone above is not
@@ -71,7 +73,7 @@ static const char *modeName() { return mode == Mode::Solo ? "SOLO" : "LIST"; }
 
 static const int16_t LOGO_PX = 96;  // must match tools/make-logos.py --size
 
-// Backlight duty, overridable from watchlist.json. This is the only dial on
+// Backlight duty, overridable from config.json. This is the only dial on
 // this board that measurably moves power: measured steady-state die
 // temperature is 45.1C at duty 140, 43.5 at 100, 40.5 at 60 and 37.1 at 0, so
 // the panel is worth ~8C and the SoC floor is 37C. Duty is proportional to LED
@@ -115,36 +117,6 @@ static char coinIds[MAX_SYMBOLS * 28];  // comma-joined, for the one coin reques
 static const char *cfgErr = nullptr;
 static char cfgErrDetail[40] = "";
 
-// ── reading settings out of a hand-edited file ────────────────────────────
-// One integer setting. Absent keeps `cur`; out of range keeps `cur` AND says
-// so. Rejecting loudly beats clamping silently: a typo that quietly becomes
-// the nearest legal value is a setting that "doesn't work" with no explanation.
-static long setting(JsonVariant v, const char *name, long cur, long lo, long hi) {
-  if (v.isNull()) return cur;
-  if (!v.is<long>()) {
-    Serial.printf("setting %s: not a number, keeping %ld\n", name, cur);
-    return cur;
-  }
-  long x = v.as<long>();
-  if (x < lo || x > hi) {
-    Serial.printf("setting %s: %ld out of range %ld..%ld, keeping %ld\n", name, x, lo, hi, cur);
-    return cur;
-  }
-  return x;
-}
-
-// "HH:MM" -> minutes past midnight. Returns false on anything it doesn't fully
-// understand, so a malformed time leaves the default standing.
-static bool parseHhMm(const char *s, uint16_t *out) {
-  if (!s) return false;
-  int h = -1, m = -1;
-  char extra = 0;
-  if (sscanf(s, "%d:%d%c", &h, &m, &extra) != 2) return false;  // trailing junk rejected
-  if (h < 0 || h > 23 || m < 0 || m > 59) return false;
-  *out = (uint16_t)(h * 60 + m);
-  return true;
-}
-
 // Stocks are stored first so the divider between the two groups is a single
 // index, and so the sequential stock fetches are one contiguous loop.
 static bool addRow(const char *label, const char *id, bool coin) {
@@ -159,92 +131,70 @@ static bool addRow(const char *label, const char *id, bool coin) {
   return true;
 }
 
-static bool loadWatchlist() {
-  if (!LittleFS.begin()) {
-    cfgErr = "no filesystem";
-    return false;
-  }
-  File f = LittleFS.open("/watchlist.json", "r");
-  if (!f) {
-    cfgErr = "watchlist.json missing";
-    return false;
-  }
-  JsonDocument doc;
-  DeserializationError e = deserializeJson(doc, f);
-  f.close();
-  if (e) {
-    cfgErr = "watchlist.json unreadable";
-    snprintf(cfgErrDetail, sizeof cfgErrDetail, "%s", e.c_str());
+// ticker is the one app on this board whose config is also its DATA: with no
+// watchlist there is nothing to show, so a missing config.json is fatal here
+// where every other app just falls back to its compiled defaults.
+static bool loadConfig() {
+  if (!cfgLoad()) {
+    cfgErr = cfgError();
     return false;
   }
 
   // Stocks first, then coins -- addRow() enforces the cap, so an over-long list
   // is truncated rather than overflowing. Say which rows were dropped.
-  for (JsonVariant v : doc["stocks"].as<JsonArray>()) {
+  for (JsonVariant v : cfgArr("stocks")) {
     const char *s = v.as<const char *>();
     if (addRow(s, s, false)) nStocks++;
     else Serial.printf("skipped stock '%s' (bad label or list full)\n", s ? s : "?");
   }
-  for (JsonObject o : doc["coins"].as<JsonArray>()) {
+  for (JsonObject o : cfgArr("coins")) {
     const char *id = o["id"], *label = o["label"];
     if (addRow(label ? label : id, id, true)) nCoins++;
     else Serial.printf("skipped coin '%s' (bad label or list full)\n", id ? id : "?");
   }
 
   if (nRows == 0) {
-    cfgErr = "watchlist is empty";
+    cfgErr = "config.json has no symbols";
     return false;
   }
 
   // ── settings ──
   // The floor of 8 on brightness is deliberate: 0 reads as a dead board rather
   // than a dim one, and there is no way back from it without the serial log.
-  JsonObject b = doc["brightness"];
-  blOpen = (uint8_t)setting(b["open"], "brightness.open", blOpen, 8, 255);
-  blClosed = (uint8_t)setting(b["closed"], "brightness.closed", blClosed, 8, 255);
-  blNight = (uint8_t)setting(b["night"], "brightness.night", blNight, 8, 255);
+  blOpen = (uint8_t)cfgInt("brightness.open", blOpen, 8, 255);
+  blClosed = (uint8_t)cfgInt("brightness.closed", blClosed, 8, 255);
+  blNight = (uint8_t)cfgInt("brightness.night", blNight, 8, 255);
 
   // Night window lives in ui.h, shared with every other app on the board.
-  JsonObject n = doc["night"];
-  uiNightFrom = (uint8_t)setting(n["from"], "night.from", uiNightFrom, 0, 23);
-  uiNightTo = (uint8_t)setting(n["to"], "night.to", uiNightTo, 0, 23);
+  uiNightFrom = (uint8_t)cfgInt("night.from", uiNightFrom, 0, 23);
+  uiNightTo = (uint8_t)cfgInt("night.to", uiNightTo, 0, 23);
 
-  JsonObject tg = doc["timing"];
-  pageMs = (uint32_t)setting(tg["pageSeconds"], "timing.pageSeconds", pageMs / 1000, 2, 600) * 1000UL;
-  soloMs = (uint32_t)setting(tg["soloSeconds"], "timing.soloSeconds", soloMs / 1000, 2, 600) * 1000UL;
-  cascadeMs = (uint16_t)setting(tg["cascadeMs"], "timing.cascadeMs", cascadeMs, 0, 400);
+  pageMs = (uint32_t)cfgInt("timing.pageSeconds", pageMs / 1000, 2, 600) * 1000UL;
+  soloMs = (uint32_t)cfgInt("timing.soloSeconds", soloMs / 1000, 2, 600) * 1000UL;
+  cascadeMs = (uint16_t)cfgInt("timing.cascadeMs", cascadeMs, 0, 400);
 
-  JsonObject r = doc["refresh"];
-  stockOpenMs = (uint32_t)setting(r["openMinutes"], "refresh.openMinutes",
-                                  stockOpenMs / 60000, 1, 240) * 60000UL;
-  stockShutMs = (uint32_t)setting(r["closedMinutes"], "refresh.closedMinutes",
-                                  stockShutMs / 60000, 1, 1440) * 60000UL;
-  coinMs = (uint32_t)setting(r["coinMinutes"], "refresh.coinMinutes",
-                             coinMs / 60000, 1, 240) * 60000UL;
+  stockOpenMs = (uint32_t)cfgInt("refresh.openMinutes", stockOpenMs / 60000, 1, 240) * 60000UL;
+  stockShutMs = (uint32_t)cfgInt("refresh.closedMinutes", stockShutMs / 60000, 1, 1440) * 60000UL;
+  coinMs = (uint32_t)cfgInt("refresh.coinMinutes", coinMs / 60000, 1, 240) * 60000UL;
 
-  const char *tz = doc["timezone"];
-  if (tz && *tz) snprintf(tzString, sizeof tzString, "%s", tz);
+  cfgStr("timezone", tzString, sizeof tzString);
 
-  JsonObject mk = doc["market"];
-  uint16_t hm;
-  if (parseHhMm(mk["open"].as<const char *>(), &hm)) mktOpenMin = hm;
-  else if (!mk["open"].isNull()) Serial.println("setting market.open: not HH:MM, ignored");
-  if (parseHhMm(mk["close"].as<const char *>(), &hm)) mktCloseMin = hm;
-  else if (!mk["close"].isNull()) Serial.println("setting market.close: not HH:MM, ignored");
+  cfgHhMm("market.open", &mktOpenMin);
+  cfgHhMm("market.close", &mktCloseMin);
   if (mktCloseMin <= mktOpenMin) {
     // An inverted window would make marketOpen() always false, which silently
     // turns off the open brightness and the 5-minute refresh at once.
-    Serial.printf("setting market: close %u <= open %u, restoring 09:30-16:00\n", mktCloseMin,
+    Serial.printf("config market: close %u <= open %u, restoring 09:30-16:00\n", mktCloseMin,
                   mktOpenMin);
     mktOpenMin = 9 * 60 + 30;
     mktCloseMin = 16 * 60;
   }
 
-  const char *lay = doc["layout"];
-  if (lay) {
+  char lay[8] = "";
+  if (cfgStr("layout", lay, sizeof lay)) {
     if (!strcasecmp(lay, "solo")) layoutDefault = 1;
     else if (!strcasecmp(lay, "list")) layoutDefault = 0;
-    else Serial.printf("setting layout: '%s' is not list or solo, ignored\n", lay);
+    else Serial.printf("config layout: '%s' is not list or solo, ignored\n", lay);
   }
 
   Serial.printf("settings: bl %u/%u/%u  night %02u-%02u  page %lus solo %lus cascade %ums\n",
@@ -752,6 +702,7 @@ static void checkSolo(const SoloLayout *s, int16_t w, int16_t h) {
 }
 
 static void selfCheck() {
+  cfgSelfCheck();  // the shared config accessors, including HH:MM parsing
   char b[16];
   // Price has a 7-character box, and these are the shapes that stress it.
   formatPrice(0.4215f, b, sizeof b);  assert(strcmp(b, "0.4215") == 0);
@@ -774,25 +725,9 @@ static void selfCheck() {
     assert(strlen(b) <= 7);
   }
 
-  // "HH:MM" parsing, which is now the only route into market hours. Anything
-  // it half-understands must be rejected outright, or a typo silently shifts
-  // when the panel thinks the market is open.
-  uint16_t hm = 0;
-  assert(parseHhMm("09:30", &hm) && hm == 9 * 60 + 30);
-  assert(parseHhMm("00:00", &hm) && hm == 0);
-  assert(parseHhMm("23:59", &hm) && hm == 23 * 60 + 59);
-  assert(parseHhMm("9:5", &hm) && hm == 9 * 60 + 5);  // unpadded is fine
-  assert(!parseHhMm("24:00", &hm));
-  assert(!parseHhMm("09:60", &hm));
-  assert(!parseHhMm("-1:00", &hm));
-  assert(!parseHhMm("0930", &hm));
-  assert(!parseHhMm("09:30x", &hm));  // trailing junk
-  assert(!parseHhMm("", &hm));
-  assert(!parseHhMm(nullptr, &hm));
-
   // Market hours. tm_wday: 0 = Sunday. These assertions read the live
   // mktOpenMin/mktCloseMin, so state plainly that selfCheck() runs before
-  // loadWatchlist() and is therefore testing the compiled defaults -- if that
+  // loadConfig() and is therefore testing the compiled defaults -- if that
   // order ever changes, this assert fails rather than the test going vacuous.
   assert(mktOpenMin == 9 * 60 + 30 && mktCloseMin == 16 * 60);
   struct tm t = {};
@@ -806,7 +741,7 @@ static void selfCheck() {
   // The watchlist file is user-editable, so addRow() is now a trust boundary:
   // an over-long label would overflow the symbol box, and the row cap is a
   // layout guarantee. Both have to hold against whatever the JSON says.
-  assert(nRows == 0);  // runs before loadWatchlist()
+  assert(nRows == 0);  // runs before loadConfig()
   assert(!addRow("TOOLONG", "TOOLONG", false));
   assert(!addRow("", "X", false));
   assert(!addRow("X", "", false));
@@ -852,17 +787,19 @@ void setup() {
   syncLayout();  // depends only on rotation, so it is valid before the settings
 
   // The hook reads blOpen/blClosed/blNight at call time, so installing it
-  // before loadWatchlist() overrides them is fine. It cannot be *applied* yet
+  // before loadConfig() overrides them is fine. It cannot be *applied* yet
   // though: it needs the clock to know whether the market is open, so the
   // actual level is set at the end of setup(), after NTP.
   uiBacklightHook = tickerBacklight;
 
   // Must come before the mode and the timezone are used: this is what reads
   // every setting, including layoutDefault and tzString.
-  if (!loadWatchlist()) {
+  if (!loadConfig()) {
     Serial.printf("config error: %s %s\n", cfgErr, cfgErrDetail);
     return;  // loop() draws the panel; nothing else can usefully run
   }
+
+  cfgRelease();  // settings are copied out; the parsed tree is several KB
 
   // NVS wins over the file's `layout`, which is only a starting point: once the
   // button has been held, that choice is the user's and a config default must

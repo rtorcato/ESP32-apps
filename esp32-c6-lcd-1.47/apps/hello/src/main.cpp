@@ -1,15 +1,32 @@
 // Smoke test: proves the display offset, backlight, RGB LED and button all work.
 // If the border touches all four screen edges, the 34px column offset is right.
+#include <appcfg.h>
 #include <board.h>
 
 static Arduino_GFX *gfx;
+
+// hello is the reference for the config convention (APP-CHECKLIST.md): every
+// app reads apps/<app>/data/config.json, every key is optional, and an app must
+// run on its compiled defaults with the file absent. There is genuinely little
+// to configure in a smoke test, so this is about as small as a config gets --
+// which is the point. Secrets never go here; hello needs none.
+static uint8_t bl = 200;  // bright on purpose: this screen is for checking pixels
+static uint16_t tickMs = 500;
 
 void setup() {
   Serial.begin(115200);
 
   gfx = boardDisplay();
   gfx->begin();
-  backlight(200);
+
+  cfgSelfCheck();  // the shared accessors, asserted before anything reads them
+  if (cfgLoad()) {
+    bl = (uint8_t)cfgInt("brightness", bl, 8, 255);
+    tickMs = (uint16_t)cfgInt("tickMs", tickMs, 50, 5000);
+    cfgRelease();
+  }
+  Serial.printf("config: brightness %u, tick %ums\n", bl, tickMs);
+  backlight(bl);
 
   gfx->fillScreen(RGB565_BLACK);
   gfx->drawRect(0, 0, LCD_W, LCD_H, RGB565_WHITE);  // must hug all four edges
@@ -34,5 +51,5 @@ void loop() {
   gfx->fillRect(12, 110, LCD_W - 24, 20, pressed ? RGB565_GREEN : RGB565_DARKGREY);
   Serial.printf("tick %lu boot=%d\n", millis(), pressed);
 
-  delay(500);
+  delay(tickMs);
 }

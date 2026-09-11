@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch the watchlist's logos and convert them to raw RGB565 for LittleFS.
+"""Fetch the config's watchlist logos and convert them to raw RGB565 for LittleFS.
 
 Run this on the Mac, then `uploadfs`. The firmware does no PNG decoding and no
 logo fetching: it opens /logo/<LABEL>.565, reads 96*96*2 bytes, and blits them.
@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
-WATCHLIST = HERE / "data" / "watchlist.json"
+CONFIG = HERE / "data" / "config.json"
 OUTDIR = HERE / "data" / "logo"
 
 STOCK_URL = "https://financialmodelingprep.com/image-stock/{}.png"
@@ -224,7 +224,7 @@ def main() -> int:
     ap.add_argument("--size", type=int, default=96, help="square logo size in px (default 96)")
     args = ap.parse_args()
 
-    wl = json.loads(WATCHLIST.read_text())
+    wl = json.loads(CONFIG.read_text())
     targets = [(s, STOCK_URL.format(s)) for s in wl.get("stocks", [])]
     for c in wl.get("coins", []):
         label = c.get("label") or c["id"]
@@ -275,7 +275,7 @@ def main() -> int:
               f"detection in classify() did not catch their background shape.")
     print(f"\n{ok} logo(s), {skipped} skipped, {total} bytes total "
           f"({total * 100 // 0xE0000}% of the 896KB data partition)")
-    print("now: PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs")
+    print("now: ./push-config ticker")
     return 0 if ok else 1
 
 

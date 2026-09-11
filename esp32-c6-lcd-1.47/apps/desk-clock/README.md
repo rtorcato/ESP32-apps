@@ -257,3 +257,26 @@ the same screen. Cheapest first:
 
 Each is a small change to the layout block. None is obviously right, which is
 why none is applied.
+
+## Settings
+
+Tunables live in [`data/config.json`](data/config.json) on the device, read via
+[`lib/board/appcfg.h`](../../lib/board/appcfg.h). Push a change without a
+rebuild:
+
+```sh
+./push-config desk-clock
+```
+
+Every key is optional and the app runs on its compiled defaults with the file
+absent. Out-of-range values are rejected and named on the serial log rather than
+silently clamped. **Credentials are not in here** and must not be — they live in
+`secrets.h`, which is gitignored and compiled in, because this file sits on a
+filesystem anyone holding the board can dump. See
+[SECURITY.md](../../../SECURITY.md) and
+[APP-CHECKLIST.md](../../APP-CHECKLIST.md#configuration).
+
+Timezone, weather location and units, weather refresh interval, and optional
+backlight/night overrides. Moving city is now an edit, not a rebuild. Omit a
+brightness key and that level still comes from the active colour scheme, so
+cycling themes keeps working.

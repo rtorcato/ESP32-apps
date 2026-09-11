@@ -1,0 +1,18 @@
+{
+  "_readme": [
+    "Settings for the hello smoke test. Push a change to the board with:",
+    "  ./push-config hello",
+    "",
+    "Every app in this repo reads apps/<app>/data/config.json. Every key is",
+    "optional -- delete this whole file and hello still runs on its compiled",
+    "defaults. Secrets (Wi-Fi PSK, API keys) never go in here; they live in",
+    "lib/board/secrets.h, which is gitignored and compiled in. config.json sits",
+    "on a filesystem anyone holding the board can dump. See SECURITY.md.",
+    "",
+    "brightness  backlight duty, 8-255. Deliberately high here: this screen",
+    "            exists to check pixels, not to be looked at.",
+    "tickMs      ms between LED colour changes and button samples, 50-5000."
+  ],
+  "brightness": 200,
+  "tickMs": 500
+}

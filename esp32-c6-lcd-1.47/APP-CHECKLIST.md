@@ -333,10 +333,73 @@ before drawing) and log its result late.
 directly — it ships in the venv. Note the port re-enumerates on reset, so a
 handle held across a reboot dies.
 
+## Configuration
+
+**Every app gets `apps/<app>/data/config.json`, read through `lib/board/appcfg.h`.**
+The split is one rule:
+
+| | Where | Why |
+|---|---|---|
+| anything worth changing without a rebuild | `<app>/data/config.json` | on LittleFS, pushed in ~4s |
+| anything **secret** — Wi-Fi PSK, API keys, portal passwords | `lib/board/secrets.h` | gitignored, compiled in |
+
+A credential in `config.json` is a credential published: it is plain text on a
+filesystem anyone holding the board can dump with `esptool read_flash`. That is
+not a hypothetical — see [SECURITY.md](SECURITY.md), including why flash
+encryption is not the fix here.
+
+```sh
+./push-config <app>          # just the config, no rebuild, ~4s
+pio run -e <app> -t upload   # firmware, only when src/ changes
+```
+
+`push-config` validates the JSON **before** touching the board, because
+`uploadfs` will happily build an image from a malformed file and the app then
+boots on its defaults looking like the edit did nothing.
+
+`data_dir` is a `[platformio]` option and cannot be set per-env, so
+`scripts/appdata.py` sets it from the env name — an explicit
+`PLATFORMIO_DATA_DIR` still wins, because overriding a default is helpful and
+overriding an explicit instruction is a trap. (That one bit me: the hook
+originally clobbered the variable unconditionally and reported success, so a
+test that meant to upload an empty filesystem silently uploaded the real one.)
+
+**Rules that make a config file safe to hand-edit:**
+
+- **Every key is optional, and the app must run with the file absent.** The file
+  *tunes* an app, it does not *enable* one — verified by uploading an empty
+  filesystem and watching it boot. The single exception is an app whose config
+  *is* its data (ticker's watchlist), which says so on screen when it's missing.
+- **Reject and name bad values; never clamp silently.** `cfgInt()` keeps the
+  previous value and logs `config x: 999 out of range 8..255, keeping 96`. A
+  typo quietly rounded to the nearest legal value is a setting that "doesn't
+  work" with no explanation.
+- **Sanity-check combinations, not just ranges.** Each value can be individually
+  legal and jointly nonsense: an inverted market window makes `marketOpen()`
+  permanently false, and a stale timeout under two poll intervals marks a
+  healthy feed dead. Both are caught and corrected out loud.
+- **Floor a brightness at 8, never 0.** Duty 0 reads as a dead board with no way
+  back except the serial log.
+- **Don't return pointers into the parsed document.** `cfgStr()` copies into a
+  caller buffer; the tree is freed with `cfgRelease()` after boot, so a returned
+  pointer would dangle and work right up until it didn't.
+- **An override should be able to defer to the default.** Backlight keys are
+  opt-in: omit one and that level still comes from the active colour scheme,
+  because the nine schemes carry their own duty and a blanket override throws
+  that away. `uiBacklightFromScheme()` is exposed for exactly this.
+
+`cfgSelfCheck()` asserts the accessors — dotted paths, absent keys, wrong types,
+out-of-range, paths through a scalar, absent arrays, and `HH:MM` parsing. Call it
+from an app's `selfCheck()`. It silences its own deliberate rejections, which
+otherwise print into the boot log looking like real errors.
+
 ## Per-app deliverables
 
 - **`README.md`** — what it does, why this board, the hard parts, and what you
   learned building it.
+- **`data/config.json`** — with a `_readme` key explaining each setting and its
+  range. Comments aren't legal JSON, and a settings file nobody can read is a
+  settings file nobody changes.
 - **`preview.svg`**, and `preview-h.svg` if the layout differs by orientation,
   drawn at **native resolution** with `textLength` pinning the real `6*size`
   glyph advance, so if it fits the wireframe it fits the panel.

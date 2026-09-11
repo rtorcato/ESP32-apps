@@ -15,6 +15,7 @@
 // still erases an exact box -- there is no fillScreen() in loop(), which is
 // what stops the large digits from flickering.
 #include <board.h>
+#include <appcfg.h>
 #include <netjoin.h>
 #include <ui.h>
 #include <secrets.h>
@@ -28,12 +29,21 @@
 
 // ── config ───────────────────────────────────────────────────────────────
 // A real TZ string, not a UTC offset -- this is what makes DST automatic.
-static const char *TZ_STRING = "EST5EDT,M3.2.0/2,M11.1.0/2";
-static const float LAT = 43.6532f, LON = -79.3832f;
-static const char *PLACE = "TORONTO";
+// Defaults; data/config.json overrides any of them. `./push-config desk-clock`
+// applies a change in seconds, so moving city or timezone is no longer a
+// rebuild. Reading that file is a trust boundary -- see appcfg.h.
+static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
+static float lat = 43.6532f, lon = -79.3832f;
+static char place[13] = "TORONTO";  // 12 glyphs is the header box
+static bool fahrenheit = false;
 
-static const uint32_t WX_PERIOD_MS = 15UL * 60 * 1000;  // open-meteo is free; don't hammer it
-static const uint32_t WX_RETRY_MS = 60UL * 1000;        // but retry sooner while it's failing
+// -1 means "use the scheme's own duty". The nine schemes each carry their own
+// day/night levels because the light one is unbearable at the dark one's
+// brightness, so an override is opt-in rather than a blanket replacement.
+static int16_t blDayCfg = -1, blNightCfg = -1;
+
+static uint32_t wxPeriodMs = 15UL * 60 * 1000;  // open-meteo is free; don't hammer it
+static uint32_t wxRetryMs = 60UL * 1000;        // but retry sooner while it's failing
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000;      // re-begin() while disconnected
 // Night window and per-theme backlight levels live in lib/board/ui.h
 // (uiNightFrom/uiNightTo, Theme::blDay/blNight) -- shared by every app.
@@ -186,7 +196,7 @@ static void drawChrome() {
     gfx->drawFastHLine(12, L->rule2, L->w - 24, uiTheme()->rule);
     gfx->drawFastHLine(12, L->rule3, L->w - 24, uiTheme()->rule);
   }
-  field(L->xCol2, L->yPlace, 12, 1, uiTheme()->muted, PLACE);
+  field(L->xCol2, L->yPlace, 12, 1, uiTheme()->muted, place);
 }
 
 // Only repaints what changed -- the minute block once a minute, seconds once a
@@ -504,8 +514,8 @@ static bool fetchWeather() {
            "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code"
            "&daily=weather_code,temperature_2m_max,temperature_2m_min"
-           "&timezone=auto&forecast_days=4",
-           LAT, LON);
+           "&timezone=auto&forecast_days=4%s",
+           lat, lon, fahrenheit ? "&temperature_unit=fahrenheit" : "");
 
   HTTPClient http;
   if (!http.begin(client, url)) return false;
@@ -624,6 +634,57 @@ static void selfCheck() {
 enum class State { Boot, NoWifi, NoTime, Running };
 static State state = State::Boot;
 
+// ── config ───────────────────────────────────────────────────────────────
+// Every key is optional and desk-clock runs fine with no config.json at all --
+// the file tunes the app, it does not enable it. Unlike ticker, whose config IS
+// its watchlist, there is nothing here that has to be present.
+static void loadConfig() {
+  if (!cfgLoad()) return;  // already logged; compiled defaults stand
+
+  cfgStr("timezone", tzString, sizeof tzString);
+
+  // Latitude and longitude are range-checked because a swapped pair is the
+  // classic mistake here, and open-meteo answers 400 for it rather than
+  // anything that reads like "you swapped your coordinates".
+  lat = cfgFloat("location.lat", lat, -90.0f, 90.0f);
+  lon = cfgFloat("location.lon", lon, -180.0f, 180.0f);
+
+  char p[32] = "";
+  if (cfgStr("location.place", p, sizeof p)) {
+    if (strlen(p) > sizeof place - 1)
+      Serial.printf("config location.place: '%s' is over %u glyphs, truncating\n", p,
+                    (unsigned)(sizeof place - 1));
+    snprintf(place, sizeof place, "%s", p);
+  }
+
+  char units[12] = "";
+  if (cfgStr("units", units, sizeof units)) {
+    if (!strcasecmp(units, "imperial")) fahrenheit = true;
+    else if (!strcasecmp(units, "metric")) fahrenheit = false;
+    else Serial.printf("config units: '%s' is not metric or imperial, ignored\n", units);
+  }
+
+  uiNightFrom = (uint8_t)cfgInt("night.from", uiNightFrom, 0, 23);
+  uiNightTo = (uint8_t)cfgInt("night.to", uiNightTo, 0, 23);
+  blDayCfg = (int16_t)cfgInt("brightness.day", blDayCfg, 8, 255);
+  blNightCfg = (int16_t)cfgInt("brightness.night", blNightCfg, 8, 255);
+
+  wxPeriodMs = (uint32_t)cfgInt("refresh.weatherMinutes", wxPeriodMs / 60000, 1, 240) * 60000UL;
+
+  cfgRelease();
+  Serial.printf("config: %s %.4f,%.4f  tz %s  %s  night %02u-%02u  bl %d/%d  wx %lumin\n", place,
+                (double)lat, (double)lon, tzString, fahrenheit ? "imperial" : "metric",
+                uiNightFrom, uiNightTo, blDayCfg, blNightCfg,
+                (unsigned long)(wxPeriodMs / 60000));
+}
+
+// Defers to the scheme for whichever level config.json left alone, so cycling
+// themes still changes brightness unless it was explicitly overridden.
+static uint8_t clockBacklight() {
+  int16_t want = uiIsNight() ? blNightCfg : blDayCfg;
+  return want >= 0 ? (uint8_t)want : uiBacklightFromScheme();
+}
+
 void setup() {
   Serial.begin(115200);
   // Native USB CDC: anything printed in the first few hundred ms is lost while
@@ -638,6 +699,11 @@ void setup() {
   gfx->begin();
   uiBegin(gfx, "deskclock");  // loads rotation/theme from NVS and applies them
   syncLayout();
+
+  loadConfig();
+  uiBacklightHook = clockBacklight;
+  uiBacklightApplied = uiBacklightNow();
+  backlight(uiBacklightApplied);
 
   const char *boot[] = {"connecting to wifi", WIFI_SSID, "", "BOOT cycles modes"};
   drawOfflinePanel("STARTING", uiTheme()->muted, boot, 4);
@@ -660,7 +726,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm ip %s\n", WiFi.SSID().c_str(), WiFi.RSSI(),
                   WiFi.localIP().toString().c_str());
-    configTzTime(TZ_STRING, "pool.ntp.org", "time.nist.gov");
+    configTzTime(tzString, "pool.ntp.org", "time.nist.gov");
     struct tm t;
     bool synced = false;
     for (int i = 0; i < 40 && !(synced = getLocalTime(&t, 250)); i++) {}
@@ -824,7 +890,7 @@ void loop() {
   // ponytail: this GET blocks for a second or two on a single-core chip, but
   // the clock reads the RTC rather than counting ticks, so the seconds just
   // jump and self-correct. Not worth a task for a 15-minute poll.
-  uint32_t period = wx.valid ? WX_PERIOD_MS : WX_RETRY_MS;
+  uint32_t period = wx.valid ? wxPeriodMs : wxRetryMs;
   if (state != State::NoWifi && (lastWx == 0 || millis() - lastWx > period)) {
     lastWx = millis();
     if (fetchWeather()) {

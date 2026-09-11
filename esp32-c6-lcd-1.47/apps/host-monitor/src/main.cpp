@@ -18,6 +18,7 @@
 //
 // Needs one of apps/host-monitor/agent/ running on the host being watched.
 #include <board.h>
+#include <appcfg.h>
 #include <netjoin.h>
 #include <ui.h>
 #include <secrets.h>
@@ -50,11 +51,11 @@ static const char *PORTAL_SSID = "host-monitor-setup";
 static const char *PORTAL_PASS = "setup-panel";  // >=8 chars, WPA2
 static const uint32_t PORTAL_TIMEOUT_MS = 3UL * 60 * 1000;
 
-static const uint32_t POLL_MS = 5UL * 1000;        // agent is cheap; 5s feels live
-static const uint32_t POLL_RETRY_MS = 10UL * 1000; // back off a little when failing
+static uint32_t pollMs = 5UL * 1000;        // agent is cheap; 5s feels live
+static uint32_t pollRetryMs = 10UL * 1000;  // back off a little when failing
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000; // re-begin() while disconnected
 static const uint32_t TEMP_LOG_MS = 60UL * 1000;
-static const uint32_t FEED_STALE_MS = 15UL * 1000;  // serial feed gone quiet
+static uint32_t feedStaleMs = 15UL * 1000;  // serial feed gone quiet
 
 // Where the stats come from.
 //
@@ -130,7 +131,7 @@ static void syncLayout() { L = uiLandscape() ? &LANDSCAPE : &PORTRAIT; }
 
 // Page cycling. 6s each: long enough to read, short enough that you don't wait
 // for the number you wanted.
-static const uint32_t PAGE_MS = 6UL * 1000;
+static uint32_t pageMs = 6UL * 1000;
 static const uint8_t PAGES = 2;
 static uint8_t page = 0;
 
@@ -627,6 +628,50 @@ static void selfCheck() {
 enum class State { Boot, NoWifi, NoAgent, Running };
 static State state = State::Boot;
 
+// ── config ───────────────────────────────────────────────────────────────
+// Every key is optional; host-monitor runs on its compiled defaults with no
+// config.json present. The setup-portal password is NOT here and must not be:
+// it is a WPA2 credential, so it belongs in secrets.h with the Wi-Fi PSK. The
+// transport (serial vs HTTP) stays a compile-time choice because the two paths
+// pull in different libraries -- a runtime switch would mean building both.
+static int16_t blDayCfg = -1, blNightCfg = -1;
+
+static void loadConfig() {
+  if (!cfgLoad()) return;  // already logged; compiled defaults stand
+
+  cfgStr("agent.url", agentUrl, sizeof agentUrl);
+
+  pollMs = (uint32_t)cfgInt("refresh.pollSeconds", pollMs / 1000, 1, 3600) * 1000UL;
+  pollRetryMs = (uint32_t)cfgInt("refresh.retrySeconds", pollRetryMs / 1000, 1, 3600) * 1000UL;
+  feedStaleMs = (uint32_t)cfgInt("refresh.staleSeconds", feedStaleMs / 1000, 2, 3600) * 1000UL;
+  pageMs = (uint32_t)cfgInt("timing.pageSeconds", pageMs / 1000, 2, 600) * 1000UL;
+
+  uiNightFrom = (uint8_t)cfgInt("night.from", uiNightFrom, 0, 23);
+  uiNightTo = (uint8_t)cfgInt("night.to", uiNightTo, 0, 23);
+  blDayCfg = (int16_t)cfgInt("brightness.day", blDayCfg, 8, 255);
+  blNightCfg = (int16_t)cfgInt("brightness.night", blNightCfg, 8, 255);
+
+  // A stale window shorter than the poll interval would mark a perfectly
+  // healthy feed stale between two updates, which looks exactly like a dead
+  // agent. Keep at least two polls of slack.
+  if (feedStaleMs < pollMs * 2) {
+    Serial.printf("config refresh.staleSeconds: %lus is under 2 polls, raising to %lus\n",
+                  (unsigned long)(feedStaleMs / 1000), (unsigned long)(pollMs * 2 / 1000));
+    feedStaleMs = pollMs * 2;
+  }
+
+  cfgRelease();
+  Serial.printf("config: poll %lus retry %lus stale %lus page %lus  night %02u-%02u  bl %d/%d\n",
+                (unsigned long)(pollMs / 1000), (unsigned long)(pollRetryMs / 1000),
+                (unsigned long)(feedStaleMs / 1000), (unsigned long)(pageMs / 1000), uiNightFrom,
+                uiNightTo, blDayCfg, blNightCfg);
+}
+
+static uint8_t hostBacklight() {
+  int16_t want = uiIsNight() ? blNightCfg : blDayCfg;
+  return want >= 0 ? (uint8_t)want : uiBacklightFromScheme();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);  // USB CDC needs a moment; early prints are lost regardless
@@ -635,6 +680,11 @@ void setup() {
   gfx = boardDisplay();
   gfx->begin();
   uiBegin(gfx, "hostmon");  // its own NVS namespace
+
+  loadConfig();
+  uiBacklightHook = hostBacklight;
+  uiBacklightApplied = uiBacklightNow();
+  backlight(uiBacklightApplied);
   syncLayout();
 
   // NVS overrides the compiled-in default, so the portal's choice sticks.
@@ -733,7 +783,7 @@ void loop() {
   // Auto-cycle the pages. Only the slots change, so this is four cached
   // redraws, not a full repaint.
   static uint32_t lastPage = 0;
-  if (state == State::Running && millis() - lastPage > PAGE_MS) {
+  if (state == State::Running && millis() - lastPage > pageMs) {
     lastPage = millis();
     page = (page + 1) % PAGES;
   }
@@ -784,7 +834,7 @@ void loop() {
     if (readStatsFromSerial()) {
       if (uiScreenOn() && state == State::Running) drawPage();
       showLevel();
-    } else if (st.valid && millis() - st.fetchedAt > FEED_STALE_MS) {
+    } else if (st.valid && millis() - st.fetchedAt > feedStaleMs) {
       // Go stale rather than leaving a frozen number looking authoritative --
       // the feed stops whenever the script is killed or the host sleeps.
       st.valid = false;
@@ -795,7 +845,7 @@ void loop() {
   }
 #else
   static uint32_t lastPoll = 0;
-  uint32_t period = st.valid ? POLL_MS : POLL_RETRY_MS;
+  uint32_t period = st.valid ? pollMs : pollRetryMs;
   if (!DEMO_STATS && state != State::NoWifi &&
       (lastPoll == 0 || millis() - lastPoll > period)) {
     lastPoll = millis();
