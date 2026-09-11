@@ -1,53 +1,99 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 320" width="344" height="640" role="img" aria-label="mac-mini: uptime, load, memory, disk and network stats with a sleep/wake button state">
-  <!-- 172x320 native. Page 1 of 4 (short press cycles). -->
-  <rect width="172" height="320" fill="#0b0f14"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 364 320" width="728" height="640" role="img" aria-label="mac-mini portrait: two auto-cycling pages, page 1 uptime CPU memory load, page 2 disk network busiest process">
+  <!-- Two 172x320 panels side by side: the pages auto-cycle every 6s on one
+       screen. Coordinates match the slot table in src/main.cpp; textLength pins
+       the real 6*size glyph advance. -->
+  <rect width="364" height="320" fill="#1a1a1a"/>
 
-  <!-- header: host + reachability dot -->
-  <rect width="172" height="22" fill="#161d26"/>
-  <circle cx="10" cy="11" r="4" fill="#3fb950"/>
-  <text x="20" y="15" font-family="monospace" font-size="10" fill="#e6edf3">mac-mini</text>
-  <text x="164" y="15" font-family="monospace" font-size="8" fill="#8b98a5" text-anchor="end">1/4</text>
+  <!-- ══ PAGE 1 ══ -->
+  <g transform="translate(0,0)">
+    <rect width="172" height="320" fill="#000"/>
+    <!-- header: host + reachability dot, page dots top-right -->
+    <circle cx="12" cy="9" r="3" fill="#3cdc64"/>
+    <text x="20" y="13" font-family="monospace" font-size="8" fill="#f8fcf8"
+          textLength="84" lengthAdjust="spacing">RT-Mac-Mini-M4</text>
+    <circle cx="150" cy="9" r="3" fill="#f8fcf8"/>
+    <circle cx="159" cy="9" r="3" fill="#5a5a5a"/>
 
-  <!-- uptime, the headline number -->
-  <text x="8" y="40" font-family="monospace" font-size="8" fill="#6e7681">UPTIME</text>
-  <text x="8" y="62" font-family="monospace" font-size="19" fill="#e6edf3">14d 06:22</text>
+    <!-- slot 0 y=26: UPTIME, size 3, no bar -->
+    <text x="8" y="33" font-family="monospace" font-size="8" fill="#696969"
+          textLength="36" lengthAdjust="spacing">UPTIME</text>
+    <text x="8" y="59" font-family="monospace" font-size="24" fill="#f8fcf8"
+          textLength="144" lengthAdjust="spacing">4d 22:39</text>
 
-  <line x1="0" y1="76" x2="172" y2="76" stroke="#263140"/>
+    <!-- slot 1 y=94: CPU, size 4, bar -->
+    <text x="8" y="101" font-family="monospace" font-size="8" fill="#696969"
+          textLength="18" lengthAdjust="spacing">CPU</text>
+    <text x="8" y="132" font-family="monospace" font-size="32" fill="#f8fcf8"
+          textLength="72" lengthAdjust="spacing">19%</text>
+    <rect x="8" y="143" width="156" height="3" fill="#5a5a5a"/>
+    <rect x="8" y="143" width="30" height="3" fill="#3cdc64"/>
 
-  <!-- load average -->
-  <text x="8" y="90" font-family="monospace" font-size="8" fill="#6e7681">LOAD 1/5/15</text>
-  <text x="8" y="104" font-family="monospace" font-size="11" fill="#e6edf3">1.82 1.44 1.10</text>
-  <rect x="8" y="110" width="156" height="4" rx="2" fill="#263140"/>
-  <rect x="8" y="110" width="71" height="4" rx="2" fill="#3fb950"/>
+    <!-- slot 2 y=162: MEMORY, size 4, bar (amber: 74% is past 60) -->
+    <text x="8" y="169" font-family="monospace" font-size="8" fill="#696969"
+          textLength="36" lengthAdjust="spacing">MEMORY</text>
+    <text x="8" y="200" font-family="monospace" font-size="32" fill="#f8fcf8"
+          textLength="72" lengthAdjust="spacing">74%</text>
+    <rect x="8" y="211" width="156" height="3" fill="#5a5a5a"/>
+    <rect x="8" y="211" width="115" height="3" fill="#ffa500"/>
 
-  <!-- memory pressure (not "free" — pressure is the real number on macOS) -->
-  <text x="8" y="132" font-family="monospace" font-size="8" fill="#6e7681">MEM PRESSURE</text>
-  <text x="164" y="132" font-family="monospace" font-size="8" fill="#d29922" text-anchor="end">42%</text>
-  <rect x="8" y="137" width="156" height="4" rx="2" fill="#263140"/>
-  <rect x="8" y="137" width="66" height="4" rx="2" fill="#d29922"/>
+    <!-- slot 3 y=230: LOAD, size 3, bar -->
+    <text x="8" y="237" font-family="monospace" font-size="8" fill="#696969"
+          textLength="54" lengthAdjust="spacing">LOAD 1MIN</text>
+    <text x="8" y="263" font-family="monospace" font-size="24" fill="#f8fcf8"
+          textLength="72" lengthAdjust="spacing">2.07</text>
+    <rect x="8" y="271" width="156" height="3" fill="#5a5a5a"/>
+    <rect x="8" y="271" width="32" height="3" fill="#3cdc64"/>
 
-  <!-- disk -->
-  <text x="8" y="159" font-family="monospace" font-size="8" fill="#6e7681">DISK  /</text>
-  <text x="164" y="159" font-family="monospace" font-size="8" fill="#8b98a5" text-anchor="end">318G free</text>
-  <rect x="8" y="164" width="156" height="4" rx="2" fill="#263140"/>
-  <rect x="8" y="164" width="98" height="4" rx="2" fill="#58a6ff"/>
+    <!-- footer -->
+    <text x="8" y="303" font-family="monospace" font-size="8" fill="#969696"
+          textLength="96" lengthAdjust="spacing">MatrixZeroIOT -58dBm</text>
+    <text x="8" y="315" font-family="monospace" font-size="8" fill="#696969"
+          textLength="78" lengthAdjust="spacing">polled 2s ago</text>
+  </g>
 
-  <!-- network throughput -->
-  <line x1="0" y1="182" x2="172" y2="182" stroke="#263140"/>
-  <text x="8" y="196" font-family="monospace" font-size="8" fill="#6e7681">NET</text>
-  <text x="8" y="212" font-family="monospace" font-size="11" fill="#3fb950">&#8595; 12.4 MB/s</text>
-  <text x="8" y="228" font-family="monospace" font-size="11" fill="#58a6ff">&#8593;  0.8 MB/s</text>
+  <!-- ══ PAGE 2 ══ -->
+  <g transform="translate(192,0)">
+    <rect width="172" height="320" fill="#000"/>
+    <circle cx="12" cy="9" r="3" fill="#3cdc64"/>
+    <text x="20" y="13" font-family="monospace" font-size="8" fill="#f8fcf8"
+          textLength="84" lengthAdjust="spacing">RT-Mac-Mini-M4</text>
+    <circle cx="150" cy="9" r="3" fill="#5a5a5a"/>
+    <circle cx="159" cy="9" r="3" fill="#f8fcf8"/>
 
-  <!-- cpu temp + top process -->
-  <line x1="0" y1="240" x2="172" y2="240" stroke="#263140"/>
-  <text x="8" y="254" font-family="monospace" font-size="8" fill="#6e7681">CPU</text>
-  <text x="164" y="254" font-family="monospace" font-size="8" fill="#e6edf3" text-anchor="end">51&#176;C  23%</text>
-  <text x="8" y="270" font-family="monospace" font-size="8" fill="#6e7681">TOP</text>
-  <text x="164" y="270" font-family="monospace" font-size="8" fill="#e6edf3" text-anchor="end">Xcode 118%</text>
+    <!-- slot 0: DISK FREE, size 3, bar -->
+    <text x="8" y="33" font-family="monospace" font-size="8" fill="#696969"
+          textLength="54" lengthAdjust="spacing">DISK FREE</text>
+    <text x="8" y="59" font-family="monospace" font-size="24" fill="#f8fcf8"
+          textLength="72" lengthAdjust="spacing">475G</text>
+    <rect x="8" y="67" width="156" height="3" fill="#5a5a5a"/>
+    <rect x="8" y="67" width="81" height="3" fill="#3cdc64"/>
 
-  <!-- button state: armed, awaiting confirm. never one-press. -->
-  <rect x="0" y="282" width="172" height="38" fill="#3d1d1d"/>
-  <rect x="0" y="282" width="172" height="1" fill="#f85149"/>
-  <text x="86" y="298" font-family="monospace" font-size="10" fill="#f85149" text-anchor="middle">SLEEP? press 3s</text>
-  <text x="86" y="312" font-family="monospace" font-size="8" fill="#a86464" text-anchor="middle">release to cancel</text>
+    <!-- slot 1: DOWN, size 3 -->
+    <text x="8" y="101" font-family="monospace" font-size="8" fill="#696969"
+          textLength="24" lengthAdjust="spacing">DOWN</text>
+    <text x="8" y="127" font-family="monospace" font-size="24" fill="#87ceeb"
+          textLength="144" lengthAdjust="spacing">196 kB/s</text>
+
+    <!-- slot 2: UP, size 3 -->
+    <text x="8" y="169" font-family="monospace" font-size="8" fill="#696969"
+          textLength="12" lengthAdjust="spacing">UP</text>
+    <text x="8" y="195" font-family="monospace" font-size="24" fill="#ffa500"
+          textLength="108" lengthAdjust="spacing">4 kB/s</text>
+
+    <!-- slot 3: BUSIEST, size 2, bar -->
+    <text x="8" y="237" font-family="monospace" font-size="8" fill="#696969"
+          textLength="42" lengthAdjust="spacing">BUSIEST</text>
+    <text x="8" y="257" font-family="monospace" font-size="16" fill="#f8fcf8"
+          textLength="144" lengthAdjust="spacing">WindowServer</text>
+    <rect x="8" y="263" width="156" height="3" fill="#5a5a5a"/>
+    <rect x="8" y="263" width="64" height="3" fill="#3cdc64"/>
+
+    <text x="8" y="303" font-family="monospace" font-size="8" fill="#969696"
+          textLength="96" lengthAdjust="spacing">MatrixZeroIOT -58dBm</text>
+    <text x="8" y="315" font-family="monospace" font-size="8" fill="#696969"
+          textLength="78" lengthAdjust="spacing">polled 4s ago</text>
+  </g>
+
+  <text x="182" y="316" font-family="monospace" font-size="7" fill="#6e7681"
+        text-anchor="middle" transform="rotate(-90 182 160)">auto-cycles every 6s</text>
 </svg>

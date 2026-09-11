@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 172" width="640" height="344" role="img" aria-label="mac-mini landscape page 1: uptime and CPU on the top row, memory and load on the bottom row">
+  <!-- 320x172 landscape, page 1. The same four slots as portrait, arranged 2x2.
+       148px wide still fits 8 glyphs at size 3, which is what "196 kB/s" needs
+       on page 2. Coordinates match the slot table in src/main.cpp. -->
+  <rect width="320" height="172" fill="#000"/>
+
+  <!-- header -->
+  <circle cx="12" cy="7" r="3" fill="#3cdc64"/>
+  <text x="20" y="11" font-family="monospace" font-size="8" fill="#f8fcf8"
+        textLength="84" lengthAdjust="spacing">RT-Mac-Mini-M4</text>
+  <circle cx="298" cy="7" r="3" fill="#f8fcf8"/>
+  <circle cx="307" cy="7" r="3" fill="#5a5a5a"/>
+
+  <!-- slot 0: x=8 y=22 — UPTIME, size 3 -->
+  <text x="8" y="29" font-family="monospace" font-size="8" fill="#696969"
+        textLength="36" lengthAdjust="spacing">UPTIME</text>
+  <text x="8" y="55" font-family="monospace" font-size="24" fill="#f8fcf8"
+        textLength="144" lengthAdjust="spacing">4d 22:39</text>
+
+  <!-- slot 1: x=164 y=22 — CPU, size 4, bar -->
+  <text x="164" y="29" font-family="monospace" font-size="8" fill="#696969"
+        textLength="18" lengthAdjust="spacing">CPU</text>
+  <text x="164" y="60" font-family="monospace" font-size="32" fill="#f8fcf8"
+        textLength="72" lengthAdjust="spacing">19%</text>
+  <rect x="164" y="71" width="148" height="3" fill="#5a5a5a"/>
+  <rect x="164" y="71" width="28" height="3" fill="#3cdc64"/>
+
+  <!-- slot 2: x=8 y=90 — MEMORY, size 4, bar (amber past 60%) -->
+  <text x="8" y="97" font-family="monospace" font-size="8" fill="#696969"
+        textLength="36" lengthAdjust="spacing">MEMORY</text>
+  <text x="8" y="128" font-family="monospace" font-size="32" fill="#f8fcf8"
+        textLength="72" lengthAdjust="spacing">74%</text>
+  <rect x="8" y="139" width="148" height="3" fill="#5a5a5a"/>
+  <rect x="8" y="139" width="110" height="3" fill="#ffa500"/>
+
+  <!-- slot 3: x=164 y=90 — LOAD, size 3, bar -->
+  <text x="164" y="97" font-family="monospace" font-size="8" fill="#696969"
+        textLength="54" lengthAdjust="spacing">LOAD 1MIN</text>
+  <text x="164" y="123" font-family="monospace" font-size="24" fill="#f8fcf8"
+        textLength="72" lengthAdjust="spacing">2.07</text>
+  <rect x="164" y="131" width="148" height="3" fill="#5a5a5a"/>
+  <rect x="164" y="131" width="31" height="3" fill="#3cdc64"/>
+
+  <!-- footer -->
+  <text x="8" y="157" font-family="monospace" font-size="8" fill="#969696"
+        textLength="96" lengthAdjust="spacing">MatrixZeroIOT -58dBm</text>
+  <text x="8" y="167" font-family="monospace" font-size="8" fill="#696969"
+        textLength="78" lengthAdjust="spacing">polled 2s ago</text>
+</svg>

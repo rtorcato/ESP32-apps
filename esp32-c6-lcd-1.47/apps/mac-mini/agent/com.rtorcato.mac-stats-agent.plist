@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Keeps the stats agent running. Install with:
+
+    mkdir -p ~/Library/LaunchAgents ~/Library/Logs
+    sed "s|__PATH__|$PWD/mac-stats-agent.py|" com.rtorcato.mac-stats-agent.plist \
+      > ~/Library/LaunchAgents/com.rtorcato.mac-stats-agent.plist
+    launchctl load ~/Library/LaunchAgents/com.rtorcato.mac-stats-agent.plist
+
+  A LaunchAgent (not a LaunchDaemon) on purpose: the agent needs no privileges
+  for read-only stats, so it should not run as root. If the sleep endpoint is
+  ever added, `pmset sleepnow` still needs no root -- only `shutdown` would, and
+  that is a good reason not to add shutdown.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rtorcato.mac-stats-agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>__PATH__</string>
+    <string>--port</string>
+    <string>8787</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Throttle restarts so a crash loop doesn't spin. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/mac-stats-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/mac-stats-agent.err</string>
+</dict>
+</plist>

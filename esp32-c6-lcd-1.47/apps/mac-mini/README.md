@@ -1,4 +1,4 @@
-# mac-mini — idea
+# mac-mini — **built** (read-only)
 
 <img src="preview.svg" alt="mac-mini preview" width="172">
 
@@ -12,6 +12,94 @@ rows fit on 172×320 with no scrolling, so the whole machine's state is one
 glance with nothing hidden. Always USB-powered, so it can sit next to the mini
 permanently. And the RGB LED carries reachability without needing to read
 anything: green = up, amber = asleep, red = unreachable.
+
+## Status: the stats panel works, sleep/wake is not built
+
+Built and running on hardware: a **read-only** two-page stats panel. The
+sleep/wake button below is phase two and deliberately not done yet — see
+[Why not the button yet](#why-not-the-button-yet).
+
+### Two auto-cycling pages
+
+Two pages exist so the numbers can be **big**: less per screen buys size 3 and 4
+glyphs instead of rows of size 1 text. They alternate every 6 seconds
+(`PAGE_MS`), with dots at the top right showing which page is up.
+
+| Page 1 | Page 2 |
+|---|---|
+| uptime, CPU %, memory %, 1-min load | disk free, download, upload, busiest process |
+
+Pages **auto-cycle rather than being button-driven** because this board has one
+readable button and its three gestures are already spent on rotation, colour
+scheme and blanking. A glanceable panel shouldn't need touching anyway.
+
+Bars are colour-thresholded — green under 60%, amber to 85, red above — which
+does more for readability at a glance than any amount of styling.
+
+### Setup
+
+**1. Run the agent on the Mac.** Standard library only, nothing to install:
+
+```sh
+cd esp32-c6-lcd-1.47/apps/mac-mini/agent
+python3 mac-stats-agent.py            # foreground, port 8787
+curl -s localhost:8787/stats | python3 -m json.tool   # sanity check
+```
+
+To keep it running across reboots, install the LaunchAgent:
+
+```sh
+mkdir -p ~/Library/LaunchAgents
+sed "s|__PATH__|$PWD/mac-stats-agent.py|" com.rtorcato.mac-stats-agent.plist \
+  > ~/Library/LaunchAgents/com.rtorcato.mac-stats-agent.plist
+launchctl load ~/Library/LaunchAgents/com.rtorcato.mac-stats-agent.plist
+```
+
+**2. Allow the board to reach it.** This is the step that will bite you: the
+board is on the **IoT VLAN** and the Mac is not, and UniFi blocks IoT → LAN by
+default. Measured on this setup: board `10.0.40.67` (VLAN 40), Mac `10.0.10.92`
+(VLAN 10), and every poll failed until a rule existed.
+
+Add a UniFi firewall rule, **above** the rule that isolates IoT:
+
+| Field | Value |
+|---|---|
+| Action | Allow |
+| Source | `10.0.40.67` (the board, not the whole VLAN) |
+| Destination | `10.0.10.92` port `8787`, TCP |
+
+One host, one port — least privilege, same reasoning as
+[SECURITY.md](../../../SECURITY.md). The panel's `NO AGENT` screen names this
+explicitly, so a fresh install tells you what to do instead of just failing.
+
+**3. Point the firmware at it** if your Mac isn't at the default. Either edit
+`MAC_AGENT_URL` at the top of [`src/main.cpp`](src/main.cpp) or override it in
+`lib/board/secrets.h`:
+
+```c
+#define MAC_AGENT_URL "http://10.0.10.92:8787/stats"
+```
+
+```sh
+~/.platformio-venv/bin/pio run -e mac-mini -t upload
+```
+
+### Seeing the layout without a working agent
+
+`DEMO_STATS 1` at the top of `src/main.cpp` renders a fixed capture from a real
+M4 mini and skips polling entirely. Useful for checking both orientations before
+the network path works.
+
+### Why not the button yet
+
+Two reasons, both worth knowing before adding it:
+
+- **All three BOOT gestures are taken** (rotation, colour scheme, blanking), so
+  a sleep action needs a fourth gesture or a different input.
+- **Sleep is one-way from a panel's point of view.** Wake-on-LAN cannot cold-boot
+  a Mac, so `shutdown` would strand you; only sleep/wake is recoverable. That
+  plus the token, bound interface and least-privilege work is why the read-only
+  panel came first — it is useful on its own and has no security surface.
 
 ## The part to get straight first
 
