@@ -17,7 +17,7 @@ the Wi-Fi PSK currently sits in **two** places:
 
 The same applies to any API key an app holds — the UniFi key in
 [unifi-status](esp32-c6-lcd-1.47/apps/unifi-status/), an MQTT password, a bearer
-token for the [mac-mini](esp32-c6-lcd-1.47/apps/mac-mini/) agent.
+token for the [host-monitor](esp32-c6-lcd-1.47/apps/host-monitor/) agent.
 
 ## What does not help
 
@@ -47,7 +47,7 @@ This is the only mitigation on this page that **still works after a full flash
 dump**, it takes about five minutes on UniFi, and it cannot brick anything.
 For a desk clock, it is the correct answer and the list could stop here.
 
-Note the apps that need to reach *inward* — `unifi-status`, `mac-mini`,
+Note the apps that need to reach *inward* — `unifi-status`, `host-monitor`,
 `poe-cycle` — need a firewall rule allowing that one destination and port. Keep
 those rules narrow; that's the whole point of the VLAN.
 

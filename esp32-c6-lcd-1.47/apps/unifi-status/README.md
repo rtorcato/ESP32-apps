@@ -65,7 +65,7 @@ not much else. Use the API.
      LAN, and one reused client, but you'll be close to the heap ceiling once
      Arduino_GFX has its buffers.
   2. **Put a reducer in front of it.** Have the Mac mini (see
-     [mac-mini](../mac-mini/)) poll UniFi over HTTPS and serve the C6 ~15 plain
+     [host-monitor](../host-monitor/)) poll UniFi over HTTPS and serve the C6 ~15 plain
      numbers over plain HTTP on the LAN. No TLS on the MCU, no big JSON parse,
      and the API key never leaves the Mac. This is the lazy correct answer.
 - **`/stat/device` responses are huge** — tens of KB per device with dozens of

@@ -1,11 +1,19 @@
-# mac-mini — **built** (read-only)
+# host-monitor — **built** (read-only)
 
 <img src="preview.svg" alt="mac-mini preview" width="172">
 
 
-A always-on status panel for the Mac mini: uptime, load, memory pressure, disk
-free, CPU temp, network throughput — plus a button to sleep it and wake it back
-up.
+An always-on status panel for **any machine** that runs one of the agents:
+uptime, load, memory, disk, CPU, network throughput and the busiest process.
+
+**The firmware is not OS-specific.** It parses a fixed set of JSON keys and has
+no idea what produced them — the agent is the only platform-aware piece, and the
+JSON contract is the boundary. Agents ship for macOS and Linux; anything that
+can serve those keys works with the firmware unchanged.
+
+It is also **not a USB display**: plugging it into a computer only powers it, and
+the data arrives over Wi-Fi. So it can watch a machine other than the one it is
+plugged into — a server across the house, powered from a phone charger.
 
 **Why this board:** it's the ideal shape for a stat stack. Roughly 10 label/value
 rows fit on 172×320 with no scrolling, so the whole machine's state is one
@@ -38,21 +46,41 @@ does more for readability at a glance than any amount of styling.
 
 ### Setup
 
-**1. Run the agent on the Mac.** Standard library only, nothing to install:
+**1. Run an agent on the host you want to watch.** Standard library only on
+both platforms, so there is nothing to install.
+
+**macOS:**
 
 ```sh
-cd esp32-c6-lcd-1.47/apps/mac-mini/agent
-python3 mac-stats-agent.py            # foreground, port 8787
+cd esp32-c6-lcd-1.47/apps/host-monitor/agent
+python3 macos.py                                      # foreground, port 8787
 curl -s localhost:8787/stats | python3 -m json.tool   # sanity check
 ```
 
-To keep it running across reboots, install the LaunchAgent:
+Keep it running across reboots with the LaunchAgent (runs as you, not root —
+read-only stats need no privileges):
 
 ```sh
 mkdir -p ~/Library/LaunchAgents
-sed "s|__PATH__|$PWD/mac-stats-agent.py|" com.rtorcato.mac-stats-agent.plist \
-  > ~/Library/LaunchAgents/com.rtorcato.mac-stats-agent.plist
-launchctl load ~/Library/LaunchAgents/com.rtorcato.mac-stats-agent.plist
+sed "s|__PATH__|$PWD/macos.py|" com.rtorcato.host-monitor.plist \
+  > ~/Library/LaunchAgents/com.rtorcato.host-monitor.plist
+launchctl load ~/Library/LaunchAgents/com.rtorcato.host-monitor.plist
+```
+
+**Linux:**
+
+```sh
+cd esp32-c6-lcd-1.47/apps/host-monitor/agent
+python3 linux.py --selftest     # checks the parsers; runs on any OS
+python3 linux.py                # foreground, port 8787
+```
+
+Keep it running with systemd (runs as `nobody`, `ProtectSystem=strict`):
+
+```sh
+sudo cp host-monitor.service /etc/systemd/system/
+sudo sed -i "s|__PATH__|$PWD/linux.py|" /etc/systemd/system/host-monitor.service
+sudo systemctl enable --now host-monitor
 ```
 
 **2. Allow the board to reach it.** This is the step that will bite you: the
@@ -72,23 +100,72 @@ One host, one port — least privilege, same reasoning as
 [SECURITY.md](../../../SECURITY.md). The panel's `NO AGENT` screen names this
 explicitly, so a fresh install tells you what to do instead of just failing.
 
-**3. Point the firmware at it** if your Mac isn't at the default. Either edit
-`MAC_AGENT_URL` at the top of [`src/main.cpp`](src/main.cpp) or override it in
-`lib/board/secrets.h`:
+**3. Point the firmware at the host.** Override in `lib/board/secrets.h` rather
+than editing the source:
 
 ```c
-#define MAC_AGENT_URL "http://10.0.10.92:8787/stats"
+#define HOST_AGENT_URL "http://10.0.10.92:8787/stats"
 ```
 
 ```sh
-~/.platformio-venv/bin/pio run -e mac-mini -t upload
+~/.platformio-venv/bin/pio run -e host-monitor -t upload
 ```
+
+**One URL is compiled in**, so switching which machine it watches means a
+reflash today. Runtime switching would need the URL in NVS plus a way to set it
+— a config portal, which is real work and not done.
 
 ### Seeing the layout without a working agent
 
 `DEMO_STATS 1` at the top of `src/main.cpp` renders a fixed capture from a real
 M4 mini and skips polling entirely. Useful for checking both orientations before
 the network path works.
+
+### The JSON contract
+
+This is the portable boundary. Any agent serving these keys works with the
+existing firmware:
+
+```json
+{
+  "host": "RT-Mac-Mini-M4", "uptime_s": 427174,
+  "load": [2.07, 2.10, 2.06], "cpu_pct": 19, "mem_pct": 74,
+  "disk_free_gb": 475.1, "disk_total_gb": 994.7,
+  "net_down_bps": 196413.3, "net_up_bps": 4499.1,
+  "top_name": "WindowServer", "top_pct": 41.0, "cpu_temp_c": null
+}
+```
+
+The firmware validates `uptime_s` before trusting any of it, so a 200 from
+something that is not an agent renders as `NO AGENT` rather than as plausible
+zeroes.
+
+`mem_pct` is **used** percent, not free, on both platforms. macOS uses all spare
+RAM for cache and Linux reports the same way, so "free" is always low and means
+nothing; macOS derives it from `vm_stat` and Linux from `MemAvailable`.
+
+`cpu_temp_c` is `null` on both: macOS needs root for `powermetrics`, and Linux
+thermal-zone naming varies too much per board to guess. The panel shows `--`
+rather than reporting a number that might be the wrong sensor.
+
+### What each agent uses
+
+| Stat | macOS | Linux |
+|---|---|---|
+| uptime | `sysctl kern.boottime` | `/proc/uptime` |
+| load | `os.getloadavg()` | `/proc/loadavg` |
+| memory | `vm_stat` | `/proc/meminfo` (`MemAvailable`) |
+| cpu | `ps` aggregate ÷ cores | `/proc/stat` jiffy deltas |
+| disk | `os.statvfs("/")` | `os.statvfs("/")` |
+| net | `netstat -ibn` deltas | `/proc/net/dev` deltas |
+| busiest | `ps -Aro pcpu,comm` | `/proc/<pid>/stat` sampled twice |
+
+The Linux agent reads `/proc` rather than shelling out, so there are no
+per-distribution output-format differences and the parsers stay pure — which is
+why `--selftest` can verify them from a Mac.
+
+**Windows would need a third agent.** `os.getloadavg()` and `os.statvfs()` are
+Unix-only, so it would need WMI or `psutil` rather than a port of either file.
 
 ### Why not the button yet
 

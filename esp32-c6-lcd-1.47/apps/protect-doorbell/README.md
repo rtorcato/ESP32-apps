@@ -44,7 +44,7 @@ ring  → homeassistant/binary_sensor/front_doorbell/state
 
 `PubSubClient` and a 20-line handler replaces a websocket client, a session
 manager, and a binary protocol decoder that you'd be re-fixing after every
-UniFi OS update. Same for a small script on the [mac-mini](../mac-mini/) using
+UniFi OS update. Same for a small script on the [host-monitor](../host-monitor/) using
 `uiprotect` and republishing to MQTT.
 
 Go direct-to-Protect only if you specifically want no broker in the path.

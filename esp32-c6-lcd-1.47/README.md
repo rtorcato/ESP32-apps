@@ -195,7 +195,7 @@ so what you see is what actually fits. New apps should follow
 | [protect-doorbell](apps/protect-doorbell/) | Idea | UniFi Protect ring + motion alerts |
 | [poe-cycle](apps/poe-cycle/) | Idea | Switch port view + power-cycle a wedged PoE device |
 | [desk-clock](apps/desk-clock/) | **Built** (v+h, runtime) | NTP clock + open-meteo weather and forecast |
-| [mac-mini](apps/mac-mini/) | Idea | Mac mini stats + sleep/wake button |
+| [host-monitor](apps/host-monitor/) | **Built** (v+h) | Mac/Linux host stats, two auto-cycling pages |
 | [ticker](apps/ticker/) | Idea | Scrolling stock/crypto price list |
 | [wifi-scanner](apps/wifi-scanner/) | Idea | Live ranked list of nearby APs |
 | [zigbee-hub](apps/zigbee-hub/) | Idea | Read 802.15.4 sensors direct, no hub |

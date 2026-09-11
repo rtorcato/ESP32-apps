@@ -1,0 +1,33 @@
+# systemd unit for the Linux agent -- the counterpart to the macOS LaunchAgent.
+#
+#   sudo cp host-monitor.service /etc/systemd/system/
+#   sudo sed -i "s|__PATH__|$PWD/linux.py|" /etc/systemd/system/host-monitor.service
+#   sudo systemctl enable --now host-monitor
+#   systemctl status host-monitor
+#
+# Runs as nobody, not root: the agent only reads /proc and serves JSON, and
+# nothing it reports needs privileges. If a sleep/shutdown endpoint is ever
+# added, that is the moment to think about privilege -- not before.
+[Unit]
+Description=host-monitor stats agent for the esp32-c6 panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 __PATH__ --port 8787
+Restart=always
+RestartSec=10
+
+User=nobody
+Group=nogroup
+
+# Read-only JSON server: it needs no write access to anything.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/proc
+
+[Install]
+WantedBy=multi-user.target

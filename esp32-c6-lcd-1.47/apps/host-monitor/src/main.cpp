@@ -1,4 +1,8 @@
-// mac-mini: Mac stats panel.
+// host-monitor: stats panel for any machine running one of the agents.
+//
+// Nothing here is OS-specific: it parses a fixed set of JSON keys, so the agent
+// is the only part that knows what a "load average" means on a given platform.
+// See agent/macos.py and agent/linux.py -- the JSON contract is the boundary.
 //
 // Read-only on purpose. The sleep/wake button described in the README is phase
 // two: it needs a token, a bound interface and least privilege, and none of
@@ -12,7 +16,7 @@
 // self-check over the pure formatters and both layouts, and an offline screen
 // that names the likely cause.
 //
-// Needs the agent from apps/mac-mini/agent/ running on the Mac.
+// Needs one of apps/host-monitor/agent/ running on the host being watched.
 #include <board.h>
 #include <ui.h>
 #include <secrets.h>
@@ -24,10 +28,11 @@
 #include <time.h>
 
 // ── config ───────────────────────────────────────────────────────────────
-// Override in secrets.h if the Mac moves. Plain HTTP: it's a read-only LAN
-// endpoint exposing no secrets, and skipping TLS saves ~40KB of heap.
-#ifndef MAC_AGENT_URL
-#define MAC_AGENT_URL "http://10.0.10.92:8787/stats"
+// Which host to watch. Override in secrets.h rather than editing here. Plain
+// HTTP: it's a read-only LAN endpoint exposing no secrets, and skipping TLS
+// saves ~40KB of heap.
+#ifndef HOST_AGENT_URL
+#define HOST_AGENT_URL "http://10.0.10.92:8787/stats"
 #endif
 
 static const uint32_t POLL_MS = 5UL * 1000;        // agent is cheap; 5s feels live
@@ -228,7 +233,7 @@ static void drawPage() {
   char v[24], r[24];
 
   // Header: host plus a reachability dot.
-  snprintf(v, sizeof v, "%c%s", st.valid ? '+' : '-', st.valid ? st.host : "mac-mini");
+  snprintf(v, sizeof v, "%c%s", st.valid ? '+' : '-', st.valid ? st.host : "no host");
   if (strcmp(v, cHost) != 0) {
     strcpy(cHost, v);
     field(L->xHost + 12, L->yHost, 14, 1, uiTheme()->fg, v + 1);
@@ -303,15 +308,15 @@ static void drawNoWifi() {
 static void drawNoAgent() {
   char ip[40], url[40], fails[40];
   snprintf(ip, sizeof ip, "board %s", WiFi.localIP().toString().c_str());
-  snprintf(url, sizeof url, "%.32s", MAC_AGENT_URL);
+  snprintf(url, sizeof url, "%.32s", HOST_AGENT_URL);
   snprintf(fails, sizeof fails, "%u failed polls", st.fails);
   const char *lines[] = {"can't reach the agent",
                          url,
                          ip,
                          fails,
                          "",
-                         "1. is the agent",
-                         "   running on the Mac?",
+                         "1. is an agent running",
+                         "   on the host?",
                          "2. IoT VLAN -> LAN is",
                          "   blocked by default",
                          "   in UniFi. Allow it.",
@@ -340,7 +345,7 @@ static bool fetchStats() {
   HTTPClient http;
   http.setConnectTimeout(4000);
   http.setTimeout(4000);
-  if (!http.begin(client, MAC_AGENT_URL)) return false;
+  if (!http.begin(client, HOST_AGENT_URL)) return false;
 
   int code = http.GET();
   if (code != 200) {
@@ -455,7 +460,7 @@ void setup() {
 
   gfx = boardDisplay();
   gfx->begin();
-  uiBegin(gfx, "macmini");  // its own NVS namespace
+  uiBegin(gfx, "hostmon");  // its own NVS namespace
   syncLayout();
 
   const char *boot[] = {"connecting to wifi", WIFI_SSID, "", "BOOT cycles modes"};
@@ -484,7 +489,7 @@ void setup() {
         196413.3f, 4499.1f, "WindowServer", 41.0f, true, 0, 0};
   Serial.println("DEMO_STATS: rendering a fixed capture, not polling");
 #endif
-  Serial.printf("agent url %s\n", MAC_AGENT_URL);
+  Serial.printf("agent url %s\n", HOST_AGENT_URL);
   Serial.println("selfcheck ok");
 
 #if POWER_SAVE

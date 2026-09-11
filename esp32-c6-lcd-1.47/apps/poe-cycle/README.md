@@ -35,7 +35,7 @@ That shapes the design more than the UI does.
 - **The API key needs write scope**, which means a key that can reconfigure your
   switch is sitting in flash on a desk device. Keep it in `secrets.h` (already
   gitignored), and prefer a **narrow proxy** on the
-  [mac-mini](../mac-mini/) that exposes only `POST /cycle/<allowed-port>` and
+  [host-monitor](../host-monitor/) that exposes only `POST /cycle/<allowed-port>` and
   holds the real key itself. Then a stolen or dumped C6 yields nothing but the
   ability to bounce a port you'd already whitelisted.
 
