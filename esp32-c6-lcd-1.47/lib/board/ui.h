@@ -267,9 +267,12 @@ inline bool uiHandle(UiPress p) {
     return false;
   }
   switch (p) {
-    // Setup is deliberately not handled here: it is app-specific, so the app
-    // checks for it before delegating the rest to uiHandle().
-    case UiPress::Setup:  return false;
+    // Setup falls through to blanking. An app with something to configure
+    // checks for Setup *before* delegating here, so it never reaches this line;
+    // an app without one would otherwise silently lose the gesture -- holding
+    // past 6s would do nothing where holding 3s blanked. Falling back keeps a
+    // long hold meaning "off" everywhere.
+    case UiPress::Setup:
     case UiPress::Blank:  uiSetScreen(false); return false;
     case UiPress::Scheme: uiApply(uidetail::rot, uidetail::scheme + 1, true); return true;
     case UiPress::Rotate: uiApply(uidetail::rot + 1, uidetail::scheme, true); return true;
