@@ -42,6 +42,9 @@ or a browser.
 | [elecrow-rotary-2.1](elecrow-rotary-2.1/) | Owned | 480×480 round RGB ST7701 + cap touch + knob | `hello`, `world-clock` |
 | [elecrow-rotary-1.28](elecrow-rotary-1.28/) | Wishlist | 240×240 round SPI + knob | — |
 
+Not a device: [porsche/](porsche/) holds notes on what an ESP32 can read from a
+Macan over OBD-II, and which gauge to build first.
+
 Purchase links and the cross-device comparison live in [DEVICES.md](DEVICES.md).
 Credential handling on a device that can be stolen is in
 [SECURITY.md](SECURITY.md).
