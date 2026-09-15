@@ -97,9 +97,12 @@ inline Arduino_GFX *boardDisplay() {
   static Arduino_SWSPI spi(GFX_NOT_DEFINED /* DC */, LCD_SPI_CS, LCD_SPI_SCK, LCD_SPI_SDA, GFX_NOT_DEFINED);
   static Arduino_ESP32RGBPanel panel(
       40 /* DE */, 7 /* VSYNC */, 15 /* HSYNC */, 41 /* PCLK */,
-      46 /* R0 */, 3 /* R1 */, 8 /* R2 */, 18 /* R3 */, 17 /* R4 */,
+      // The panel is wired BGR: the factory sketch passed a `bgr = true` flag
+      // that the 1.6 API dropped. Feeding the B pins as R and vice versa is the
+      // same fix with no custom init sequence. (Cyan drew yellow before this.)
+      5 /* R0 = panel B0 */, 45 /* R1 */, 48 /* R2 */, 47 /* R3 */, 21 /* R4 */,
       14 /* G0 */, 13 /* G1 */, 12 /* G2 */, 11 /* G3 */, 10 /* G4 */, 9 /* G5 */,
-      5 /* B0 */, 45 /* B1 */, 48 /* B2 */, 47 /* B3 */, 21 /* B4 */,
+      46 /* B0 = panel R0 */, 3 /* B1 */, 8 /* B2 */, 18 /* B3 */, 17 /* B4 */,
       1 /* hsync_polarity */, 10 /* hsync_front_porch */, 4 /* hsync_pulse_width */, 20 /* hsync_back_porch */,
       1 /* vsync_polarity */, 10 /* vsync_front_porch */, 4 /* vsync_pulse_width */, 20 /* vsync_back_porch */,
       LCD_PCLK_NEG, LCD_PCLK_HZ);
@@ -152,8 +155,9 @@ struct Enc {
 
 // Pure, so the self-check can drive it. cur = (A << 1) | B.
 inline void encFeed(Enc *e, uint8_t cur) {
-  // index = (prev << 2) | cur
-  static const int8_t step[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
+  // index = (prev << 2) | cur. Sign chosen so clockwise counts up on this
+  // knob (checked against the factory sketch and by hand, 2026-09-15).
+  static const int8_t step[16] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
   e->acc += step[(e->last << 2) | cur];
   e->last = cur;
   if (cur == 3 || cur == 0) {  // at a detent: settle the count
@@ -181,20 +185,17 @@ inline void encoderBegin() {
   attachInterrupt(digitalPinToInterrupt(ENC_B), boarddetail::encIsr, CHANGE);
 }
 
-// Detents since boot. Positive = clockwise, if the hardware agrees; hello
-// prints it so the sign can be checked once and fixed here if it's backwards.
+// Detents since boot. Positive = clockwise.
 inline int32_t encoderPosition() { return boarddetail::enc.pos; }
 
 // The decode is the only real logic in this file, so it gets the one check.
-// "Clockwise" here means the table's positive direction; whether that matches
-// the physical knob is what hello's serial log is for.
 inline void encSelfCheck() {
   Enc e;
-  // Two full detents forward: 3 -> 1 -> 0 -> 2 -> 3 (Gray code, one line per edge)
-  for (uint8_t s : {1, 0, 2, 3}) encFeed(&e, s);
-  assert(e.pos == 2);
-  // Back the same way: 3 -> 2 -> 0 -> 1 -> 3
+  // Two full detents clockwise: 3 -> 2 -> 0 -> 1 -> 3 (Gray code, one line per edge)
   for (uint8_t s : {2, 0, 1, 3}) encFeed(&e, s);
+  assert(e.pos == 2);
+  // Back the same way: 3 -> 1 -> 0 -> 2 -> 3
+  for (uint8_t s : {1, 0, 2, 3}) encFeed(&e, s);
   assert(e.pos == 0);
   // A bounce on one line does nothing.
   for (uint8_t s : {2, 3, 2, 3}) encFeed(&e, s);
@@ -203,6 +204,6 @@ inline void encSelfCheck() {
   encFeed(&e, 0);
   assert(e.pos == 0 && e.acc == 0);
   // The 0 rest state is a detent too: one more from here counts.
-  for (uint8_t s : {2, 3}) encFeed(&e, s);
+  for (uint8_t s : {1, 3}) encFeed(&e, s);
   assert(e.pos == 1);
 }

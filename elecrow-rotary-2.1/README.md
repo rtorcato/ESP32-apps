@@ -52,9 +52,15 @@ different board's knob.
 | Signal | GPIO |
 |---|---|
 | RGB DE / VSYNC / HSYNC / PCLK | 40 / 7 / 15 / 41 |
-| R0–R4 | 46, 3, 8, 18, 17 |
+| R0–R4 (panel silkscreen) | 46, 3, 8, 18, 17 |
 | G0–G5 | 14, 13, 12, 11, 10, 9 |
-| B0–B4 | 5, 45, 48, 47, 21 |
+| B0–B4 (panel silkscreen) | 5, 45, 48, 47, 21 |
+
+The panel is wired **BGR**: the factory sketch passed `bgr = true`, a flag the
+Arduino_GFX 1.6 API dropped. `board.h` hands the B pins to the constructor as R
+and vice versa, which is the same fix without a custom init sequence. Before it,
+cyan drew yellow and a green bar looked right — grey and green survive a
+red/blue swap, so test with cyan or yellow, not white.
 | Panel init SPI CS / SCK / SDA | 16 / 2 / 1 |
 | Backlight PWM | 6 |
 | I2C SDA / SCL | 38 / 39 |
@@ -68,6 +74,9 @@ different board's knob.
 | P3 | LCD power |
 | P4 | LCD reset |
 | P5 | knob switch, active low |
+
+Encoder: clockwise counts up with the state table in `board.h`; the switch is
+active-low on the expander and registers a clean ~200ms pulse per click.
 
 RGB timing that works: hsync/vsync polarity 1, porches 10/4/20 front/pulse/back
 on both axes, pixel clock 16MHz **not** inverted. With the clock inverted (what

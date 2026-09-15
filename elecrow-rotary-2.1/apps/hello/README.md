@@ -17,8 +17,10 @@ Verifies six things at once:
   fine and the **text** was noise. Look at the thin strokes. Wrong: flip
   `LCD_PCLK_NEG`; shifted or torn: lower `LCD_PCLK_HZ`.
 - **Backlight PWM** — lit at the factory duty, 204/255.
-- **Encoder** — the cyan number is detents since boot, decoded on interrupts.
-  Serial prints `knob N` on every change.
+- **Encoder** — the cyan number is detents since boot, decoded on interrupts,
+  clockwise up. Serial prints `knob N` on every change.
+- **Colour order** — the number is cyan and the touch dot is yellow on purpose:
+  they swap if red and blue are crossed, which white, grey and green hide.
 - **Knob switch** — the bar turns green while pressed (read through the
   expander, P5).
 - **Touch** — a yellow dot follows the finger; serial prints `touch x,y`.
