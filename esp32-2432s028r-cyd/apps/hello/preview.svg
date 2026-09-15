@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="320" viewBox="0 0 240 320" font-family="monospace">
+  <rect width="240" height="320" fill="#000"/>
+  <rect x="0.5" y="0.5" width="239" height="319" fill="none" stroke="#fff"/>
+  <text x="12" y="38" fill="#fff" font-size="22" font-weight="bold">CYD 2.8</text>
+  <text x="12" y="59" fill="#fff" font-size="15">240x320</text>
+  <text x="12" y="87" fill="#0ff" font-size="15">cyan</text>
+  <text x="80" y="87" fill="#ff0" font-size="15">yellow</text>
+  <text x="12" y="115" fill="#ccc" font-size="15">ldr</text>
+  <text x="80" y="115" fill="#0ff" font-size="15">  12</text>
+  <text x="12" y="139" fill="#ccc" font-size="15">boot</text>
+  <rect x="80" y="124" width="60" height="16" fill="#555"/>
+  <text x="12" y="151" fill="#ff0" font-size="8">118,231  1830,2760</text>
+  <rect x="0.5" y="160.5" width="239" height="139" fill="none" stroke="#555"/>
+  <circle cx="118" cy="231" r="5" fill="#ff0"/>
+  <text x="12" y="313" fill="#ccc" font-size="8">touch inside the box</text>
+</svg>

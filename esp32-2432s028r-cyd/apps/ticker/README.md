@@ -1,4 +1,16 @@
-# ticker — idea
+# ticker — **built** (list + detail)
+
+Built 2026-09-15, first version: the LIST layout with a sparkline on every
+row, tap a row for the stock's own page (chart with previous-close line, day
+and 52-week range bars, PREV / LIST / NEXT buttons), fetches on core 0,
+brightness from the LDR. **Not built yet:** logos, the SD card, the HEATMAP
+layout, and the NVS layout memory -- the design below is the roadmap for those.
+
+```sh
+pio run -e ticker -t upload -t monitor
+./push-config ticker
+```
+
 
 <img src="preview.svg" alt="ticker list layout with logo badges and sparklines" width="240">
 <img src="preview-detail.svg" alt="ticker detail page for one symbol" width="240">

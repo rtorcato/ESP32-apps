@@ -1,142 +1,76 @@
 {
   "_readme": [
-    "Every setting for the CYD ticker app. Edit, then reload it WITHOUT",
-    "recompiling:",
-    "  PLATFORMIO_DATA_DIR=apps/ticker/data pio run -e ticker -t uploadfs",
+    "Every setting for the CYD ticker app. Edit, then push it WITHOUT a rebuild:",
+    "  ./push-config ticker",
     "",
     "Read through the shared appcfg.h loader. Any key may be left out -- the",
     "firmware default applies. A value outside its allowed range is REJECTED and",
-    "named on the serial log, not silently clamped, so a typo tells you about",
-    "itself instead of quietly half-working.",
+    "named on the serial log, not silently clamped.",
     "",
-    "Logo size is NOT here, at either size: the firmware and tools/make-logos.py",
-    "have to agree on 24 and 128. Wi-Fi credentials are not here either, and",
-    "deliberately so -- this file is plain text on a filesystem anyone holding",
-    "the board can dump. See SECURITY.md."
+    "Wi-Fi credentials are not here, deliberately -- this file is plain text on",
+    "a filesystem anyone holding the board can dump. See SECURITY.md."
   ],
 
   "_brightness": [
     "This board has an LDR, so brightness tracks the ROOM rather than the clock.",
-    "That deletes the C6's night.from/night.to pair outright -- and with it the",
-    "bug where night dimming only took effect if somebody pressed a button after",
-    "23:00, because nothing re-evaluated it.",
-    "",
-    "auto         follow the LDR. Set false to pin the backlight at 'max'.",
-    "min, max     the range the LDR maps between, 8-255. The floor is 8 rather",
-    "             than 0 because 0 reads as a dead board.",
-    "closedScale  percent of the computed level to use while the market is shut,",
-    "             10-100. A dark room and a closed market are different reasons",
-    "             to dim, so they are different settings: the rows genuinely do",
-    "             not change between the close and the next open, or at weekends."
+    "auto         follow the LDR. false pins the backlight at 'max'.",
+    "min, max     the range the LDR maps between, 8-255.",
+    "ldrDark      raw LDR reading (0-4095) treated as a fully dark room. The",
+    "             sensor reads near 0 in room light; raise this if the panel",
+    "             never dims, lower it if it dims too early.",
+    "closedScale  percent of the computed level while the market is shut, 10-100."
   ],
-  "brightness": { "auto": true, "min": 20, "max": 220, "closedScale": 60 },
-
-  "_layout": [
-    "Which layout to start in:",
-    "  list     six rows -- logo badge, symbol, sparkline, price, change",
-    "  heatmap  3x4 grid of twelve tiles tinted by the size of the move",
-    "",
-    "A STARTING POINT only. Changing layout on the device is stored in NVS,",
-    "which then wins over this key. The boot log says which is in effect.",
-    "DETAIL is not listed because it is not a layout you start in -- you get",
-    "there by tapping a stock, and leave by tapping LIST."
-  ],
-  "layout": "list",
+  "brightness": { "auto": true, "min": 20, "max": 220, "ldrDark": 3000, "closedScale": 60 },
 
   "_timing": [
     "pageSeconds  how long each page of six rows stays up, 2-600.",
-    "cascadeMs    per-row stagger when a page flips, 0-400. Set 0 for an",
-    "             instant flip; 22 reads as movement and costs nothing extra.",
-    "",
-    "Note the page timer is FROZEN while a touch is held, so a tap can never",
-    "land on one symbol and resolve to the one that replaced it."
+    "cascadeMs    per-row stagger when a page flips, 0-400.",
+    "The page timer is frozen while a finger is down, so a tap can never land",
+    "on one symbol and resolve to the one that replaced it."
   ],
   "timing": { "pageSeconds": 8, "cascadeMs": 22 },
 
   "_sparkline": [
-    "Yahoo's granularity for the intraday series, which is the same request the",
-    "price already comes from -- the series is free, but the PAYLOAD is not.",
-    "",
-    "  5m   ~78 points, ~10-15KB per response. The default.",
-    "  15m  ~26 points, much smaller, visibly coarser shape.",
-    "  30m  ~13 points. For long watchlists on a tight heap.",
-    "",
-    "Whatever this says, parse with a streaming filter over",
-    "indicators.quote[0].close and meta. Never hold the whole document."
+    "Yahoo's granularity for the intraday series -- the same request the price",
+    "comes from, so the series is free but the payload is not.",
+    "  5m  ~79 points, ~8-15KB per response. The default.",
+    "  15m ~26 points.   30m ~13 points, for long lists on a tight heap."
   ],
   "sparkline": { "interval": "5m" },
 
   "_detail": [
-    "The per-stock page, reached by tapping a row or a heatmap tile.",
-    "",
-    "returnSeconds  auto-return to the list after this long, 0-3600. 0 never",
-    "               returns. A panel parked on one stock shows you less than it",
-    "               could.",
-    "refreshOnOpen  jump the tapped symbol to the front of the fetch queue, so",
-    "               a five-minute-old price refreshes while you are looking at",
-    "               it. This is a priority in the existing queue, not an extra",
-    "               request path, and it still obeys the rate floor."
+    "The per-stock page, reached by tapping a row.",
+    "returnSeconds  auto-return to the list after this long, 0-3600; 0 never.",
+    "refreshOnOpen  fetch the tapped symbol next, ahead of the sweep."
   ],
   "detail": { "returnSeconds": 60, "refreshOnOpen": true },
 
-  "_logos": [
-    "rowBadges  draw the 24px logo beside each list row.",
-    "",
-    "The badge is recognition, not identification -- the symbol text stays next",
-    "to it either way. A wordmark is an unreadable smudge at 24px, which is why",
-    "make-logos.py runs its percent-visible check at BOTH sizes and why a",
-    "missing small logo is a non-event rather than an error."
-  ],
-  "logos": { "rowBadges": true },
-
   "_refresh": [
     "Minutes between price refreshes. Stocks cost one HTTPS request EACH; coins",
-    "all travel in a single CoinGecko request and are nearly free.",
-    "",
-    "The fetch loop runs on core 0 so it never stalls the UI -- but fetches stay",
-    "strictly SEQUENTIAL regardless, because each TLS session is ~40KB of a",
-    "520KB heap. Two cores do not buy you two sessions. The floor of roughly one",
-    "request per symbol per minute stands: Yahoo's 429 does not care how many",
-    "cores you have.",
-    "",
-    "openMinutes    while the market is open, 1-240.",
-    "closedMinutes  while it is shut, 1-1440. Hourly is plenty.",
-    "coinMinutes    crypto, 1-240. Never closes, so this stays live overnight."
+    "all travel in one CoinGecko request. Fetches run on core 0 and stay",
+    "strictly sequential: each TLS session is ~40KB of a 320KB heap.",
+    "openMinutes 1-240   closedMinutes 1-1440   coinMinutes 1-240"
   ],
   "refresh": { "openMinutes": 5, "closedMinutes": 60, "coinMinutes": 5 },
 
-  "_timezone": [
-    "POSIX TZ string, used for the clock AND for the market window below.",
-    "Default is US Eastern, which is where the listed exchanges are."
-  ],
+  "_timezone": ["POSIX TZ string, for the clock AND the market window below."],
   "timezone": "EST5EDT,M3.2.0/2,M11.1.0/2",
 
   "_market": [
-    "Trading window as HH:MM, evaluated in the timezone above, Mon-Fri. It",
-    "drives both brightness.closedScale and the refresh interval. Change the",
-    "timezone and you must move these too -- that coupling is why they are",
-    "settings rather than a buried constant. An inverted window is rejected."
+    "Trading window as HH:MM in the timezone above, Mon-Fri. Drives",
+    "brightness.closedScale and the refresh interval. An inverted window is rejected."
   ],
   "market": { "open": "09:30", "close": "16:00" },
 
   "_symbols": [
-    "Six rows show at once in list layout, twelve tiles in heatmap. 32 symbols",
-    "maximum, labels capped at 5 characters because that is the width of the",
-    "symbol box.",
-    "",
-    "stocks  Yahoo symbols.",
-    "coins   CoinGecko ids (the id, not the ticker). Find one at",
-    "        https://api.coingecko.com/api/v3/coins/list",
-    "        The logo fetcher looks coins up by LABEL, which has to be a real",
-    "        ticker for a logo to be found."
+    "Six rows per page, 32 symbols maximum, labels capped at 5 characters.",
+    "stocks  Yahoo symbols.   coins  CoinGecko ids, with a label to show."
   ],
-
   "stocks": [
     "AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD",
     "UI", "RKLB", "SPCX", "ABNB", "LUNR", "PLTR", "PEP", "BNS",
     "SNOW", "HOOD", "SOFI", "JOBY", "ARM", "NET"
   ],
-
   "coins": [
     { "id": "bitcoin", "label": "BTC" },
     { "id": "ethereum", "label": "ETH" },

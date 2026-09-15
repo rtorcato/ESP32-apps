@@ -1,0 +1,17 @@
+{
+  "_readme": [
+    "Settings for the hello smoke test. Push a change to the board with:",
+    "  ./push-config hello",
+    "",
+    "Every key is optional -- delete this file and hello still runs on its",
+    "compiled defaults. Secrets never go in here; see SECURITY.md.",
+    "",
+    "brightness  backlight duty, 8-255.",
+    "tickMs      ms between serial heartbeats / LDR reads, 50-5000.",
+    "touch       raw XPT2046 ADC values at the screen edges, 0-4095. Tune",
+    "            until the dot sits under the stylus in all four corners."
+  ],
+  "brightness": 255,
+  "tickMs": 500,
+  "touch": { "xMin": 200, "xMax": 3700, "yMin": 240, "yMax": 3800 }
+}
