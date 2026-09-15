@@ -76,6 +76,11 @@ inline bool knobPressed() { return !xRead(X_KNOB_SW); }
 // whether the expander acknowledged, which is the first thing to check when the
 // screen stays dark. Call before boardDisplay()->begin().
 inline bool boardBegin() {
+  // Native USB CDC blocks on every print, 100ms at a time, once the host has
+  // opened the port and stopped reading (a closed monitor, a finished script)
+  // -- "host backpressure" in HWCDC.cpp. With a print per encoder click that
+  // turned the knob to treacle. Zero timeout: drop the line, keep the loop.
+  Serial.setTxTimeoutMs(0);
   Wire.begin(I2C_SDA, I2C_SCL);
   bool ok = xWrite(X_LCD_PWR, true);
   delay(100);

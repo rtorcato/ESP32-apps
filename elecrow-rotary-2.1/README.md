@@ -84,6 +84,15 @@ ESPHome's config for this board says) the circle draws fine but text is mangled
 to noise, so a big shape passing is not proof the timing is right — check thin
 strokes. Both knobs are `#define`s at the top of `board.h`.
 
+## Serial gotcha
+
+Native USB CDC on the S3 **blocks on every print, 100ms at a time**, once a
+host has opened the port and stopped reading — a closed monitor, a script that
+exited. HWCDC.cpp calls it host backpressure. `hello` printed a line per
+encoder click, and the knob turned to treacle the moment the logger stopped.
+`boardBegin()` sets `Serial.setTxTimeoutMs(0)` so lines are dropped instead.
+The C6 board has the same USB peripheral and the same exposure.
+
 ## Building
 
 PlatformIO, same pioarduino platform as the C6 project. The board manifest is
