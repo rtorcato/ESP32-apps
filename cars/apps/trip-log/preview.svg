@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240" font-family="Helvetica, Arial, sans-serif"><rect width="320" height="240" fill="#000"/>
+<text x="8" y="14" fill="#bbb" font-size="10" letter-spacing="2">TRIP</text><text x="312" y="14" fill="#2ecc71" font-size="8" text-anchor="end">● SD  trip-0042.csv</text>
+<text x="8" y="34" fill="#888" font-size="8" letter-spacing="1">LIVE</text><text x="8" y="76" fill="#fff" font-size="46" font-weight="bold">7.8</text><text x="100" y="76" fill="#888" font-size="12">L/100km</text>
+<text x="200" y="34" fill="#888" font-size="8" letter-spacing="1">TRIP AVG</text><text x="200" y="62" fill="#fff" font-size="24">9.4</text>
+<text x="264" y="34" fill="#888" font-size="8" letter-spacing="1">TANK AVG</text><text x="264" y="62" fill="#ccc" font-size="24">10.1</text>
+<text x="200" y="80" fill="#666" font-size="8">calibrated ×1.04 at fill-up</text>
+<text x="8" y="100" fill="#888" font-size="7" letter-spacing="1">LAST 20 MIN</text>
+<rect x="8" y="117.6" width="12" height="38.4" fill="#c8102e"/>
+<rect x="23" y="111.2" width="12" height="44.8" fill="#c8102e"/>
+<rect x="38" y="127.2" width="12" height="28.8" fill="#f5a623"/>
+<rect x="53" y="133.6" width="12" height="22.4" fill="#2ecc71"/>
+<rect x="68" y="136.8" width="12" height="19.2" fill="#2ecc71"/>
+<rect x="83" y="136.8" width="12" height="19.2" fill="#2ecc71"/>
+<rect x="98" y="130.4" width="12" height="25.6" fill="#f5a623"/>
+<rect x="113" y="120.8" width="12" height="35.2" fill="#f5a623"/>
+<rect x="128" y="108.0" width="12" height="48.0" fill="#c8102e"/>
+<rect x="143" y="114.4" width="12" height="41.6" fill="#c8102e"/>
+<rect x="158" y="133.6" width="12" height="22.4" fill="#2ecc71"/>
+<rect x="173" y="140.0" width="12" height="16.0" fill="#2ecc71"/>
+<rect x="188" y="140.0" width="12" height="16.0" fill="#2ecc71"/>
+<rect x="203" y="136.8" width="12" height="19.2" fill="#2ecc71"/>
+<rect x="218" y="127.2" width="12" height="28.8" fill="#f5a623"/>
+<rect x="233" y="117.6" width="12" height="38.4" fill="#c8102e"/>
+<rect x="248" y="130.4" width="12" height="25.6" fill="#f5a623"/>
+<rect x="263" y="136.8" width="12" height="19.2" fill="#2ecc71"/>
+<rect x="278" y="133.6" width="12" height="22.4" fill="#2ecc71"/>
+<rect x="293" y="130.4" width="12" height="25.6" fill="#f5a623"/>
+<line x1="8" y1="157" x2="312" y2="157" stroke="#333"/>
+<line x1="8" y1="176" x2="312" y2="176" stroke="#222"/>
+<text x="48" y="192" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">DISTANCE</text><text x="48" y="212" fill="#fff" font-size="15" text-anchor="middle">38.2 km</text>
+<text x="140" y="192" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">FUEL</text><text x="140" y="212" fill="#fff" font-size="15" text-anchor="middle">41 %</text>
+<text x="232" y="192" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">RANGE</text><text x="232" y="212" fill="#fff" font-size="15" text-anchor="middle">~310 km</text>
+<text x="296" y="192" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">TIME</text><text x="296" y="212" fill="#fff" font-size="15" text-anchor="middle">0:41</text>
+<text x="160" y="232" fill="#444" font-size="7" text-anchor="middle">range from your average, not the car's</text>
+</svg>

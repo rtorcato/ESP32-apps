@@ -1,9 +1,8 @@
-# porsche-gauge — idea
+# gauge-cluster — idea
 
 <img src="preview.svg" alt="boost, water and oil dials in a Porsche-style cluster" width="320">
-<img src="preview-warmup.svg" alt="warm-up page: a ring that closes as oil comes up to temperature" width="320">
 
-The [Porsche notes](../../../porsche/README.md) made the case for starting
+The [notes](../../README.md) made the case for starting
 with a BLE ELM327 dongle and standard PIDs. This is that app, on the board
 that suits it best: the CYD has BLE on chip, a second core so the BLE client
 never stalls the needles, runs off the 12V socket over USB, and is cheap
@@ -20,8 +19,7 @@ that is a second version, not the first.
 | Page | What |
 |---|---|
 | **Cluster** | Boost in the centre (MAP − ambient, peak-hold, tap to reset), water and oil temperature tucked behind it the way the real dash overlaps its dials. Battery, intake temperature and RPM along the bottom. |
-| **Warm-up** | One ring that closes as oil reaches 80 °C, with the RPM ceiling to hold until it does. The useful page for a turbo engine on a cold morning. |
-| **Battery** | Rest voltage, cranking dip, charging voltage. The Macan's biggest owner complaint is 12V drain. |
+| **Warm-up** | The [warm-up](../warm-up/) ring, as a page here too. |
 
 Tap anywhere to page. Red zones and the peak marker are drawn from config so
 a 911 and a Macan get their own scales without a rebuild.

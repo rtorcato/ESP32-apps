@@ -1,7 +1,9 @@
 # DIYmalls ESP32-2432S028R — 2.8" "Cheap Yellow Display"
 
-**Status: wishlist.** Pinout below is from community docs, not verified on
-hardware — confirm before writing a `lib/board/board.h`.
+**Status: owned** (bought 2026-09 on amazon.ca, connected 2026-09-15). The
+chip is an ESP32-D0WD-V3 per esptool, USB is a CH340 (`/dev/cu.usbserial-*`),
+and the pinout below is verified on this unit by [`apps/hello`](apps/hello/)
+using [`lib/board/board.h`](lib/board/board.h).
 
 **Buy:** [amazon.ca](https://www.amazon.ca/dp/B0CG2WQGP9) ·
 [amazon.com](https://www.amazon.com/dp/B0CG2WQGP9)
@@ -43,15 +45,30 @@ swipes and useless for pinch. Design chunky targets. And it's the only board her
 that predates Arduino core 3.x requirements, so TFT_eSPI *does* work — much of
 the ecosystem assumes it.
 
+## Toolchain
+
+PlatformIO with the same pioarduino fork as the other boards; one env per app,
+`huge_app.csv` because 4MB. Config lives in `apps/<app>/data/config.json` via
+the C6's shared `appcfg.h` and `./push-config <app>`. The three SPI devices
+are on three separate pin sets: display on HSPI, SD on the VSPI pins, touch
+bit-banged on its own pins.
+
+```sh
+pio run -e hello -t upload -t monitor
+./push-config hello
+```
+
 ## Apps
 
 Each app README has a `preview.svg` wireframe drawn at the panel's real 240×320.
 
 | App | Idea |
 |---|---|
+| [hello](apps/hello/) | **Built.** Smoke test: panel, colour order, touch with raw readout, LED, LDR, BOOT, speaker click |
+| [ticker](apps/ticker/) | **Built** (list + detail). The C6 watchlist with a sparkline per row and tap-to-open pages; fetches on core 0 |
+| [cars/…](../cars/) | The OBD-II apps -- gauge cluster, track page, trip log, code reader -- mostly target this board; they live in `cars/` because the dongle path works from any of them |
 | [touch-dashboard](apps/touch-dashboard/) | Home Assistant / smart-home control panel |
 | [pomodoro](apps/pomodoro/) | Work timer with touch controls and an audible chime |
 | [soundboard](apps/soundboard/) | Tap-to-play sample grid over the speaker header |
 | [sd-file-browser](apps/sd-file-browser/) | Browse and view files on the card |
-| [ticker](apps/ticker/) | The C6 watchlist, with per-row sparklines, a heatmap and tap-to-detail |
 | [bike-buddy](apps/bike-buddy/) | Mountain bike computer: GPS, BLE sensors, offline map, no phone |
