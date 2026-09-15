@@ -2,7 +2,9 @@
 //
 // Turn to move through the zones in config.json; the ring of dots around the
 // edge shows every zone at its UTC offset relative to the one on screen, so
-// the whole ring rotates as you turn. Press to jump home (zone 0). Time comes
+// the whole ring rotates as you turn. Drag a finger to spin the globe freely
+// (the next knob click snaps it back to a city). Press to sleep: backlight
+// off, nothing drawn; any press, turn or touch wakes it. Time comes
 // from NTP once and is kept by the RTC; each zone is rendered by switching the
 // libc TZ, so daylight saving is handled by the POSIX rule string, not by us.
 #include <HTTPClient.h>
@@ -39,6 +41,12 @@ struct Wx {
   int code = -1;
 };
 static Wx wx[MAX_ZONES];
+
+// Finger drag, in degrees of longitude added to the selected city's. Across
+// the whole face is half a turn: 180 / 480 = 0.375 degrees per pixel.
+static float dragLon = 0;
+static const float DRAG_DEG_PER_PX = 0.375f;
+static const int16_t DRAG_MIN_PX = 3;  // ignore jitter smaller than this
 static const uint32_t WX_KEEP_MS = 15UL * 60 * 1000, WX_RETRY_MS = 2UL * 60 * 1000, WX_SETTLE_MS = 1500;
 
 static void defaultZones() {
@@ -175,7 +183,7 @@ static int dotOff[MAX_ZONES];
 // outline so they read on land and sea alike. Drawn last, over the text.
 static void drawCities(time_t now) {
   int16_t x, y;
-  float lon0 = zoneLon(sel, now);
+  float lon0 = zoneLon(sel, now) + dragLon;
   if (sel != 0 && !isnan(zones[0].lat) && globe::project(zones[0].lat, zones[0].lon, lon0, &x, &y)) {
     gfx->fillCircle(x, y, 6, RGB565_BLACK);
     gfx->fillCircle(x, y, 4, RGB565_CYAN);
@@ -392,15 +400,60 @@ void loop() {
 
   time_t now = time(nullptr);
   bool full = false;
+  static bool asleep = false;
+  static int16_t dragX = -1;
+  int16_t tx, ty;
+  bool touching = touchRead(&tx, &ty);
+
   int32_t pos = encoderPosition();
-  if (pos != lastPos) {
+  bool turned = pos != lastPos;
+  bool pressed = knobPressed();
+  bool clicked = pressed && !lastPressed;
+  lastPressed = pressed;
+
+  // Sleep: press toggles it; a turn or a touch also wakes. While asleep the
+  // backlight is off and nothing is drawn, and the wake does a full redraw.
+  if (asleep) {
+    if (clicked || turned || touching) {
+      asleep = false;
+      lastBl = 0;  // forces the backlight back on below
+      full = true;
+      Serial.println("wake");
+    }
+    lastPos = pos;
+    dragX = -1;
+    if (asleep) { delay(20); return; }
+  } else if (clicked) {
+    asleep = true;
+    backlight(0);
+    Serial.println("sleep");
+    delay(20);
+    return;
+  }
+
+  if (turned) {
     sel = (uint8_t)(((int32_t)sel + (pos - lastPos)) % nZones + nZones) % nZones;
     lastPos = pos;
+    dragLon = 0;  // the knob snaps the globe back to a city
     full = true;
+    Serial.printf("zone %u %s\n", sel, zones[sel].name);
   }
-  bool pressed = knobPressed();
-  if (pressed && !lastPressed && sel != 0) { sel = 0; full = true; }
-  lastPressed = pressed;
+
+  // Drag spins the globe under the finger. Absolute positions, so samples
+  // missed during a 130ms render don't lose distance.
+  if (touching) {
+    if (dragX >= 0 && abs(tx - dragX) >= DRAG_MIN_PX) {
+      dragLon -= (tx - dragX) * DRAG_DEG_PER_PX;
+      while (dragLon > 180) dragLon -= 360;
+      while (dragLon < -180) dragLon += 360;
+      dragX = tx;
+      full = true;
+    } else if (dragX < 0) {
+      dragX = tx;
+    }
+  } else {
+    dragX = -1;
+  }
 
   // The terminator moves a pixel every few minutes; re-render on the minute,
   // which is when the digits change anyway.
@@ -409,13 +462,11 @@ void loop() {
   int minute = (int)(now / 60);
   if (!shown || minute != lastMinute) { full = true; shown = true; lastMinute = minute; }
   if (full) {
-    uint32_t t0 = millis();
-    globe::render(zoneLon(sel, now), now);
+    globe::render(zoneLon(sel, now) + dragLon, now);
     globe::blit(gfx);
     drawRing(now);
     drawZone(now, true);
     drawCities(now);
-    Serial.printf("zone %u %s, redraw %lums\n", sel, zones[sel].name, millis() - t0);
     lastSec = (uint32_t)now;
     lastTurn = millis();
   } else if ((uint32_t)now != lastSec) {
@@ -441,5 +492,6 @@ void loop() {
     uint8_t bl = isNight(h.tm_hour) ? blNight : blDay;
     if (bl != lastBl) { backlight(bl); lastBl = bl; }
   }
+  if (touching) return;  // no 10ms nap mid-drag
   delay(10);
 }
