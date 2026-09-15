@@ -39,7 +39,7 @@ or a browser.
 | [esp32-c6-lcd-1.47](esp32-c6-lcd-1.47/) | Owned | 172×320 SPI ST7789 | `hello` |
 | [esp32-2432s028r-cyd](esp32-2432s028r-cyd/) | Wishlist | 240×320 SPI ILI9341 + resistive touch | — |
 | [esp32-s3-touch-lcd-7](esp32-s3-touch-lcd-7/) | Wishlist | 800×480 RGB parallel + cap touch | — |
-| [elecrow-rotary-2.1](elecrow-rotary-2.1/) | Owned | 480×480 round RGB ST7701 + cap touch + knob | `hello` |
+| [elecrow-rotary-2.1](elecrow-rotary-2.1/) | Owned | 480×480 round RGB ST7701 + cap touch + knob | `hello`, `world-clock` |
 | [elecrow-rotary-1.28](elecrow-rotary-1.28/) | Wishlist | 240×240 round SPI + knob | — |
 
 Purchase links and the cross-device comparison live in [DEVICES.md](DEVICES.md).

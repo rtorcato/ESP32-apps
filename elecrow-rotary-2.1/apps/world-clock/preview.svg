@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" role="img" aria-label="world clock: city name, large time, seconds, date, UTC offset, and a ring of zone dots rotated so the selected zone is at the top">
+  <!-- 480x480 round. Mirrors apps/world-clock/src/main.cpp: built-in font is
+       6*size x 8*size per glyph, so every text box is the real erase rect. -->
+  <defs><clipPath id="round"><circle cx="240" cy="240" r="240"/></clipPath></defs>
+  <rect width="480" height="480" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="480" height="480" fill="#000"/>
+    <!-- ring at r=222; a dot per zone at 15 degrees per hour of offset from the selected one -->
+    <circle cx="240" cy="240" r="222" fill="none" stroke="#404040" stroke-width="1"/>
+    <!-- TOKYO selected (UTC+9). From Tokyo: Toronto -13h (home, cyan), Vancouver -16h,
+         London -8h, Paris -7h, Dubai -5h, Mumbai -3.5h, Sydney +2h -->
+    <circle cx="240" cy="18" r="9" fill="#ff0"/>
+    <circle cx="26" cy="291" r="6" fill="#0ff"/>
+    <circle cx="86" cy="86" r="6" fill="#404040"/>
+    <circle cx="18" cy="240" r="6" fill="#404040"/>
+    <circle cx="26" cy="189" r="6" fill="#404040"/>
+    <circle cx="67" cy="107" r="6" fill="#404040"/>
+    <circle cx="124" cy="45" r="6" fill="#404040"/>
+    <circle cx="351" cy="48" r="6" fill="#404040"/>
+    <!-- size 4 = 24x32, 12 chars centred -->
+    <text x="96" y="112" font-family="monospace" font-size="32" fill="#ff0" textLength="288" lengthAdjust="spacing" xml:space="preserve">   TOKYO    </text>
+    <!-- size 8 = 48x64: the time. Cool blue = night in that zone -->
+    <text x="120" y="216" font-family="monospace" font-size="64" fill="#7896ff" textLength="240" lengthAdjust="spacing">03:41</text>
+    <!-- size 3 = 18x24: seconds -->
+    <text x="222" y="257" font-family="monospace" font-size="24" fill="#404040" textLength="36" lengthAdjust="spacing">17</text>
+    <!-- size 3, 10 chars: date -->
+    <text x="150" y="305" font-family="monospace" font-size="24" fill="#c0c0c0" textLength="180" lengthAdjust="spacing">Wed 16 Sep</text>
+    <!-- size 2 = 12x16, 22 chars: offset line -->
+    <text x="108" y="350" font-family="monospace" font-size="16" fill="#c0c0c0" textLength="264" lengthAdjust="spacing" xml:space="preserve">   UTC+9  HOME+13h    </text>
+  </g>
+</svg>

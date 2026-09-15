@@ -113,6 +113,7 @@ clipped to the circle so the unusable corners are visible.
 | App | Idea |
 |---|---|
 | [hello](apps/hello/) | **Built.** Smoke test: expander, panel timing, backlight, encoder, switch, touch |
+| [world-clock](apps/world-clock/) | **Built.** Turn to spin the globe, one city per screen, press for home |
 | [thermostat](apps/thermostat/) | Nest-style dial — the natural fit |
 | [media-knob](apps/media-knob/) | BLE HID volume/transport control for the desktop |
 | [light-dimmer](apps/light-dimmer/) | Turn-to-dim, press-to-toggle smart light control |

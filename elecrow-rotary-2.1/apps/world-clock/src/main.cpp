@@ -1,0 +1,297 @@
+// World clock: one city per screen, the knob spins the globe.
+//
+// Turn to move through the zones in config.json; the ring of dots around the
+// edge shows every zone at its UTC offset relative to the one on screen, so
+// the whole ring rotates as you turn. Press to jump home (zone 0). Time comes
+// from NTP once and is kept by the RTC; each zone is rendered by switching the
+// libc TZ, so daylight saving is handled by the POSIX rule string, not by us.
+#include <appcfg.h>
+#include <board.h>
+#include <netjoin.h>
+#include <secrets.h>
+#include <time.h>
+
+static Arduino_GFX *gfx;
+
+// ── config ────────────────────────────────────────────────────────────────
+#define MAX_ZONES 16
+#define NAME_CHARS 12  // width of the city box at size 4: 12 * 24 = 288px
+struct Zone {
+  char name[NAME_CHARS + 1];
+  char tz[64];
+};
+static Zone zones[MAX_ZONES];
+static uint8_t nZones = 0;
+static bool hour24 = true;
+static uint8_t blDay = 204, blNight = 60, nightFrom = 23, nightTo = 7;
+
+static void defaultZones() {
+  static const Zone d[] = {
+      {"TORONTO", "EST5EDT,M3.2.0/2,M11.1.0/2"},  {"VANCOUVER", "PST8PDT,M3.2.0/2,M11.1.0/2"},
+      {"LONDON", "GMT0BST,M3.5.0/1,M10.5.0"},      {"PARIS", "CET-1CEST,M3.5.0,M10.5.0/3"},
+      {"DUBAI", "<+04>-4"},                         {"MUMBAI", "IST-5:30"},
+      {"TOKYO", "JST-9"},                           {"SYDNEY", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+  };
+  nZones = sizeof d / sizeof d[0];
+  memcpy(zones, d, sizeof d);
+}
+
+// ── time maths ────────────────────────────────────────────────────────────
+// Local wall time in a zone. Switching TZ per call is cheap (tzset parses a
+// short string) and means DST rules live in the config, not in code.
+static void zoneLocal(const char *tz, time_t t, struct tm *out) {
+  setenv("TZ", tz, 1);
+  tzset();
+  localtime_r(&t, out);
+}
+
+// Days since 1970-01-01 for a civil date (Howard Hinnant's algorithm).
+static int32_t daysFromCivil(int y, int m, int d) {
+  y -= m <= 2;
+  int32_t era = (y >= 0 ? y : y - 399) / 400;
+  uint32_t yoe = (uint32_t)(y - era * 400);
+  uint32_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t)doe - 719468;
+}
+
+// UTC offset of a zone at instant t, in minutes. Derived from the wall clock
+// rather than tm_gmtoff, which newlib does not reliably provide.
+static int offsetMin(const char *tz, time_t t) {
+  struct tm lt;
+  zoneLocal(tz, t, &lt);
+  int64_t local = (int64_t)daysFromCivil(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday) * 86400 +
+                  lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
+  return (int)((local - (int64_t)t) / 60);
+}
+
+// Where a zone sits on the ring when `sel` is on screen (top): 15 degrees per
+// hour of offset difference, clockwise for zones ahead of the selected one.
+static float ringAngle(int offMin, int selOffMin) { return (offMin - selOffMin) * (360.0f / 1440.0f); }
+
+// Pads s to exactly n chars, centred, so a fixed-width field erases cleanly.
+static void centre(char *out, size_t n, const char *s) {
+  size_t len = strlen(s);
+  if (len > n) len = n;
+  size_t left = (n - len) / 2;
+  memset(out, ' ', n);
+  memcpy(out + left, s, len);
+  out[n] = '\0';
+}
+
+static void selfCheck() {
+  // 2026-01-15 12:00 UTC and 2026-07-15 12:00 UTC: one side of DST each.
+  const time_t jan = 1768478400, jul = 1784116800;
+  struct tm t;
+  zoneLocal("EST5EDT,M3.2.0/2,M11.1.0/2", jan, &t); assert(t.tm_hour == 7);
+  zoneLocal("EST5EDT,M3.2.0/2,M11.1.0/2", jul, &t); assert(t.tm_hour == 8);
+  zoneLocal("GMT0BST,M3.5.0/1,M10.5.0", jan, &t);   assert(t.tm_hour == 12);
+  zoneLocal("GMT0BST,M3.5.0/1,M10.5.0", jul, &t);   assert(t.tm_hour == 13);
+  zoneLocal("JST-9", jan, &t);                      assert(t.tm_hour == 21);
+  zoneLocal("IST-5:30", jan, &t);                   assert(t.tm_hour == 17 && t.tm_min == 30);
+  zoneLocal("AEST-10AEDT,M10.1.0,M4.1.0/3", jan, &t); assert(t.tm_hour == 23);
+  zoneLocal("<+04>-4", jan, &t);                    assert(t.tm_hour == 16);
+
+  assert(daysFromCivil(1970, 1, 1) == 0);
+  assert(daysFromCivil(2000, 3, 1) == 11017);
+  assert(daysFromCivil(2026, 1, 15) == jan / 86400);
+  assert(offsetMin("EST5EDT,M3.2.0/2,M11.1.0/2", jan) == -300);
+  assert(offsetMin("EST5EDT,M3.2.0/2,M11.1.0/2", jul) == -240);
+  assert(offsetMin("IST-5:30", jan) == 330);
+  assert(offsetMin("<+04>-4", jan) == 240);
+
+  assert(ringAngle(540, -300) == 210.0f);   // Tokyo seen from Toronto in winter
+  assert(ringAngle(-300, -300) == 0.0f);
+  assert(ringAngle(-480, -300) == -45.0f);  // Vancouver: 3h behind, anticlockwise
+
+  char b[NAME_CHARS + 1];
+  centre(b, NAME_CHARS, "TOKYO");  assert(!strcmp(b, "   TOKYO    "));
+  centre(b, NAME_CHARS, "");       assert(!strcmp(b, "            "));
+  centre(b, 4, "TOOLONGNAME");     assert(!strcmp(b, "TOOL"));
+}
+
+// ── drawing ───────────────────────────────────────────────────────────────
+// Built-in font: 6*size x 8*size per glyph, so each field is an exact box.
+static void field(int16_t x, int16_t y, uint8_t size, uint8_t chars, uint16_t fg, const char *s) {
+  gfx->fillRect(x, y, 6 * size * chars, 8 * size, RGB565_BLACK);
+  gfx->setTextSize(size);
+  gfx->setTextColor(fg);
+  gfx->setCursor(x, y);
+  gfx->print(s);
+}
+
+static const int16_t CX = 240, CY = 240, RING_R = 222, DOT_R = 6;
+static uint8_t sel = 0;
+static int dotOff[MAX_ZONES];  // offsets at last ring draw, so dots can be erased
+
+static void dotAt(float deg, int16_t r, uint16_t c) {
+  float a = (deg - 90.0f) * (float)M_PI / 180.0f;
+  gfx->fillCircle(CX + (int16_t)lroundf(RING_R * cosf(a)), CY + (int16_t)lroundf(RING_R * sinf(a)), r, c);
+}
+
+static void drawRing(time_t now, bool erase) {
+  int selOff = offsetMin(zones[sel].tz, now);
+  if (erase)
+    for (uint8_t i = 0; i < nZones; i++) dotAt(ringAngle(dotOff[i], dotOff[sel]), DOT_R + 3, RGB565_BLACK);
+  gfx->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
+  for (uint8_t i = 0; i < nZones; i++) dotOff[i] = offsetMin(zones[i].tz, now);
+  for (uint8_t i = 0; i < nZones; i++)
+    if (i != sel) dotAt(ringAngle(dotOff[i], selOff), DOT_R, i == 0 ? RGB565_CYAN : RGB565_DARKGREY);
+  dotAt(0, DOT_R + 3, RGB565_YELLOW);  // the selected zone, always at the top
+}
+
+static bool isNight(int hour) {
+  return nightFrom > nightTo ? (hour >= nightFrom || hour < nightTo) : (hour >= nightFrom && hour < nightTo);
+}
+
+static void drawZone(time_t now, bool full) {
+  static int lastMin = -1, lastDay = -1;
+  struct tm t;
+  zoneLocal(zones[sel].tz, now, &t);
+  char b[32], c[NAME_CHARS + 1];
+  // Night in the zone on screen: cool digits, so 03:00 somewhere reads as night
+  // even when it's afternoon here.
+  uint16_t digits = isNight(t.tm_hour) ? RGB565(120, 150, 255) : RGB565_WHITE;
+
+  if (full) {
+    centre(c, NAME_CHARS, zones[sel].name);
+    field(96, 84, 4, NAME_CHARS, RGB565_YELLOW, c);
+    int off = offsetMin(zones[sel].tz, now), home = offsetMin(zones[0].tz, now), d = off - home;
+    char utc[12], vs[16];
+    snprintf(utc, sizeof utc, "UTC%+d", off / 60);
+    if (off % 60) snprintf(utc, sizeof utc, "UTC%+d:%02d", off / 60, abs(off % 60));
+    if (sel == 0) snprintf(vs, sizeof vs, "HOME");
+    else if (d % 60) snprintf(vs, sizeof vs, "HOME%+d:%02dh", d / 60, abs(d % 60));
+    else snprintf(vs, sizeof vs, "HOME%+dh", d / 60);
+    snprintf(b, sizeof b, "%s  %s", utc, vs);
+    char line[23];
+    centre(line, 22, b);
+    field(108, 336, 2, 22, RGB565_LIGHTGREY, line);
+    lastMin = lastDay = -1;
+  }
+  if (t.tm_min != lastMin) {
+    int h = hour24 ? t.tm_hour : (t.tm_hour % 12 == 0 ? 12 : t.tm_hour % 12);
+    snprintf(b, sizeof b, "%02d:%02d", h, t.tm_min);
+    field(120, 160, 8, 5, digits, b);
+    if (!hour24) field(372, 208, 2, 2, digits, t.tm_hour < 12 ? "AM" : "PM");
+    lastMin = t.tm_min;
+  }
+  snprintf(b, sizeof b, "%02d", t.tm_sec);
+  field(222, 236, 3, 2, RGB565_DARKGREY, b);
+  if (t.tm_yday != lastDay) {
+    strftime(b, sizeof b, "%a %d %b", &t);
+    char line[11];
+    centre(line, 10, b);
+    field(150, 284, 3, 10, RGB565_LIGHTGREY, line);
+    lastDay = t.tm_yday;
+  }
+}
+
+static void drawWaiting(const char *why) {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
+  field(150, 200, 3, 10, RGB565_YELLOW, " NO TIME  ");
+  char line[23];
+  centre(line, 22, why);
+  field(108, 250, 2, 22, RGB565_LIGHTGREY, line);
+}
+
+// ── setup / loop ──────────────────────────────────────────────────────────
+static void loadConfig() {
+  defaultZones();
+  if (!cfgLoad()) return;
+  hour24 = cfgBool("hour24", hour24);
+  blDay = (uint8_t)cfgInt("brightness.day", blDay, 8, 255);
+  blNight = (uint8_t)cfgInt("brightness.night", blNight, 8, 255);
+  nightFrom = (uint8_t)cfgInt("night.from", nightFrom, 0, 23);
+  nightTo = (uint8_t)cfgInt("night.to", nightTo, 0, 23);
+  uint8_t n = 0;
+  for (JsonVariant v : cfgArr("zones")) {
+    if (n >= MAX_ZONES) { Serial.printf("config zones: more than %d, rest ignored\n", MAX_ZONES); break; }
+    const char *name = v["name"] | (const char *)nullptr;
+    const char *tz = v["tz"] | (const char *)nullptr;
+    if (!name || !*name || !tz || !*tz) { Serial.printf("config zones[%u]: needs name and tz, skipped\n", n); continue; }
+    snprintf(zones[n].name, sizeof zones[n].name, "%s", name);
+    snprintf(zones[n].tz, sizeof zones[n].tz, "%s", tz);
+    n++;
+  }
+  if (n) nZones = n;  // a present but empty list keeps the defaults
+  cfgRelease();
+}
+
+static bool haveTime() { return time(nullptr) > 1700000000; }
+
+void setup() {
+  Serial.begin(115200);
+  bool xok = boardBegin();
+  gfx = boardDisplay();
+  gfx->begin();
+  cfgSelfCheck();
+  selfCheck();
+  loadConfig();
+  Serial.printf("pcf8574 %s, %u zones, home %s\n", xok ? "OK" : "MISSING", nZones, zones[0].name);
+
+  drawWaiting("joining wifi");
+  backlight(blDay);
+  encoderBegin();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  netTune();
+  netJoinBest(WIFI_SSID, WIFI_PASS);
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC; zones are applied per draw
+}
+
+void loop() {
+  static int32_t lastPos = 0;
+  static bool lastPressed = false, shown = false;
+  static uint32_t lastJoin = 0, lastSec = 0;
+  static uint16_t retries = 0;
+  static uint8_t lastBl = 0;
+
+  if (!haveTime()) {
+    if (WiFi.status() != WL_CONNECTED && millis() - lastJoin > netRetryDelay(retries)) {
+      lastJoin = millis();
+      retries++;
+      netJoinBest(WIFI_SSID, WIFI_PASS);
+      drawWaiting("joining wifi");
+    } else if (WiFi.status() == WL_CONNECTED && !shown) {
+      drawWaiting("waiting for ntp");
+      shown = true;
+    }
+    delay(100);
+    return;
+  }
+
+  time_t now = time(nullptr);
+  bool full = false;
+  int32_t pos = encoderPosition();
+  if (pos != lastPos) {
+    sel = (uint8_t)(((int32_t)sel + (pos - lastPos)) % nZones + nZones) % nZones;
+    lastPos = pos;
+    full = true;
+  }
+  bool pressed = knobPressed();
+  if (pressed && !lastPressed && sel != 0) { sel = 0; full = true; }
+  lastPressed = pressed;
+
+  if (full || !shown || shown == false) {
+    if (!shown || shown == false) { gfx->fillScreen(RGB565_BLACK); shown = true; full = true; lastSec = 0; }
+  }
+  if (full) {
+    drawRing(now, true);
+    drawZone(now, true);
+    Serial.printf("zone %u %s\n", sel, zones[sel].name);
+    lastSec = (uint32_t)now;
+  } else if ((uint32_t)now != lastSec) {
+    drawZone(now, false);
+    lastSec = (uint32_t)now;
+    // Backlight follows HOME's night window, not the zone on screen.
+    struct tm h;
+    zoneLocal(zones[0].tz, now, &h);
+    uint8_t bl = isNight(h.tm_hour) ? blNight : blDay;
+    if (bl != lastBl) { backlight(bl); lastBl = bl; }
+  }
+  delay(10);
+}

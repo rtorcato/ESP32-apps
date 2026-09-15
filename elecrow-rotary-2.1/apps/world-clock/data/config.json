@@ -1,0 +1,31 @@
+{
+  "_readme": [
+    "Settings for world-clock. Push a change to the board with:",
+    "  ./push-config world-clock",
+    "",
+    "Every key is optional -- delete this file and the app runs on its compiled",
+    "defaults (the eight zones below, Toronto home). Wi-Fi credentials are NOT",
+    "here: they live in lib/board/secrets.h, gitignored and compiled in.",
+    "",
+    "zones      first entry is HOME (press the knob to jump to it). name is at",
+    "           most 12 chars, uppercase reads best. tz is a POSIX TZ string --",
+    "           the same format as desk-clock's timezone -- so DST rules travel",
+    "           with the config. Up to 16 zones.",
+    "hour24     false for 12-hour with AM/PM.",
+    "brightness day/night backlight duty, 8-255. Night is judged by HOME's clock.",
+    "night      hours (0-23) the night brightness applies; wraps midnight."
+  ],
+  "zones": [
+    { "name": "TORONTO",   "tz": "EST5EDT,M3.2.0/2,M11.1.0/2" },
+    { "name": "VANCOUVER", "tz": "PST8PDT,M3.2.0/2,M11.1.0/2" },
+    { "name": "LONDON",    "tz": "GMT0BST,M3.5.0/1,M10.5.0" },
+    { "name": "PARIS",     "tz": "CET-1CEST,M3.5.0,M10.5.0/3" },
+    { "name": "DUBAI",     "tz": "<+04>-4" },
+    { "name": "MUMBAI",    "tz": "IST-5:30" },
+    { "name": "TOKYO",     "tz": "JST-9" },
+    { "name": "SYDNEY",    "tz": "AEST-10AEDT,M10.1.0,M4.1.0/3" }
+  ],
+  "hour24": true,
+  "brightness": { "day": 204, "night": 60 },
+  "night": { "from": 23, "to": 7 }
+}
