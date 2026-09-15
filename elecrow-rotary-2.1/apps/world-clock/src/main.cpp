@@ -5,6 +5,7 @@
 // the whole ring rotates as you turn. Press to jump home (zone 0). Time comes
 // from NTP once and is kept by the RTC; each zone is rendered by switching the
 // libc TZ, so daylight saving is handled by the POSIX rule string, not by us.
+#include <HTTPClient.h>
 #include <appcfg.h>
 #include <board.h>
 #include <netjoin.h>
@@ -21,13 +22,24 @@ static Arduino_GFX *gfx;
 struct Zone {
   char name[NAME_CHARS + 1];
   char tz[64];
-  float lat, lon;  // where the city dot goes on the globe
+  float lat, lon;  // where the city dot goes on the globe; NAN if the config gave none
 };
 static Zone zones[MAX_ZONES];
 static uint8_t nZones = 0;
 static bool hour24 = true;
 static uint8_t blDay = 204, blNight = 60, nightFrom = 23, nightTo = 7;
 static float globeTilt = 30.0f;
+static bool fahrenheit = false;
+
+// Current weather per zone from open-meteo, fetched when a zone has been
+// selected for a moment (so spinning past it costs nothing) and kept 15 min.
+struct Wx {
+  uint32_t at = 0;  // millis() of the last fetch, 0 = never
+  float temp = 0;
+  int code = -1;
+};
+static Wx wx[MAX_ZONES];
+static const uint32_t WX_KEEP_MS = 15UL * 60 * 1000, WX_RETRY_MS = 2UL * 60 * 1000, WX_SETTLE_MS = 1500;
 
 static void defaultZones() {
   static const Zone d[] = {
@@ -73,6 +85,30 @@ static int offsetMin(const char *tz, time_t t) {
   return (int)((local - (int64_t)t) / 60);
 }
 
+// Longitude the globe turns to for a zone: the city's if the config gave one,
+// else the meridian its UTC offset implies. Keeps the globe turning for a
+// zone list with no coordinates, which is exactly what a first config looks
+// like.
+static float zoneLon(uint8_t i, time_t now) {
+  return isnan(zones[i].lon) ? offsetMin(zones[i].tz, now) / 4.0f : zones[i].lon;
+}
+
+static const char *wmoLabel(int code) {
+  switch (code) {
+    case 0:  return "clear";
+    case 1:  case 2:  return "partly";
+    case 3:  return "cloudy";
+    case 45: case 48: return "fog";
+    case 51: case 53: case 55: return "drizzle";
+    case 56: case 57: case 66: case 67: return "sleet";
+    case 61: case 63: case 65: return "rain";
+    case 71: case 73: case 75: case 77: case 85: case 86: return "snow";
+    case 80: case 81: case 82: return "showers";
+    case 95: case 96: case 99: return "storm";
+    default: return "?";
+  }
+}
+
 // Where a zone sits on the ring when `sel` is on screen (top): 15 degrees per
 // hour of offset difference, clockwise for zones ahead of the selected one.
 static float ringAngle(int offMin, int selOffMin) { return (offMin - selOffMin) * (360.0f / 1440.0f); }
@@ -108,6 +144,8 @@ static void selfCheck() {
   assert(offsetMin("IST-5:30", jan) == 330);
   assert(offsetMin("<+04>-4", jan) == 240);
 
+  assert(!strcmp(wmoLabel(0), "clear") && !strcmp(wmoLabel(63), "rain") && !strcmp(wmoLabel(42), "?"));
+
   assert(ringAngle(540, -300) == 210.0f);   // Tokyo seen from Toronto in winter
   assert(ringAngle(-300, -300) == 0.0f);
   assert(ringAngle(-480, -300) == -45.0f);  // Vancouver: 3h behind, anticlockwise
@@ -135,14 +173,14 @@ static int dotOff[MAX_ZONES];
 
 // City dots on the globe: selected in yellow, home in cyan, each with a dark
 // outline so they read on land and sea alike. Drawn last, over the text.
-static void drawCities() {
+static void drawCities(time_t now) {
   int16_t x, y;
-  float lon0 = zones[sel].lon;
-  if (sel != 0 && globe::project(zones[0].lat, zones[0].lon, lon0, &x, &y)) {
+  float lon0 = zoneLon(sel, now);
+  if (sel != 0 && !isnan(zones[0].lat) && globe::project(zones[0].lat, zones[0].lon, lon0, &x, &y)) {
     gfx->fillCircle(x, y, 6, RGB565_BLACK);
     gfx->fillCircle(x, y, 4, RGB565_CYAN);
   }
-  if (globe::project(zones[sel].lat, zones[sel].lon, lon0, &x, &y)) {
+  if (!isnan(zones[sel].lat) && globe::project(zones[sel].lat, zones[sel].lon, lon0, &x, &y)) {
     gfx->fillCircle(x, y, 7, RGB565_BLACK);
     gfx->fillCircle(x, y, 5, RGB565_YELLOW);
   }
@@ -160,6 +198,17 @@ static void drawRing(time_t now) {
   for (uint8_t i = 0; i < nZones; i++)
     if (i != sel) dotAt(ringAngle(dotOff[i], selOff), DOT_R, i == 0 ? RGB565_CYAN : RGB565_DARKGREY);
   dotAt(0, DOT_R + 3, RGB565_YELLOW);  // the selected zone, always at the top
+}
+
+// Weather line under the offset: "22C rain", blank until fetched or when the
+// zone has no coordinates to ask about.
+static void drawWeather() {
+  char b[24], line[17];
+  if (isnan(zones[sel].lat)) b[0] = '\0';
+  else if (wx[sel].code < 0) snprintf(b, sizeof b, "%s", wx[sel].at ? "no weather" : "weather...");
+  else snprintf(b, sizeof b, "%d%c %s", (int)lroundf(wx[sel].temp), fahrenheit ? 'F' : 'C', wmoLabel(wx[sel].code));
+  centre(line, 16, b);
+  field(96, 372, 3, 16, wx[sel].code < 0 ? RGB565_DARKGREY : RGB565_WHITE, line);
 }
 
 static bool isNight(int hour) {
@@ -189,6 +238,7 @@ static void drawZone(time_t now, bool full) {
     char line[23];
     centre(line, 22, b);
     field(108, 336, 2, 22, RGB565_LIGHTGREY, line);
+    drawWeather();
     lastMin = lastDay = -1;
   }
   if (t.tm_min != lastMin) {
@@ -230,6 +280,11 @@ static void loadConfig() {
   nightFrom = (uint8_t)cfgInt("night.from", nightFrom, 0, 23);
   nightTo = (uint8_t)cfgInt("night.to", nightTo, 0, 23);
   globeTilt = cfgFloat("globe.tilt", globeTilt, -60.0f, 60.0f);
+  char units[12] = "metric";
+  if (cfgStr("units", units, sizeof units)) {
+    if (!strcmp(units, "imperial")) fahrenheit = true;
+    else if (strcmp(units, "metric")) Serial.printf("config units: '%s' is not metric/imperial, keeping metric\n", units);
+  }
   uint8_t n = 0;
   for (JsonVariant v : cfgArr("zones")) {
     if (n >= MAX_ZONES) { Serial.printf("config zones: more than %d, rest ignored\n", MAX_ZONES); break; }
@@ -238,11 +293,12 @@ static void loadConfig() {
     if (!name || !*name || !tz || !*tz) { Serial.printf("config zones[%u]: needs name and tz, skipped\n", n); continue; }
     snprintf(zones[n].name, sizeof zones[n].name, "%s", name);
     snprintf(zones[n].tz, sizeof zones[n].tz, "%s", tz);
-    zones[n].lat = v["lat"] | 0.0f;
-    zones[n].lon = v["lon"] | 0.0f;
-    if (zones[n].lat < -90 || zones[n].lat > 90 || zones[n].lon < -180 || zones[n].lon > 180) {
-      Serial.printf("config zones[%u]: lat/lon out of range, dot at 0,0\n", n);
-      zones[n].lat = zones[n].lon = 0;
+    zones[n].lat = zones[n].lon = NAN;
+    if (v["lat"].is<float>() && v["lon"].is<float>()) {
+      float la = v["lat"].as<float>(), lo = v["lon"].as<float>();
+      if (la < -90 || la > 90 || lo < -180 || lo > 180)
+        Serial.printf("config zones[%u]: lat/lon out of range, no dot and no weather\n", n);
+      else { zones[n].lat = la; zones[n].lon = lo; }
     }
     n++;
   }
@@ -251,6 +307,40 @@ static void loadConfig() {
 }
 
 static bool haveTime() { return time(nullptr) > 1700000000; }
+
+// Blocking, ~1-2s for the TLS handshake. Fine: it only runs once a zone has
+// sat selected for WX_SETTLE_MS, and the encoder keeps counting on interrupts
+// underneath it. Same request shape and the same filter-and-validate rules as
+// desk-clock's fetchWeather().
+static bool fetchWeather(uint8_t z) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  NetworkClientSecure client;
+  client.setInsecure();  // public read-only API; nothing secret in the request
+  char url[200];
+  snprintf(url, sizeof url,
+           "https://api.open-meteo.com/v1/forecast?latitude=%.3f&longitude=%.3f&current=temperature_2m,weather_code%s",
+           zones[z].lat, zones[z].lon, fahrenheit ? "&temperature_unit=fahrenheit" : "");
+  HTTPClient http;
+  http.setTimeout(5000);
+  if (!http.begin(client, url)) return false;
+  int status = http.GET();
+  if (status != 200) { Serial.printf("wx %s: http %d\n", zones[z].name, status); http.end(); return false; }
+  String body = http.getString();
+  http.end();
+  JsonDocument filter, doc;
+  filter["current"]["temperature_2m"] = true;
+  filter["current"]["weather_code"] = true;
+  DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
+  if (err || !doc["current"]["weather_code"].is<int>() || !doc["current"]["temperature_2m"].is<float>()) {
+    Serial.printf("wx %s: bad payload (%s) body[0..160]: %s\n", zones[z].name, err ? err.c_str() : "no current",
+                  body.substring(0, 160).c_str());
+    return false;
+  }
+  wx[z].temp = doc["current"]["temperature_2m"].as<float>();
+  wx[z].code = doc["current"]["weather_code"].as<int>();
+  Serial.printf("wx %s: %.1f %s\n", zones[z].name, wx[z].temp, wmoLabel(wx[z].code));
+  return true;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -315,21 +405,36 @@ void loop() {
   // The terminator moves a pixel every few minutes; re-render on the minute,
   // which is when the digits change anyway.
   static int lastMinute = -1;
+  static uint32_t lastTurn = 0;
   int minute = (int)(now / 60);
   if (!shown || minute != lastMinute) { full = true; shown = true; lastMinute = minute; }
   if (full) {
     uint32_t t0 = millis();
-    globe::render(zones[sel].lon, now);
+    globe::render(zoneLon(sel, now), now);
     globe::blit(gfx);
     drawRing(now);
     drawZone(now, true);
-    drawCities();
+    drawCities(now);
     Serial.printf("zone %u %s, redraw %lums\n", sel, zones[sel].name, millis() - t0);
     lastSec = (uint32_t)now;
+    lastTurn = millis();
   } else if ((uint32_t)now != lastSec) {
     drawZone(now, false);
-    drawCities();  // the seconds box may have covered a dot
+    drawCities(now);  // the seconds box may have covered a dot
     lastSec = (uint32_t)now;
+  }
+
+  // Weather for the zone on screen, once it has stopped moving and the cache
+  // is stale. A failure backs off WX_RETRY_MS rather than hammering.
+  if (!isnan(zones[sel].lat) && millis() - lastTurn > WX_SETTLE_MS &&
+      (wx[sel].at == 0 || millis() - wx[sel].at > WX_KEEP_MS)) {
+    uint8_t z = sel;
+    bool ok = fetchWeather(z);
+    wx[z].at = ok ? millis() : millis() - (WX_KEEP_MS - WX_RETRY_MS);
+    if (!ok && wx[z].code < 0) wx[z].code = -1;
+    if (z == sel && encoderPosition() == lastPos) drawWeather();
+  }
+  {
     // Backlight follows HOME's night window, not the zone on screen.
     struct tm h;
     zoneLocal(zones[0].tz, now, &h);

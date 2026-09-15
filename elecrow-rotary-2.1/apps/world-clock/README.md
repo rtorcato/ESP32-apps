@@ -12,6 +12,10 @@ Press to jump home.
 The digits go cool blue when it is night *in that zone*, so 03:41 in Tokyo reads
 as the middle of the night even when it is a Toronto afternoon.
 
+Under the date: the city's weather right now, from open-meteo — `22C cloudy`.
+It is fetched once a zone has sat selected for a moment, so spinning past
+cities costs nothing, and kept for 15 minutes per zone.
+
 - **Turn** — next / previous zone, wrapping.
 - **Press** — back to home (zone 0).
 - **Touch** — nothing. The knob is the interface.
@@ -41,6 +45,9 @@ Sun position uses the standard declination approximation and ignores the
 equation of time: at most ~4° of longitude, a few pixels of terminator. The view
 tilt is `globe.tilt` in config, 30°N by default so the northern cities sit
 comfortably above the digits; `lat`/`lon` per zone place the dots.
+
+A zone with no `lat`/`lon` still works: the globe turns to the meridian its
+UTC offset implies, and it just gets no dot and no weather.
 
 ## How it keeps time
 

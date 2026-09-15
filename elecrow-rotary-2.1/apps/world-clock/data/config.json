@@ -15,6 +15,10 @@
     "globe.tilt latitude at the centre of the view, -60..60. 30 keeps the",
     "           northern cities above the digits.",
     "hour24     false for 12-hour with AM/PM.",
+    "units      'metric' (Celsius) or 'imperial' (Fahrenheit) for the weather",
+    "           line, which is open-meteo's current conditions for the city's",
+    "           lat/lon, fetched once a zone has sat selected for a moment and",
+    "           kept 15 minutes. A zone with no lat/lon gets no weather.",
     "brightness day/night backlight duty, 8-255. Night is judged by HOME's clock.",
     "night      hours (0-23) the night brightness applies; wraps midnight."
   ],
@@ -30,6 +34,7 @@
   ],
   "globe": { "tilt": 30 },
   "hour24": true,
+  "units": "metric",
   "brightness": { "day": 204, "night": 60 },
   "night": { "from": 23, "to": 7 }
 }
