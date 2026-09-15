@@ -2,11 +2,12 @@
 
 <img src="preview.svg" alt="world-clock preview" width="240">
 
-One city per screen. Turn the knob to move through the zones, press to jump
-home. The ring of dots around the edge is every zone placed at its UTC offset
-relative to the one on screen, 15° per hour, so the whole ring turns as you
-do — the globe spinning under a fixed marker. Home is cyan, the selected zone
-is the large yellow dot at the top.
+One city per screen, on a globe. Turn the knob and the globe turns so the
+selected city faces you, with a yellow dot on it and a cyan one on home. The
+dark side is the actual night side right now: the terminator is computed from
+the date and time. The ring of dots around the edge is every zone at its UTC
+offset relative to the one on screen, 15° per hour, so it turns with the globe.
+Press to jump home.
 
 The digits go cool blue when it is night *in that zone*, so 03:41 in Tokyo reads
 as the middle of the night even when it is a Toronto afternoon.
@@ -14,6 +15,32 @@ as the middle of the night even when it is a Toronto afternoon.
 - **Turn** — next / previous zone, wrapping.
 - **Press** — back to home (zone 0).
 - **Touch** — nothing. The knob is the interface.
+
+## The globe
+
+Rendered on the device, not stored as pictures.
+[`tools/make-landmask.py`](tools/make-landmask.py) bakes Natural Earth's 1:110m
+land polygons into a 720×360 one-bit mask, 32KB in flash, with a scanline fill
+in plain Python (no PIL needed). At boot [`src/globe.h`](src/globe.h) inverse-
+projects every pixel of the disc once, for the configured tilt, into two lookup
+tables in PSRAM: which mask row and which mask column that pixel sees before
+the globe is turned. Turning is then an offset on the column, and a render is
+two table reads, a mask bit and one compare for day/night per pixel.
+
+| | |
+|---|---|
+| boot table build | 1.3s, during the Wi-Fi join |
+| full redraw on a click | ~130ms: render, blit, ring, text, dots |
+| PSRAM used | 460KB background + 920KB tables |
+
+The rendered globe lives in a background buffer and every text field erases by
+copying its rectangle back from it, which is what lets white digits sit on the
+picture without punching black holes in it.
+
+Sun position uses the standard declination approximation and ignores the
+equation of time: at most ~4° of longitude, a few pixels of terminator. The view
+tilt is `globe.tilt` in config, 30°N by default so the northern cities sit
+comfortably above the digits; `lat`/`lon` per zone place the dots.
 
 ## How it keeps time
 
@@ -51,7 +78,7 @@ pio run -e world-clock -t upload -t monitor
 ## Settings
 
 [`data/config.json`](data/config.json): the zone list (first is home, up to
-16), 12/24 hour, day/night brightness, and the night window judged by home's
-clock. Every key is optional; the defaults are the eight cities above with
+16, each with `name`, `tz`, `lat`, `lon`), 12/24 hour, the globe tilt, day/night
+brightness, and the night window judged by home's clock. Every key is optional; the defaults are the eight cities above with
 Toronto home. Wi-Fi credentials are compiled in from `secrets.h` — see
 [SECURITY.md](../../../SECURITY.md).

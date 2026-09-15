@@ -11,6 +11,8 @@
 #include <secrets.h>
 #include <time.h>
 
+#include "globe.h"
+
 static Arduino_GFX *gfx;
 
 // ── config ────────────────────────────────────────────────────────────────
@@ -19,18 +21,24 @@ static Arduino_GFX *gfx;
 struct Zone {
   char name[NAME_CHARS + 1];
   char tz[64];
+  float lat, lon;  // where the city dot goes on the globe
 };
 static Zone zones[MAX_ZONES];
 static uint8_t nZones = 0;
 static bool hour24 = true;
 static uint8_t blDay = 204, blNight = 60, nightFrom = 23, nightTo = 7;
+static float globeTilt = 30.0f;
 
 static void defaultZones() {
   static const Zone d[] = {
-      {"TORONTO", "EST5EDT,M3.2.0/2,M11.1.0/2"},  {"VANCOUVER", "PST8PDT,M3.2.0/2,M11.1.0/2"},
-      {"LONDON", "GMT0BST,M3.5.0/1,M10.5.0"},      {"PARIS", "CET-1CEST,M3.5.0,M10.5.0/3"},
-      {"DUBAI", "<+04>-4"},                         {"MUMBAI", "IST-5:30"},
-      {"TOKYO", "JST-9"},                           {"SYDNEY", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+      {"TORONTO", "EST5EDT,M3.2.0/2,M11.1.0/2", 43.65f, -79.38f},
+      {"VANCOUVER", "PST8PDT,M3.2.0/2,M11.1.0/2", 49.28f, -123.12f},
+      {"LONDON", "GMT0BST,M3.5.0/1,M10.5.0", 51.51f, -0.13f},
+      {"PARIS", "CET-1CEST,M3.5.0,M10.5.0/3", 48.86f, 2.35f},
+      {"DUBAI", "<+04>-4", 25.20f, 55.27f},
+      {"MUMBAI", "IST-5:30", 19.08f, 72.88f},
+      {"TOKYO", "JST-9", 35.68f, 139.69f},
+      {"SYDNEY", "AEST-10AEDT,M10.1.0,M4.1.0/3", -33.87f, 151.21f},
   };
   nZones = sizeof d / sizeof d[0];
   memcpy(zones, d, sizeof d);
@@ -112,8 +120,9 @@ static void selfCheck() {
 
 // ── drawing ───────────────────────────────────────────────────────────────
 // Built-in font: 6*size x 8*size per glyph, so each field is an exact box.
+// Erasing means putting the globe back, not painting black.
 static void field(int16_t x, int16_t y, uint8_t size, uint8_t chars, uint16_t fg, const char *s) {
-  gfx->fillRect(x, y, 6 * size * chars, 8 * size, RGB565_BLACK);
+  globe::restore(gfx, x, y, 6 * size * chars, 8 * size);
   gfx->setTextSize(size);
   gfx->setTextColor(fg);
   gfx->setCursor(x, y);
@@ -122,17 +131,30 @@ static void field(int16_t x, int16_t y, uint8_t size, uint8_t chars, uint16_t fg
 
 static const int16_t CX = 240, CY = 240, RING_R = 222, DOT_R = 6;
 static uint8_t sel = 0;
-static int dotOff[MAX_ZONES];  // offsets at last ring draw, so dots can be erased
+static int dotOff[MAX_ZONES];
+
+// City dots on the globe: selected in yellow, home in cyan, each with a dark
+// outline so they read on land and sea alike. Drawn last, over the text.
+static void drawCities() {
+  int16_t x, y;
+  float lon0 = zones[sel].lon;
+  if (sel != 0 && globe::project(zones[0].lat, zones[0].lon, lon0, &x, &y)) {
+    gfx->fillCircle(x, y, 6, RGB565_BLACK);
+    gfx->fillCircle(x, y, 4, RGB565_CYAN);
+  }
+  if (globe::project(zones[sel].lat, zones[sel].lon, lon0, &x, &y)) {
+    gfx->fillCircle(x, y, 7, RGB565_BLACK);
+    gfx->fillCircle(x, y, 5, RGB565_YELLOW);
+  }
+}
 
 static void dotAt(float deg, int16_t r, uint16_t c) {
   float a = (deg - 90.0f) * (float)M_PI / 180.0f;
   gfx->fillCircle(CX + (int16_t)lroundf(RING_R * cosf(a)), CY + (int16_t)lroundf(RING_R * sinf(a)), r, c);
 }
 
-static void drawRing(time_t now, bool erase) {
+static void drawRing(time_t now) {
   int selOff = offsetMin(zones[sel].tz, now);
-  if (erase)
-    for (uint8_t i = 0; i < nZones; i++) dotAt(ringAngle(dotOff[i], dotOff[sel]), DOT_R + 3, RGB565_BLACK);
   gfx->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
   for (uint8_t i = 0; i < nZones; i++) dotOff[i] = offsetMin(zones[i].tz, now);
   for (uint8_t i = 0; i < nZones; i++)
@@ -190,6 +212,8 @@ static void drawZone(time_t now, bool full) {
 static void drawWaiting(const char *why) {
   gfx->fillScreen(RGB565_BLACK);
   gfx->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
+  static bool once = false;
+  if (!once) { memset(globe::bg, 0, GLOBE_W * GLOBE_H * 2); once = true; }  // fields erase to black until the globe exists
   field(150, 200, 3, 10, RGB565_YELLOW, " NO TIME  ");
   char line[23];
   centre(line, 22, why);
@@ -205,6 +229,7 @@ static void loadConfig() {
   blNight = (uint8_t)cfgInt("brightness.night", blNight, 8, 255);
   nightFrom = (uint8_t)cfgInt("night.from", nightFrom, 0, 23);
   nightTo = (uint8_t)cfgInt("night.to", nightTo, 0, 23);
+  globeTilt = cfgFloat("globe.tilt", globeTilt, -60.0f, 60.0f);
   uint8_t n = 0;
   for (JsonVariant v : cfgArr("zones")) {
     if (n >= MAX_ZONES) { Serial.printf("config zones: more than %d, rest ignored\n", MAX_ZONES); break; }
@@ -213,6 +238,12 @@ static void loadConfig() {
     if (!name || !*name || !tz || !*tz) { Serial.printf("config zones[%u]: needs name and tz, skipped\n", n); continue; }
     snprintf(zones[n].name, sizeof zones[n].name, "%s", name);
     snprintf(zones[n].tz, sizeof zones[n].tz, "%s", tz);
+    zones[n].lat = v["lat"] | 0.0f;
+    zones[n].lon = v["lon"] | 0.0f;
+    if (zones[n].lat < -90 || zones[n].lat > 90 || zones[n].lon < -180 || zones[n].lon > 180) {
+      Serial.printf("config zones[%u]: lat/lon out of range, dot at 0,0\n", n);
+      zones[n].lat = zones[n].lon = 0;
+    }
     n++;
   }
   if (n) nZones = n;  // a present but empty list keeps the defaults
@@ -229,7 +260,12 @@ void setup() {
   cfgSelfCheck();
   selfCheck();
   loadConfig();
-  Serial.printf("pcf8574 %s, %u zones, home %s\n", xok ? "OK" : "MISSING", nZones, zones[0].name);
+  uint32_t t0 = millis();
+  bool gok = globe::begin(globeTilt);
+  if (gok) globe::selfCheck();
+  Serial.printf("pcf8574 %s, %u zones, home %s, globe tables %s in %lums, psram %u KB free\n",
+                xok ? "OK" : "MISSING", nZones, zones[0].name, gok ? "OK" : "NO PSRAM", millis() - t0,
+                ESP.getFreePsram() / 1024);
 
   drawWaiting("joining wifi");
   backlight(blDay);
@@ -276,16 +312,23 @@ void loop() {
   if (pressed && !lastPressed && sel != 0) { sel = 0; full = true; }
   lastPressed = pressed;
 
-  if (full || !shown || shown == false) {
-    if (!shown || shown == false) { gfx->fillScreen(RGB565_BLACK); shown = true; full = true; lastSec = 0; }
-  }
+  // The terminator moves a pixel every few minutes; re-render on the minute,
+  // which is when the digits change anyway.
+  static int lastMinute = -1;
+  int minute = (int)(now / 60);
+  if (!shown || minute != lastMinute) { full = true; shown = true; lastMinute = minute; }
   if (full) {
-    drawRing(now, true);
+    uint32_t t0 = millis();
+    globe::render(zones[sel].lon, now);
+    globe::blit(gfx);
+    drawRing(now);
     drawZone(now, true);
-    Serial.printf("zone %u %s\n", sel, zones[sel].name);
+    drawCities();
+    Serial.printf("zone %u %s, redraw %lums\n", sel, zones[sel].name, millis() - t0);
     lastSec = (uint32_t)now;
   } else if ((uint32_t)now != lastSec) {
     drawZone(now, false);
+    drawCities();  // the seconds box may have covered a dot
     lastSec = (uint32_t)now;
     // Backlight follows HOME's night window, not the zone on screen.
     struct tm h;
