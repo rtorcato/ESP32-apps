@@ -70,9 +70,10 @@ different board's knob.
 | P5 | knob switch, active low |
 
 RGB timing that works: hsync/vsync polarity 1, porches 10/4/20 front/pulse/back
-on both axes, pixel clock 16MHz **inverted**. The Arduino_GFX `type5` example
-uses a non-inverted 12MHz clock; ESPHome's config for this board uses inverted
-18MHz. Both knobs are `#define`s at the top of `board.h`.
+on both axes, pixel clock 16MHz **not** inverted. With the clock inverted (what
+ESPHome's config for this board says) the circle draws fine but text is mangled
+to noise, so a big shape passing is not proof the timing is right — check thin
+strokes. Both knobs are `#define`s at the top of `board.h`.
 
 ## Building
 

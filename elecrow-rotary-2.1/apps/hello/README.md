@@ -12,8 +12,10 @@ Verifies six things at once:
   screen says `pcf8574 ok` in grey (or `MISSING` in red).
 - **RGB panel timing** — a 1px white circle of radius 239. If it touches the
   bezel all the way round, the porch and pixel-clock values in
-  [`lib/board/board.h`](../../lib/board/board.h) are right. Shifted, torn or
-  noisy: flip `LCD_PCLK_NEG` first, then lower `LCD_PCLK_HZ`.
+  [`lib/board/board.h`](../../lib/board/board.h) are right. But the circle
+  passing is not enough: with the pixel clock on the wrong edge the circle was
+  fine and the **text** was noise. Look at the thin strokes. Wrong: flip
+  `LCD_PCLK_NEG`; shifted or torn: lower `LCD_PCLK_HZ`.
 - **Backlight PWM** — lit at the factory duty, 204/255.
 - **Encoder** — the cyan number is detents since boot, decoded on interrupts.
   Serial prints `knob N` on every change.

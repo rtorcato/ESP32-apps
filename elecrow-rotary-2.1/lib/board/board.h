@@ -24,11 +24,13 @@
 #define LCD_SPI_SCK 2
 #define LCD_SPI_SDA 1
 
-// Calibration knobs for the RGB timing. ESPHome's working config uses an
-// inverted pixel clock at 18MHz; Arduino_GFX's own ST7701 type5 example uses a
-// non-inverted one at 12MHz. If the image is shifted, tearing or noisy, flip
-// LCD_PCLK_NEG first, then lower the clock.
-#define LCD_PCLK_NEG 1
+// Calibration knobs for the RGB timing. Verified on this unit 2026-09-15:
+// non-inverted pixel clock at 16MHz. Inverted (what ESPHome's config for this
+// board says) draws the circle fine but mangles every thin stroke -- text
+// turns to noise -- because the panel latches data on the wrong edge. If a
+// future unit shows shifting or tearing, lower the clock (Arduino_GFX's own
+// type5 example runs 12MHz) before touching anything else.
+#define LCD_PCLK_NEG 0
 #define LCD_PCLK_HZ 16000000
 
 #define I2C_SDA 38
