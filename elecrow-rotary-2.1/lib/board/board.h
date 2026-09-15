@@ -33,6 +33,13 @@
 #define LCD_PCLK_NEG 0
 #define LCD_PCLK_HZ 16000000
 
+// The panel DMA reads its framebuffer from PSRAM, and whenever the CPU floods
+// PSRAM (a full-screen render plus two 460KB copies per frame, as world-clock
+// does while dragging) the DMA starves and the picture glitches. A bounce
+// buffer in internal RAM -- the driver refills it from PSRAM in an interrupt --
+// is Espressif's fix. 10 lines: 2 x 9.6KB of SRAM, ~2 lines of latency.
+#define LCD_BOUNCE_PX (LCD_W * 10)
+
 #define I2C_SDA 38
 #define I2C_SCL 39
 #define PCF8574_ADDR 0x21
@@ -110,7 +117,8 @@ inline Arduino_GFX *boardDisplay() {
       46 /* B0 = panel R0 */, 3 /* B1 */, 8 /* B2 */, 18 /* B3 */, 17 /* B4 */,
       1 /* hsync_polarity */, 10 /* hsync_front_porch */, 4 /* hsync_pulse_width */, 20 /* hsync_back_porch */,
       1 /* vsync_polarity */, 10 /* vsync_front_porch */, 4 /* vsync_pulse_width */, 20 /* vsync_back_porch */,
-      LCD_PCLK_NEG, LCD_PCLK_HZ);
+      LCD_PCLK_NEG, LCD_PCLK_HZ, false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
+      LCD_BOUNCE_PX);
   static Arduino_RGB_Display gfx(LCD_W, LCD_H, &panel, 0 /* rotation */, true /* auto_flush */, &spi,
                                  GFX_NOT_DEFINED /* RST: via PCF8574 */, st7701_type5_init_operations,
                                  sizeof(st7701_type5_init_operations));

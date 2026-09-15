@@ -84,6 +84,15 @@ ESPHome's config for this board says) the circle draws fine but text is mangled
 to noise, so a big shape passing is not proof the timing is right — check thin
 strokes. Both knobs are `#define`s at the top of `board.h`.
 
+## PSRAM contention and the bounce buffer
+
+The panel DMA reads the 460KB framebuffer from PSRAM continuously. Whenever
+the CPU floods PSRAM — world-clock re-rendering the globe and copying two full
+frames per drag sample — the DMA starves and the picture glitches. `board.h`
+sets a 10-line bounce buffer in internal SRAM (`LCD_BOUNCE_PX`), which the
+driver refills from PSRAM in an interrupt; that is Espressif's fix and it costs
+19KB of SRAM. If it ever isn't enough, the next lever is the pixel clock.
+
 ## Serial gotcha
 
 Native USB CDC on the S3 **blocks on every print, 100ms at a time**, once a
