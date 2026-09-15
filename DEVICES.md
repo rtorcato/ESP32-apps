@@ -10,14 +10,16 @@ per-board gotchas live in each device's own README.
 | **Waveshare ESP32-C6-LCD-1.47** — owned | [CA](https://www.amazon.ca/dp/B0DHTMYTCY) · [US](https://www.amazon.com/dp/B0DHTMYTCY) · [waveshare](https://www.waveshare.com/esp32-c6-lcd-1.47.htm) | [wiki](https://www.waveshare.com/wiki/ESP32-C6-LCD-1.47) |
 | **DIYmalls ESP32-2432S028R** — 2.8" CYD | [CA](https://www.amazon.ca/dp/B0CG2WQGP9) · [US](https://www.amazon.com/dp/B0CG2WQGP9) | [community repo](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display) |
 | **Waveshare ESP32-S3-Touch-LCD-7** — 7" | [CA search](https://www.amazon.ca/s?k=Waveshare+ESP32-S3+7inch+Capacitive+Touch+LCD) · [US search](https://www.amazon.com/s?k=Waveshare+ESP32-S3+7inch+Capacitive+Touch+LCD) · [waveshare](https://www.waveshare.com/esp32-s3-touch-lcd-7.htm) | [wiki](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7) |
-| **Elecrow 2.1" Rotary** — 480×480 round | [CA search](https://www.amazon.ca/s?k=Elecrow+2.1+inch+ESP32+Rotary+Display+480x480) · [US search](https://www.amazon.com/s?k=Elecrow+2.1+inch+ESP32+Rotary+Display+480x480) · [elecrow](https://www.elecrow.com/display/esp-hmi-display/round-rotary-display.html) | [elecrow wiki](https://www.elecrow.com/pub/wiki/) |
+| **Elecrow 2.1" Rotary** — 480×480 round, owned (DHE03921D, black) | [CA search](https://www.amazon.ca/s?k=Elecrow+2.1+inch+ESP32+Rotary+Display+480x480) · [US search](https://www.amazon.com/s?k=Elecrow+2.1+inch+ESP32+Rotary+Display+480x480) · [elecrow](https://www.elecrow.com/display/esp-hmi-display/round-rotary-display.html) | [elecrow wiki](https://www.elecrow.com/pub/wiki/) |
 | **Elecrow 1.28" Rotary** — 240×240 round | [CA search](https://www.amazon.ca/s?k=Elecrow+1.28+inch+ESP32+Rotary+Display+240x240) · [US search](https://www.amazon.com/s?k=Elecrow+1.28+inch+ESP32+Rotary+Display+240x240) · [elecrow](https://www.elecrow.com/display/esp-hmi-display/round-rotary-display.html) | [elecrow wiki](https://www.elecrow.com/pub/wiki/) |
 
 **Link accuracy:** only the CYD ASIN (`B0CG2WQGP9`) was confirmed live on both
 amazon.ca and amazon.com. The C6 ASIN (`B0DHTMYTCY`) was confirmed on amazon.com
-and assumed to carry over to .ca. The Elecrow and Waveshare-7" rows are *search*
-links because no Amazon ASIN surfaced for them — they may only be available direct
-from the vendor or via AliExpress. Verify before ordering.
+and assumed to carry over to .ca. The Elecrow 2.1" is stocked on amazon.ca by
+the ELECROW store (CAD $65.99 list, $59.39 on a 2026-09 deal; the 1.28" sits
+beside it at $59.99 / $53.99) — the row stays a search link because the ASIN was
+not captured. The 1.28" and Waveshare-7" rows are *search* links for the same
+reason. Verify before ordering.
 
 CYD variants if the single-board listing is out of stock: 2-pack
 [CA](https://www.amazon.ca/dp/B0DNM4SKSJ) · [US](https://www.amazon.com/dp/B0DNM4SKSJ),
@@ -186,11 +188,11 @@ run the backlight below full.
 
 ## Buying order
 
-1. **Rotary 1.28"** — cheapest genuinely new capability (encoder input), and its
-   SPI panel reuses C6 display habits. Lowest risk.
+1. ~~**Rotary 2.1"**~~ — bought first after all (2026-09): the knob apps wanted
+   the big face, and on amazon.ca it was only $5 more than the 1.28".
 2. **CYD 2.8"** — adds touch and audio for very little money, with the best docs
    in the ecosystem to lean on.
-3. **Rotary 2.1"** — only if a knob app outgrows the 1.28" face.
+3. **Rotary 1.28"** — only if a knob app wants a second, cheaper dial.
 4. **S3-LCD-7** — buy last and on purpose. RGB-parallel + CH422G expander +
    PSRAM framebuffer is a real detour, and ~26fps LVGL means it's a dashboard,
    not an interactive toy.

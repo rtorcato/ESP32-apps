@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" role="img" aria-label="hello smoke test: white circle at the bezel, board name, knob count, press bar">
+  <!-- 480x480 round. Mirrors apps/hello/src/main.cpp exactly: built-in font is
+       6*size x 8*size per glyph, so every text box below is the real erase rect. -->
+  <defs><clipPath id="round"><circle cx="240" cy="240" r="240"/></clipPath></defs>
+  <rect width="480" height="480" fill="#05070a"/>
+  <g clip-path="url(#round)">
+    <rect width="480" height="480" fill="#000"/>
+    <!-- drawCircle(240,240,239,WHITE) — must touch the bezel all the way round -->
+    <circle cx="240" cy="240" r="239" fill="none" stroke="#fff" stroke-width="1"/>
+    <!-- size 3 = 18x24 -->
+    <text x="123" y="140" font-family="monospace" font-size="24" fill="#fff" textLength="234" lengthAdjust="spacing">CrowPanel 2.1</text>
+    <text x="177" y="172" font-family="monospace" font-size="24" fill="#fff" textLength="126" lengthAdjust="spacing">480x480</text>
+    <!-- size 2 = 12x16 -->
+    <text x="132" y="210" font-family="monospace" font-size="16" fill="#c0c0c0" textLength="204" lengthAdjust="spacing">turn knob / press</text>
+    <!-- size 5 = 30x40, 6 chars right-aligned: the detent count -->
+    <text x="150" y="264" font-family="monospace" font-size="40" fill="#0ff" textLength="180" lengthAdjust="spacing">    -5</text>
+    <!-- fillRect(140,300,200,28): green while the knob is pressed, dark grey otherwise -->
+    <rect x="140" y="300" width="200" height="28" fill="#404040"/>
+    <text x="150" y="358" font-family="monospace" font-size="16" fill="#c0c0c0" textLength="120" lengthAdjust="spacing">pcf8574 ok</text>
+    <!-- fillCircle at the last touch point -->
+    <circle cx="310" cy="204" r="6" fill="#ff0"/>
+  </g>
+</svg>

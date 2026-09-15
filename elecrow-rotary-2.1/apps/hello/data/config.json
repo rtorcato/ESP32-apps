@@ -1,0 +1,14 @@
+{
+  "_readme": [
+    "Settings for the hello smoke test. Push a change to the board with:",
+    "  ./push-config hello",
+    "",
+    "Every key is optional -- delete this file and hello still runs on its",
+    "compiled defaults. Secrets never go in here; see SECURITY.md.",
+    "",
+    "brightness  backlight duty, 8-255. 204 is the factory default.",
+    "tickMs      ms between serial heartbeats, 50-5000."
+  ],
+  "brightness": 204,
+  "tickMs": 500
+}
