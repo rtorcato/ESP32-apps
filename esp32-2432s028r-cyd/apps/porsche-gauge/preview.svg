@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240" font-family="Helvetica, Arial, sans-serif">
+<rect width="320" height="240" fill="#000"/>
+<circle cx="52" cy="118" r="52" fill="#000" stroke="#333" stroke-width="1"/>
+<path d="M98.6,102.9 A49,49 0 0 1 94.4,142.5" fill="none" stroke="#c8102e" stroke-width="4"/>
+<line x1="10.4" y1="142.0" x2="18.2" y2="137.5" stroke="#eee" stroke-width="2"/>
+<text x="26.0" y="136.0" fill="#eee" font-size="8" text-anchor="middle">40</text>
+<line x1="6.3" y1="132.8" x2="10.2" y2="131.6" stroke="#eee" stroke-width="1"/>
+<line x1="4.3" y1="123.0" x2="8.2" y2="122.6" stroke="#eee" stroke-width="1"/>
+<line x1="4.3" y1="113.0" x2="8.2" y2="113.4" stroke="#eee" stroke-width="1"/>
+<line x1="6.3" y1="103.2" x2="14.9" y2="105.9" stroke="#eee" stroke-width="2"/>
+<text x="23.5" y="111.7" fill="#eee" font-size="8" text-anchor="middle">60</text>
+<line x1="10.4" y1="94.0" x2="13.9" y2="96.0" stroke="#eee" stroke-width="1"/>
+<line x1="16.3" y1="85.9" x2="19.3" y2="88.6" stroke="#eee" stroke-width="1"/>
+<line x1="23.8" y1="79.2" x2="26.1" y2="82.4" stroke="#eee" stroke-width="1"/>
+<line x1="32.5" y1="74.1" x2="36.1" y2="82.4" stroke="#eee" stroke-width="2"/>
+<text x="39.8" y="93.6" fill="#eee" font-size="8" text-anchor="middle">80</text>
+<line x1="42.0" y1="71.0" x2="42.9" y2="75.0" stroke="#eee" stroke-width="1"/>
+<line x1="52.0" y1="70.0" x2="52.0" y2="74.0" stroke="#eee" stroke-width="1"/>
+<line x1="62.0" y1="71.0" x2="61.1" y2="75.0" stroke="#eee" stroke-width="1"/>
+<line x1="71.5" y1="74.1" x2="67.9" y2="82.4" stroke="#eee" stroke-width="2"/>
+<text x="64.2" y="93.6" fill="#eee" font-size="8" text-anchor="middle">100</text>
+<line x1="80.2" y1="79.2" x2="77.9" y2="82.4" stroke="#eee" stroke-width="1"/>
+<line x1="87.7" y1="85.9" x2="84.7" y2="88.6" stroke="#eee" stroke-width="1"/>
+<line x1="93.6" y1="94.0" x2="90.1" y2="96.0" stroke="#eee" stroke-width="1"/>
+<line x1="97.7" y1="103.2" x2="89.1" y2="105.9" stroke="#eee" stroke-width="2"/>
+<text x="80.5" y="111.7" fill="#eee" font-size="8" text-anchor="middle">120</text>
+<line x1="99.7" y1="113.0" x2="95.8" y2="113.4" stroke="#eee" stroke-width="1"/>
+<line x1="99.7" y1="123.0" x2="95.8" y2="122.6" stroke="#eee" stroke-width="1"/>
+<line x1="97.7" y1="132.8" x2="93.8" y2="131.6" stroke="#eee" stroke-width="1"/>
+<line x1="93.6" y1="142.0" x2="85.8" y2="137.5" stroke="#eee" stroke-width="2"/>
+<text x="78.0" y="136.0" fill="#eee" font-size="8" text-anchor="middle">140</text>
+<line x1="51.0" y1="130.0" x2="55.7" y2="74.2" stroke="#ff2a2a" stroke-width="2" stroke-linecap="round"/>
+<circle cx="52" cy="118" r="4" fill="#111" stroke="#666"/>
+<text x="52" y="146.6" fill="#bbb" font-size="7" text-anchor="middle" letter-spacing="1">WATER</text>
+<text x="52" y="154.6" fill="#888" font-size="6" text-anchor="middle">°C</text>
+<circle cx="268" cy="118" r="52" fill="#000" stroke="#333" stroke-width="1"/>
+<path d="M316.3,109.5 A49,49 0 0 1 310.4,142.5" fill="none" stroke="#c8102e" stroke-width="4"/>
+<line x1="226.4" y1="142.0" x2="234.2" y2="137.5" stroke="#eee" stroke-width="2"/>
+<text x="242.0" y="136.0" fill="#eee" font-size="8" text-anchor="middle">40</text>
+<line x1="222.9" y1="134.4" x2="226.7" y2="133.0" stroke="#eee" stroke-width="1"/>
+<line x1="220.7" y1="126.3" x2="224.7" y2="125.6" stroke="#eee" stroke-width="1"/>
+<line x1="220.0" y1="118.0" x2="224.0" y2="118.0" stroke="#eee" stroke-width="1"/>
+<line x1="220.7" y1="109.7" x2="229.6" y2="111.2" stroke="#eee" stroke-width="2"/>
+<text x="238.5" y="115.8" fill="#eee" font-size="8" text-anchor="middle">60</text>
+<line x1="222.9" y1="101.6" x2="226.7" y2="103.0" stroke="#eee" stroke-width="1"/>
+<line x1="226.4" y1="94.0" x2="229.9" y2="96.0" stroke="#eee" stroke-width="1"/>
+<line x1="231.2" y1="87.1" x2="234.3" y2="89.7" stroke="#eee" stroke-width="1"/>
+<line x1="237.1" y1="81.2" x2="242.9" y2="88.1" stroke="#eee" stroke-width="2"/>
+<text x="248.7" y="98.0" fill="#eee" font-size="8" text-anchor="middle">80</text>
+<line x1="244.0" y1="76.4" x2="246.0" y2="79.9" stroke="#eee" stroke-width="1"/>
+<line x1="251.6" y1="72.9" x2="253.0" y2="76.7" stroke="#eee" stroke-width="1"/>
+<line x1="259.7" y1="70.7" x2="260.4" y2="74.7" stroke="#eee" stroke-width="1"/>
+<line x1="268.0" y1="70.0" x2="268.0" y2="79.0" stroke="#eee" stroke-width="2"/>
+<text x="268.0" y="91.0" fill="#eee" font-size="8" text-anchor="middle">100</text>
+<line x1="276.3" y1="70.7" x2="275.6" y2="74.7" stroke="#eee" stroke-width="1"/>
+<line x1="284.4" y1="72.9" x2="283.0" y2="76.7" stroke="#eee" stroke-width="1"/>
+<line x1="292.0" y1="76.4" x2="290.0" y2="79.9" stroke="#eee" stroke-width="1"/>
+<line x1="298.9" y1="81.2" x2="293.1" y2="88.1" stroke="#eee" stroke-width="2"/>
+<text x="287.3" y="98.0" fill="#eee" font-size="8" text-anchor="middle">120</text>
+<line x1="304.8" y1="87.1" x2="301.7" y2="89.7" stroke="#eee" stroke-width="1"/>
+<line x1="309.6" y1="94.0" x2="306.1" y2="96.0" stroke="#eee" stroke-width="1"/>
+<line x1="313.1" y1="101.6" x2="309.3" y2="103.0" stroke="#eee" stroke-width="1"/>
+<line x1="315.3" y1="109.7" x2="306.4" y2="111.2" stroke="#eee" stroke-width="2"/>
+<text x="297.5" y="115.8" fill="#eee" font-size="8" text-anchor="middle">140</text>
+<line x1="316.0" y1="118.0" x2="312.0" y2="118.0" stroke="#eee" stroke-width="1"/>
+<line x1="315.3" y1="126.3" x2="311.3" y2="125.6" stroke="#eee" stroke-width="1"/>
+<line x1="313.1" y1="134.4" x2="309.3" y2="133.0" stroke="#eee" stroke-width="1"/>
+<line x1="309.6" y1="142.0" x2="301.8" y2="137.5" stroke="#eee" stroke-width="2"/>
+<text x="294.0" y="136.0" fill="#eee" font-size="8" text-anchor="middle">160</text>
+<line x1="266.3" y1="129.9" x2="274.1" y2="74.4" stroke="#ff2a2a" stroke-width="2" stroke-linecap="round"/>
+<circle cx="268" cy="118" r="4" fill="#111" stroke="#666"/>
+<text x="268" y="146.6" fill="#bbb" font-size="7" text-anchor="middle" letter-spacing="1">OIL</text>
+<text x="268" y="154.6" fill="#888" font-size="6" text-anchor="middle">°C</text>
+<circle cx="160" cy="118" r="84" fill="#000" stroke="#333" stroke-width="1"/>
+<path d="M241.0,119.7 A81,81 0 0 1 230.1,158.5" fill="none" stroke="#c8102e" stroke-width="4"/>
+<line x1="90.7" y1="158.0" x2="98.5" y2="153.5" stroke="#eee" stroke-width="2"/>
+<text x="108.0" y="151.0" fill="#eee" font-size="11" text-anchor="middle">-1.0</text>
+<line x1="83.9" y1="142.7" x2="87.7" y2="141.5" stroke="#eee" stroke-width="1"/>
+<line x1="80.4" y1="126.4" x2="84.4" y2="125.9" stroke="#eee" stroke-width="1"/>
+<line x1="80.4" y1="109.6" x2="84.4" y2="110.1" stroke="#eee" stroke-width="1"/>
+<line x1="83.9" y1="93.3" x2="92.5" y2="96.1" stroke="#eee" stroke-width="2"/>
+<text x="102.9" y="102.5" fill="#eee" font-size="11" text-anchor="middle">-0.5</text>
+<line x1="90.7" y1="78.0" x2="94.2" y2="80.0" stroke="#eee" stroke-width="1"/>
+<line x1="100.5" y1="64.5" x2="103.5" y2="67.1" stroke="#eee" stroke-width="1"/>
+<line x1="113.0" y1="53.3" x2="115.3" y2="56.5" stroke="#eee" stroke-width="1"/>
+<line x1="127.5" y1="44.9" x2="131.1" y2="53.1" stroke="#eee" stroke-width="2"/>
+<text x="135.6" y="66.2" fill="#eee" font-size="11" text-anchor="middle">0.0</text>
+<line x1="143.4" y1="39.7" x2="144.2" y2="43.7" stroke="#eee" stroke-width="1"/>
+<line x1="160.0" y1="38.0" x2="160.0" y2="42.0" stroke="#eee" stroke-width="1"/>
+<line x1="176.6" y1="39.7" x2="175.8" y2="43.7" stroke="#eee" stroke-width="1"/>
+<line x1="192.5" y1="44.9" x2="188.9" y2="53.1" stroke="#eee" stroke-width="2"/>
+<text x="184.4" y="66.2" fill="#eee" font-size="11" text-anchor="middle">0.5</text>
+<line x1="207.0" y1="53.3" x2="204.7" y2="56.5" stroke="#eee" stroke-width="1"/>
+<line x1="219.5" y1="64.5" x2="216.5" y2="67.1" stroke="#eee" stroke-width="1"/>
+<line x1="229.3" y1="78.0" x2="225.8" y2="80.0" stroke="#eee" stroke-width="1"/>
+<line x1="236.1" y1="93.3" x2="227.5" y2="96.1" stroke="#eee" stroke-width="2"/>
+<text x="217.1" y="102.5" fill="#eee" font-size="11" text-anchor="middle">1.0</text>
+<line x1="239.6" y1="109.6" x2="235.6" y2="110.1" stroke="#eee" stroke-width="1"/>
+<line x1="239.6" y1="126.4" x2="235.6" y2="125.9" stroke="#eee" stroke-width="1"/>
+<line x1="236.1" y1="142.7" x2="232.3" y2="141.5" stroke="#eee" stroke-width="1"/>
+<line x1="229.3" y1="158.0" x2="221.5" y2="153.5" stroke="#eee" stroke-width="2"/>
+<text x="212.0" y="151.0" fill="#eee" font-size="11" text-anchor="middle">1.5</text>
+<line x1="150.2" y1="124.9" x2="222.0" y2="74.1" stroke="#ff2a2a" stroke-width="3" stroke-linecap="round"/>
+<circle cx="160" cy="118" r="6" fill="#111" stroke="#666"/>
+<text x="160" y="92" fill="#bbb" font-size="9" text-anchor="middle" letter-spacing="1">BOOST</text>
+<text x="160" y="102" fill="#888" font-size="7" text-anchor="middle">bar</text>
+<text x="160" y="176" fill="#fff" font-size="22" font-weight="bold" text-anchor="middle">0.82</text>
+<text x="160" y="190" fill="#999" font-size="8" text-anchor="middle">PEAK 1.31  ·  press to reset</text>
+<text x="8" y="14" fill="#bbb" font-size="10" letter-spacing="2">MACAN S</text>
+<circle cx="296" cy="10" r="3" fill="#2ecc71"/>
+<text x="290" y="14" fill="#bbb" font-size="8" text-anchor="end">OBD iCar Pro  ·  BLE</text>
+<line x1="8" y1="204" x2="312" y2="204" stroke="#222"/>
+<text x="56" y="216" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">BATTERY</text>
+<text x="56" y="233" fill="#fff" font-size="14" text-anchor="middle">14.1 V</text>
+<text x="160" y="216" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">INTAKE</text>
+<text x="160" y="233" fill="#fff" font-size="14" text-anchor="middle">31 °C</text>
+<text x="264" y="216" fill="#888" font-size="7" text-anchor="middle" letter-spacing="1">RPM</text>
+<text x="264" y="233" fill="#fff" font-size="14" text-anchor="middle">2 450</text>
+</svg>
