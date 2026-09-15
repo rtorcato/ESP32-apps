@@ -21,6 +21,31 @@ static void field(int16_t x, int16_t y, uint8_t size, uint8_t chars, uint16_t fg
   gfx->print(s);
 }
 
+// The touch dot is a sprite: the patch of framebuffer under it is saved before
+// drawing and put back on move or lift, so it crosses text and the circle
+// without erasing them. Erasing to black was the obvious first version, and it
+// left a trail of holes through the text.
+static const int16_t DOT_R = 6, DOT_W = 2 * DOT_R + 1;
+static uint16_t under[DOT_W * DOT_W];
+static int16_t dotX0 = -1, dotY0 = -1;
+
+static void dotHide() {
+  if (dotX0 < 0) return;
+  gfx->draw16bitRGBBitmap(dotX0, dotY0, under, DOT_W, DOT_W);
+  dotX0 = -1;
+}
+
+static void dotShow(int16_t x, int16_t y) {
+  x = constrain(x, DOT_R, LCD_W - 1 - DOT_R);
+  y = constrain(y, DOT_R, LCD_H - 1 - DOT_R);
+  int16_t x0 = x - DOT_R, y0 = y - DOT_R;
+  uint16_t *fb = static_cast<Arduino_RGB_Display *>(gfx)->getFramebuffer();
+  for (int16_t r = 0; r < DOT_W; r++) memcpy(&under[r * DOT_W], &fb[(y0 + r) * LCD_W + x0], DOT_W * 2);
+  gfx->fillCircle(x, y, DOT_R, RGB565_YELLOW);
+  dotX0 = x0;
+  dotY0 = y0;
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -74,16 +99,18 @@ void loop() {
     lastPressed = pressed;
   }
 
-  // Touch: a dot follows the finger, and the previous one is erased. Anything
-  // it leaves behind on the circle or text is cosmetic -- it's a smoke test.
+  // Touch: a dot follows the finger and vanishes on lift.
   int16_t x, y;
   if (touchRead(&x, &y)) {
     if (x != tx || y != ty) {
-      if (tx >= 0) gfx->fillCircle(tx, ty, 6, RGB565_BLACK);
-      gfx->fillCircle(x, y, 6, RGB565_YELLOW);
+      dotHide();
+      dotShow(x, y);
       Serial.printf("touch %d,%d\n", x, y);
       tx = x; ty = y;
     }
+  } else if (tx >= 0) {
+    dotHide();
+    tx = ty = -1;
   }
 
   if (millis() - lastTick >= tickMs) {

@@ -23,7 +23,9 @@ Verifies six things at once:
   they swap if red and blue are crossed, which white, grey and green hide.
 - **Knob switch** — the bar turns green while pressed (read through the
   expander, P5).
-- **Touch** — a yellow dot follows the finger; serial prints `touch x,y`.
+- **Touch** — a yellow dot follows the finger and vanishes on lift; serial
+  prints `touch x,y`. The dot is a sprite that saves and restores the pixels
+  under it, so dragging across the text does not punch holes in it.
 
 Serial also prints `psram N KB free` at boot. The 460KB framebuffer comes out
 of that; if it reads 0 the build lost `BOARD_HAS_PSRAM`.
