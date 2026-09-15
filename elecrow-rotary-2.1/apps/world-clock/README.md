@@ -16,12 +16,17 @@ Under the date: the city's weather right now, from open-meteo — `22C cloudy`.
 It is fetched once a zone has sat selected for a moment, so spinning past
 cities costs nothing, and kept for 15 minutes per zone.
 
-- **Turn** — next / previous zone, wrapping. Also snaps the globe back to the
-  city if you had dragged it.
-- **Drag** — spins the globe freely under your finger, half a turn across the
-  face. The city dots follow; the ring and the clock stay put.
+- **Turn** — next / previous zone, wrapping. The globe turns to face it.
+- **Drag** — spins the globe under your finger, half a turn across the face.
+  The city under your finger is the one shown; with no city under it the
+  clock goes away and it is just a globe, until you land on one or turn the
+  knob.
 - **Press** — sleep: backlight off, nothing drawn. Press, turn or touch wakes
   it with a full redraw.
+
+Every frame is composed off-screen in an `Arduino_Canvas` and presented in one
+copy. Drawing straight onto the panel showed the bare globe for a few
+milliseconds before the text landed, which read as flicker while dragging.
 
 ## The globe
 

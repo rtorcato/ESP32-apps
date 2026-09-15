@@ -102,12 +102,13 @@ inline void render(float lon0Deg, time_t t) {
   }
 }
 
-inline void blit(Arduino_GFX *gfx) { gfx->draw16bitRGBBitmap(0, 0, bg, GLOBE_W, GLOBE_H); }
+// Copies the rendered globe into a same-sized off-screen frame.
+inline void blit(uint16_t *fb) { memcpy(fb, bg, GLOBE_W * GLOBE_H * 2); }
 
-// Restores a rectangle of the background: the erase primitive for anything
-// drawn over the globe. Row by row because bg rows are strided.
-inline void restore(Arduino_GFX *gfx, int16_t x, int16_t y, int16_t w, int16_t h) {
-  for (int16_t r = 0; r < h; r++) gfx->draw16bitRGBBitmap(x, y + r, bg + (uint32_t)(y + r) * GLOBE_W + x, w, 1);
+// Restores a rectangle of the background into the frame: the erase primitive
+// for anything drawn over the globe.
+inline void restore(uint16_t *fb, int16_t x, int16_t y, int16_t w, int16_t h) {
+  for (int16_t r = 0; r < h; r++) memcpy(fb + (uint32_t)(y + r) * GLOBE_W + x, bg + (uint32_t)(y + r) * GLOBE_W + x, w * 2);
 }
 
 // Screen position of a point on the turned globe. False if it's on the far side.

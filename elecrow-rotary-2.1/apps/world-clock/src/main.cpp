@@ -2,9 +2,10 @@
 //
 // Turn to move through the zones in config.json; the ring of dots around the
 // edge shows every zone at its UTC offset relative to the one on screen, so
-// the whole ring rotates as you turn. Drag a finger to spin the globe freely
-// (the next knob click snaps it back to a city). Press to sleep: backlight
-// off, nothing drawn; any press, turn or touch wakes it. Time comes
+// the whole ring rotates as you turn. Drag a finger to spin the globe; the
+// city under your finger becomes the one shown, and with no city under it the
+// clock goes away and it's just a globe. Press to sleep: backlight off,
+// nothing drawn; any press, turn or touch wakes it. Time comes
 // from NTP once and is kept by the RTC; each zone is rendered by switching the
 // libc TZ, so daylight saving is handled by the POSIX rule string, not by us.
 #include <HTTPClient.h>
@@ -17,6 +18,13 @@
 #include "globe.h"
 
 static Arduino_GFX *gfx;
+
+// Every frame is composed off-screen and presented in one copy. Drawing text
+// straight onto a panel that scans continuously showed the bare globe for a
+// few ms each frame, which read as flicker while dragging.
+static Arduino_Canvas *cv;
+static uint16_t *cvfb;
+static void present() { gfx->draw16bitRGBBitmap(0, 0, cvfb, LCD_W, LCD_H); }
 
 // ── config ────────────────────────────────────────────────────────────────
 #define MAX_ZONES 16
@@ -42,11 +50,13 @@ struct Wx {
 };
 static Wx wx[MAX_ZONES];
 
-// Finger drag, in degrees of longitude added to the selected city's. Across
-// the whole face is half a turn: 180 / 480 = 0.375 degrees per pixel.
-static float dragLon = 0;
+// The longitude facing the viewer. The knob sets it to a city; a drag moves it
+// freely, half a turn across the face: 180 / 480 = 0.375 degrees per pixel.
+static float viewLon = 0;
+static bool showInfo = true;  // false while the globe faces no city
 static const float DRAG_DEG_PER_PX = 0.375f;
 static const int16_t DRAG_MIN_PX = 3;  // ignore jitter smaller than this
+static const int16_t HIT_PX = 30;      // how close a finger must be to a city dot
 static const uint32_t WX_KEEP_MS = 15UL * 60 * 1000, WX_RETRY_MS = 2UL * 60 * 1000, WX_SETTLE_MS = 1500;
 
 static void defaultZones() {
@@ -168,11 +178,11 @@ static void selfCheck() {
 // Built-in font: 6*size x 8*size per glyph, so each field is an exact box.
 // Erasing means putting the globe back, not painting black.
 static void field(int16_t x, int16_t y, uint8_t size, uint8_t chars, uint16_t fg, const char *s) {
-  globe::restore(gfx, x, y, 6 * size * chars, 8 * size);
-  gfx->setTextSize(size);
-  gfx->setTextColor(fg);
-  gfx->setCursor(x, y);
-  gfx->print(s);
+  globe::restore(cvfb, x, y, 6 * size * chars, 8 * size);
+  cv->setTextSize(size);
+  cv->setTextColor(fg);
+  cv->setCursor(x, y);
+  cv->print(s);
 }
 
 static const int16_t CX = 240, CY = 240, RING_R = 222, DOT_R = 6;
@@ -181,27 +191,38 @@ static int dotOff[MAX_ZONES];
 
 // City dots on the globe: selected in yellow, home in cyan, each with a dark
 // outline so they read on land and sea alike. Drawn last, over the text.
-static void drawCities(time_t now) {
+static void drawCities() {
   int16_t x, y;
-  float lon0 = zoneLon(sel, now) + dragLon;
-  if (sel != 0 && !isnan(zones[0].lat) && globe::project(zones[0].lat, zones[0].lon, lon0, &x, &y)) {
-    gfx->fillCircle(x, y, 6, RGB565_BLACK);
-    gfx->fillCircle(x, y, 4, RGB565_CYAN);
+  for (uint8_t i = 0; i < nZones; i++) {
+    if (isnan(zones[i].lat) || !globe::project(zones[i].lat, zones[i].lon, viewLon, &x, &y)) continue;
+    bool on = showInfo && i == sel;
+    cv->fillCircle(x, y, on ? 7 : 5, RGB565_BLACK);
+    cv->fillCircle(x, y, on ? 5 : 3, on ? RGB565_YELLOW : i == 0 ? RGB565_CYAN : RGB565_LIGHTGREY);
   }
-  if (!isnan(zones[sel].lat) && globe::project(zones[sel].lat, zones[sel].lon, lon0, &x, &y)) {
-    gfx->fillCircle(x, y, 7, RGB565_BLACK);
-    gfx->fillCircle(x, y, 5, RGB565_YELLOW);
+}
+
+// The zone whose dot is under the finger, or -1.
+static int cityAt(int16_t tx, int16_t ty) {
+  int best = -1;
+  int32_t bestD = (int32_t)HIT_PX * HIT_PX;
+  int16_t x, y;
+  for (uint8_t i = 0; i < nZones; i++) {
+    if (isnan(zones[i].lat) || !globe::project(zones[i].lat, zones[i].lon, viewLon, &x, &y)) continue;
+    int32_t d = (int32_t)(x - tx) * (x - tx) + (int32_t)(y - ty) * (y - ty);
+    if (d < bestD) { bestD = d; best = i; }
   }
+  return best;
 }
 
 static void dotAt(float deg, int16_t r, uint16_t c) {
   float a = (deg - 90.0f) * (float)M_PI / 180.0f;
-  gfx->fillCircle(CX + (int16_t)lroundf(RING_R * cosf(a)), CY + (int16_t)lroundf(RING_R * sinf(a)), r, c);
+  cv->fillCircle(CX + (int16_t)lroundf(RING_R * cosf(a)), CY + (int16_t)lroundf(RING_R * sinf(a)), r, c);
 }
 
 static void drawRing(time_t now) {
   int selOff = offsetMin(zones[sel].tz, now);
-  gfx->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
+  cv->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
+  if (!showInfo) return;  // no zone on screen, nothing to be relative to
   for (uint8_t i = 0; i < nZones; i++) dotOff[i] = offsetMin(zones[i].tz, now);
   for (uint8_t i = 0; i < nZones; i++)
     if (i != sel) dotAt(ringAngle(dotOff[i], selOff), DOT_R, i == 0 ? RGB565_CYAN : RGB565_DARKGREY);
@@ -268,14 +289,14 @@ static void drawZone(time_t now, bool full) {
 }
 
 static void drawWaiting(const char *why) {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
-  static bool once = false;
-  if (!once) { memset(globe::bg, 0, GLOBE_W * GLOBE_H * 2); once = true; }  // fields erase to black until the globe exists
+  memset(globe::bg, 0, GLOBE_W * GLOBE_H * 2);  // fields erase to black until the globe exists
+  cv->fillScreen(RGB565_BLACK);
+  cv->drawCircle(CX, CY, RING_R, RGB565_DARKGREY);
   field(150, 200, 3, 10, RGB565_YELLOW, " NO TIME  ");
   char line[23];
   centre(line, 22, why);
   field(108, 250, 2, 22, RGB565_LIGHTGREY, line);
+  present();
 }
 
 // ── setup / loop ──────────────────────────────────────────────────────────
@@ -354,7 +375,9 @@ void setup() {
   Serial.begin(115200);
   bool xok = boardBegin();
   gfx = boardDisplay();
-  gfx->begin();
+  cv = new Arduino_Canvas(LCD_W, LCD_H, gfx);
+  cv->begin();  // also begins the panel; a second gfx->begin() has no free RGB slot and crashes
+  cvfb = cv->getFramebuffer();
   cfgSelfCheck();
   selfCheck();
   loadConfig();
@@ -434,23 +457,28 @@ void loop() {
   if (turned) {
     sel = (uint8_t)(((int32_t)sel + (pos - lastPos)) % nZones + nZones) % nZones;
     lastPos = pos;
-    dragLon = 0;  // the knob snaps the globe back to a city
+    viewLon = zoneLon(sel, now);  // the knob faces the globe at a city
+    showInfo = true;
     full = true;
     Serial.printf("zone %u %s\n", sel, zones[sel].name);
   }
 
-  // Drag spins the globe under the finger. Absolute positions, so samples
-  // missed during a 130ms render don't lose distance.
+  // Drag spins the globe under the finger, and the city under the finger is
+  // the one shown. Absolute positions, so samples missed during a render
+  // don't lose distance.
   if (touching) {
     if (dragX >= 0 && abs(tx - dragX) >= DRAG_MIN_PX) {
-      dragLon -= (tx - dragX) * DRAG_DEG_PER_PX;
-      while (dragLon > 180) dragLon -= 360;
-      while (dragLon < -180) dragLon += 360;
+      viewLon -= (tx - dragX) * DRAG_DEG_PER_PX;
+      while (viewLon > 180) viewLon -= 360;
+      while (viewLon < -180) viewLon += 360;
       dragX = tx;
       full = true;
     } else if (dragX < 0) {
       dragX = tx;
     }
+    int hit = cityAt(tx, ty);
+    if (hit >= 0 && (!showInfo || hit != sel)) { sel = (uint8_t)hit; showInfo = true; full = true; Serial.printf("touch %s\n", zones[sel].name); }
+    else if (hit < 0 && showInfo) { showInfo = false; full = true; Serial.println("touch no city"); }
   } else {
     dragX = -1;
   }
@@ -462,28 +490,29 @@ void loop() {
   int minute = (int)(now / 60);
   if (!shown || minute != lastMinute) { full = true; shown = true; lastMinute = minute; }
   if (full) {
-    globe::render(zoneLon(sel, now) + dragLon, now);
-    globe::blit(gfx);
+    globe::render(viewLon, now);
+    globe::blit(cvfb);
     drawRing(now);
-    drawZone(now, true);
-    drawCities(now);
+    if (showInfo) drawZone(now, true);
+    drawCities();
+    present();
     lastSec = (uint32_t)now;
     lastTurn = millis();
-  } else if ((uint32_t)now != lastSec) {
+  } else if ((uint32_t)now != lastSec && showInfo) {
     drawZone(now, false);
-    drawCities(now);  // the seconds box may have covered a dot
+    drawCities();  // the seconds box may have covered a dot
+    present();
     lastSec = (uint32_t)now;
   }
 
   // Weather for the zone on screen, once it has stopped moving and the cache
   // is stale. A failure backs off WX_RETRY_MS rather than hammering.
-  if (!isnan(zones[sel].lat) && millis() - lastTurn > WX_SETTLE_MS &&
+  if (showInfo && !isnan(zones[sel].lat) && millis() - lastTurn > WX_SETTLE_MS &&
       (wx[sel].at == 0 || millis() - wx[sel].at > WX_KEEP_MS)) {
     uint8_t z = sel;
     bool ok = fetchWeather(z);
     wx[z].at = ok ? millis() : millis() - (WX_KEEP_MS - WX_RETRY_MS);
-    if (!ok && wx[z].code < 0) wx[z].code = -1;
-    if (z == sel && encoderPosition() == lastPos) drawWeather();
+    if (z == sel && showInfo && encoderPosition() == lastPos) { drawWeather(); present(); }
   }
   {
     // Backlight follows HOME's night window, not the zone on screen.
