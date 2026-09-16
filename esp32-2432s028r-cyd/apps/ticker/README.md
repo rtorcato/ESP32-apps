@@ -3,10 +3,52 @@
 Built 2026-09-15, first version: the LIST layout with a sparkline on every
 row, tap a row for the stock's own page (chart with previous-close line, day
 and 52-week range bars, PREV / LIST / NEXT buttons), fetches on core 0,
-brightness from the LDR. 2026-09-16: logos, at two sizes, from LittleFS, and
-a range selector (1D / 5D / 1M / 6M / 1Y) under the detail chart.
-**Not built yet:** the SD card, the HEATMAP layout, and the NVS layout memory
--- the design below is the roadmap for those.
+brightness from the LDR. 2026-09-16: logos at two sizes from LittleFS; the
+list became a **continuously scrolling ring** (hardware scroll, seven rows,
+no pages, no footer); a range selector (1D / 5D / 1M / 6M / 1Y) under the
+detail chart, prefetched so a tap is instant; **market sessions** (nothing is
+fetched while the market is closed, the header says CLOSED and when it
+opens, the detail page shows the after-hours price); an INFO page behind the
+circled i in the header. **Not built yet:** the SD card, the HEATMAP layout,
+and the NVS layout memory -- the design below is the roadmap for those.
+
+## The list scrolls, it doesn't page
+
+The ILI9341 scrolls in hardware: `VSCRDEF` (0x33) fences the seven row slots
+between the fixed 22px header and the bottom edge, `VSCRSADD` (0x37) says
+which line of that region shows at the top, and the region wraps. Moving the
+whole list one pixel is one two-byte command, so the crawl costs nothing to
+draw. `timing.pageSeconds` is now how long one screen (seven rows) takes to
+pass; 10 reads well.
+
+The catch is that the slot scrolling off the top **is** the slot the next row
+enters from the bottom, a line at a time. So the incoming row is painted
+off-screen into a one-row `Arduino_Canvas` (20KB) and its lines are fed into
+the slot as they come into view. Rows fully in the ring update in place when
+their price changes; the two rows in transit wait until the transit is over.
+The scroll freezes while a finger is down, and `hitRow()` maps a tap through
+the current offset, so a tap lands on the row it was aimed at. A list shorter
+than seven simply repeats. The board's `boardBus()` exists so an app can send
+the two panel commands Arduino_GFX has no API for.
+
+## Market sessions
+
+The trading day has four parts from the clock and `market.*`: pre-market
+(04:00), regular (09:30-16:00), after hours (to 20:00), closed. Fetch policy
+follows it: `refresh.openMinutes` in the regular session,
+`refresh.extendedMinutes` in pre/post, and when closed **one sweep after the
+close** to keep the final after-hours prints, then nothing until the next
+pre-market. Crypto never closes and keeps its own interval. Tapping a row
+while closed does not refetch it either. A holiday looks like a weekday and
+costs a handful of unchanged fetches; not worth a calendar.
+
+Quotes are requested with `includePrePost=true`, so the 1D series runs
+04:00-20:00 and the row keeps its newest bar as `last`. The list always shows
+the regular-session figures. The detail page, outside the regular session,
+shows `last` as the price with its move measured from the regular close and
+says "after hours" / "pre-market" where the company name goes. The header
+says nothing while the market is open ("market open" is not news) and
+`CLOSED til Mon 09:30` when it is.
 
 ```sh
 python3 tools/make-logos.py --size 24 --out data/logo/24   # once, on the Mac
@@ -146,14 +188,22 @@ that is precisely the signal that this symbol should be text-only in the row.
 
 ## Tap a stock, get its page
 
-**Range selector, built 2026-09-16.** Five chips under the chart: 1D is the
-row's own sparkline series; 5D (30m), 1M (1d), 6M (1d) and 1Y (1wk) are
-fetched on demand by the core-0 task into one shared buffer (130 closes,
-~26KB heap during the fetch) and the chart says "loading 1M..." until they
-land. The previous-close line follows the range -- Yahoo's `chartPreviousClose`
-is the close before the range start. The selection sticks across PREV / NEXT.
-Coins have no series and show no chips. The tap zone is the whole strip
-between the chart and the day bar, taller than the drawn chip.
+**Range selector, built 2026-09-16.** Five 44×24 chips under the chart: 1D is
+the row's own sparkline series; 5D (30m), 1M (1d), 6M (1d) and 1Y (1wk) are
+fetched by the core-0 task **the moment the page opens**, selected range
+first, into one buffer per range (130 closes each), so a chip tap is instant
+once they have landed and the chart says "loading 1M..." until then. The
+previous-close line follows the range -- Yahoo's `chartPreviousClose` is the
+close before the range start. The selection sticks across PREV / NEXT. Coins
+have no series and show no chips. High and low are printed inside the chart
+box so the chips get the full width. Taps fire at touch-down, not release --
+release made every button feel a beat late.
+
+**INFO page.** The circled i in the list header (or anywhere on the header)
+opens a page with what the footer used to carry: session and next open,
+how stale the prices are, refresh intervals, wifi and RSSI, heap, uptime,
+LDR reading and backlight level, symbol and logo counts, build date. Any
+tap returns; so does `detail.returnSeconds`.
 
 Tap a LIST row or a HEATMAP tile — same gesture, same result in both layouts, no
 modes to learn. **The page is free**, for the same reason the sparkline is: the
@@ -207,15 +257,14 @@ file documents itself in `_`-prefixed blocks.
 | `brightness.min` / `.max` | Bounds the LDR maps between | 8–255 |
 | `brightness.closedScale` | Dim further while the market is shut | 10–100 % |
 | `layout` | Which layout to start in | `list` / `heatmap` |
-| `timing.pageSeconds` | How long a page of six rows stays up | 2–600 |
-| `timing.cascadeMs` | Per-row stagger on a page flip; 0 = instant | 0–400 |
+| `timing.pageSeconds` | How long one screen of rows takes to scroll past | 2–600 |
 | `sparkline.interval` | Yahoo granularity, and so the payload size | `5m` / `15m` / `30m` |
 | `detail.returnSeconds` | Auto-return to the list; 0 = never | 0–3600 |
 | `detail.refreshOnOpen` | Jump the tapped symbol up the fetch queue | bool |
 | `logos.rowBadges` | 24px badges on list rows | bool |
-| `refresh.openMinutes` / `.closedMinutes` / `.coinMinutes` | Price refresh intervals | 1–240 / 1–1440 / 1–240 |
+| `refresh.openMinutes` / `.extendedMinutes` / `.coinMinutes` | Price refresh in the regular session / pre and post / crypto | 1–240 / 1–1440 / 1–240 |
 | `timezone` | POSIX TZ, for the clock *and* the market window | — |
-| `market.open` / `.close` | Trading window, `HH:MM`, Mon–Fri | 00:00–23:59 |
+| `market.pre` / `.open` / `.close` / `.post` | The trading day, `HH:MM`, Mon–Fri | pre ≤ open < close ≤ post |
 | `stocks` / `coins` | The watchlist itself | ≤32 symbols |
 
 **The C6's `night.from` / `night.to` are gone, deliberately.** That pair exists

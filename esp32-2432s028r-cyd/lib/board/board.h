@@ -47,12 +47,17 @@
 #define BTN_BOOT 0
 
 // --- Display -----------------------------------------------------------------
-inline Arduino_GFX *boardDisplay() {
+// The bus is reachable on its own for panel commands Arduino_GFX has no API
+// for (ticker uses the ILI9341's hardware vertical scroll, 0x33/0x37).
+inline Arduino_DataBus *boardBus() {
   static Arduino_ESP32SPI bus(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI, LCD_MISO, HSPI);
+  return &bus;
+}
+inline Arduino_GFX *boardDisplay() {
 #if LCD_ST7789
-  static Arduino_ST7789 gfx(&bus, GFX_NOT_DEFINED /* RST tied to EN */, 0, true /* IPS */, LCD_W, LCD_H);
+  static Arduino_ST7789 gfx(boardBus(), GFX_NOT_DEFINED /* RST tied to EN */, 0, true /* IPS */, LCD_W, LCD_H);
 #else
-  static Arduino_ILI9341 gfx(&bus, GFX_NOT_DEFINED /* RST tied to EN */, 0);
+  static Arduino_ILI9341 gfx(boardBus(), GFX_NOT_DEFINED /* RST tied to EN */, 0);
 #endif
   return &gfx;
 }

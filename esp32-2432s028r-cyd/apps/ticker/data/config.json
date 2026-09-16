@@ -23,12 +23,12 @@
   "brightness": { "auto": true, "min": 20, "max": 220, "ldrDark": 3000, "closedScale": 60 },
 
   "_timing": [
-    "pageSeconds  how long each page of six rows stays up, 2-600.",
-    "cascadeMs    per-row stagger when a page flips, 0-400.",
-    "The page timer is frozen while a finger is down, so a tap can never land",
-    "on one symbol and resolve to the one that replaced it."
+    "pageSeconds  the list scrolls continuously; this is how long six rows",
+    "             (one screen) take to pass, 2-600. 10 is a readable crawl.",
+    "The scroll is frozen while a finger is down, so a tap lands on the row",
+    "it was aimed at."
   ],
-  "timing": { "pageSeconds": 8, "cascadeMs": 22 },
+  "timing": { "pageSeconds": 10 },
 
   "_sparkline": [
     "Yahoo's granularity for the intraday series -- the same request the price",
@@ -49,18 +49,25 @@
     "Minutes between price refreshes. Stocks cost one HTTPS request EACH; coins",
     "all travel in one CoinGecko request. Fetches run on core 0 and stay",
     "strictly sequential: each TLS session is ~40KB of a 320KB heap.",
-    "openMinutes 1-240   closedMinutes 1-1440   coinMinutes 1-240"
+    "openMinutes      in the regular session, 1-240.",
+    "extendedMinutes  in pre-market and after hours, 1-1440. The detail page",
+    "                 shows the extended-hours price then.",
+    "coinMinutes      crypto never closes, 1-240.",
+    "While the market is CLOSED (weekends, and nights between the post and",
+    "pre sessions) stocks are swept once after the close and then not at all."
   ],
-  "refresh": { "openMinutes": 5, "closedMinutes": 60, "coinMinutes": 5 },
+  "refresh": { "openMinutes": 5, "extendedMinutes": 15, "coinMinutes": 5 },
 
   "_timezone": ["POSIX TZ string, for the clock AND the market window below."],
   "timezone": "EST5EDT,M3.2.0/2,M11.1.0/2",
 
   "_market": [
-    "Trading window as HH:MM in the timezone above, Mon-Fri. Drives",
-    "brightness.closedScale and the refresh interval. An inverted window is rejected."
+    "The trading day as HH:MM in the timezone above, Mon-Fri: pre-market from",
+    "'pre', regular 'open'-'close', after hours until 'post', closed otherwise.",
+    "Drives the refresh policy, brightness.closedScale and the CLOSED /",
+    "PRE-MKT / AFTER HRS tag. pre <= open < close <= post or all four reset."
   ],
-  "market": { "open": "09:30", "close": "16:00" },
+  "market": { "pre": "04:00", "open": "09:30", "close": "16:00", "post": "20:00" },
 
   "_symbols": [
     "Six rows per page, 32 symbols maximum, labels capped at 5 characters.",
