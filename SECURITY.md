@@ -34,6 +34,14 @@ Skip these. They feel like progress and cost real time:
 If the flash is readable, an unencrypted secret in it is readable. The only real
 options are *encrypt the flash* or *make the stolen secret not worth much*.
 
+**The CYD ticker takes the NVS route on purpose** (2026-09-16): it has no
+`secrets.h` at all. The device raises its own access point on first boot and
+takes the Wi-Fi password through a web form, into NVS. That is the same
+flash-dump exposure as a compiled-in secret and no worse, and it means the
+firmware binary can be shared and the repo built by someone else without a
+credential ever being typed into source. A "Clear device" row wipes it before
+the board changes hands.
+
 ## What helps, cheapest first
 
 ### 1. Put the device on an isolated IoT network — do this one

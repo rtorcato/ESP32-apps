@@ -279,11 +279,26 @@ the list. Settings: swipe left for the list. Info: left for the list, down
 for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
-**SETTINGS, swipe right from the list.** Eight rows, tap to cycle: scroll
-speed (slow / normal / fast), backlight (auto / bright / dim), sound (off /
-taps / alerts / both), auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
-the night window is `sleep.from` / `.to` in config.json), LED (off / glow / alerts /
-both), Touch (the calibration above), and Info.
+**SETTINGS, swipe right from the list.** Two pages, swipe up and down.
+The everyday page, tap to cycle: scroll speed (slow / normal / fast),
+backlight (auto / bright / dim), sound (off / taps / alerts / both),
+auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
+the night window is `sleep.from` / `.to` in config.json), LED (off / glow /
+alerts / both), Currency. The DEVICE page: Touch (the calibration above),
+Wi-Fi (the setup below, again), Info, Clear device (wipes everything the
+device holds -- network, settings, edits, calibration -- and restarts into
+setup; two taps within three seconds), and Shutdown (deep sleep with nothing
+but a touch to wake it, since the board has no power switch; two taps).
+
+**Setup: the device asks for its Wi-Fi.** There is no `secrets.h` in this
+app and nothing compiled in. With no network in NVS -- first boot, after
+Clear device, or the Wi-Fi row -- the panel shows three steps and the board
+raises an access point, `ticker-setup`, with an eight-digit password derived
+from its MAC and printed on the panel, serving one form at 192.168.4.1; a
+DNS catch-all makes a phone open the sign-in page on its own. The form
+lists the networks the board can hear. Saving writes NVS and restarts. The
+password is kept in the board's own flash and only there, the same exposure
+as a compiled-in secret and no worse -- see [SECURITY.md](../../../SECURITY.md).
 
 **The LED glows with the day.** Green or red by the average move of the
 valid stocks, brighter for a bigger move (3% is full), scaled with the

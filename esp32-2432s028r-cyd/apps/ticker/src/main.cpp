@@ -13,13 +13,14 @@
 #include <board.h>
 #include <helv.h>
 #include <netjoin.h>
-#include <secrets.h>
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <NetworkClientSecure.h>
+#include <DNSServer.h>
 #include <Preferences.h>
+#include <WebServer.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
 #include <algorithm>
@@ -86,10 +87,16 @@ static uint8_t sSpeed = 1, sBl = 0, sRet = 1, sSleep = 0;
 // (how many of X one USD buys). USD, or any code the config lists. A row
 // whose rate is missing shows its own currency, and the page says which.
 static char sCur[4] = "USD";
+// Wi-Fi credentials live in NVS and nowhere else: no secrets.h, nothing
+// compiled in. Empty means the device has not been set up, and it raises
+// its own access point with a web form (see the setup page). The same
+// flash-dump exposure as a compiled-in secret, no worse -- SECURITY.md.
+static char wifiSsid[33] = "", wifiPass[65] = "";
 // Shutdown is deep sleep with nothing but a touch to wake it: this board has
 // no power switch, and the panel, radio and chip all go dark. Two taps
 // within three seconds, so a stray finger cannot turn it off.
-static uint32_t shutdownArmedUntil = 0;
+static uint32_t shutdownArmedUntil = 0, clearArmedUntil = 0;
+static uint8_t setPage = 0;  // settings page: 0 the everyday rows, 1 the device rows
 // Sound and LED are each two bits: bit 0 the everyday use (tap clicks /
 // the day's glow), bit 1 the alerts (chime / white blinks).
 static const char *const TWO_NAMES[][4] = {{"off", "taps", "alerts", "both"}, {"off", "glow", "alerts", "both"}};
@@ -419,7 +426,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 56, S_H = 24, S_N = 10;
+static const int16_t S_Y0 = 64, S_H = 30, S_N = 7;  // rows per page; two pages, swipe up and down
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -1199,6 +1206,112 @@ static void drawDetail(bool full) {
   drawRange(r, D_Y_WK, "52w", r.wkLo, r.wkHi, r.price);
 }
 
+// ── setup: the device asks for its Wi-Fi ─────────────────────────────────
+// No credentials in NVS (first boot, or after Clear device, or the Wi-Fi
+// row): the panel shows three steps and the board raises an access point,
+// "ticker-setup" with an eight-digit PIN derived from its MAC, serving one
+// form at 192.168.4.1 -- a DNS catch-all makes phones open it on their own.
+// The form lists the networks it can hear. Saving writes NVS and restarts.
+static WebServer *web = nullptr;
+static DNSServer *dns = nullptr;
+static bool setupMode = false;
+static char setupPin[9], setupSsids[600];
+static uint32_t setupStarted = 0;
+static void setupPage() {
+  String html = F("<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+                  "<title>ticker setup</title><style>body{font-family:-apple-system,Helvetica,Arial;background:#000;color:#eee;"
+                  "margin:0;padding:24px}h1{font-size:22px}label{display:block;margin:18px 0 6px;color:#9aa4ae}"
+                  "select,input{width:100%;font-size:18px;padding:10px;border-radius:8px;border:1px solid #444;background:#111;color:#eee}"
+                  "button{margin-top:24px;width:100%;font-size:18px;padding:12px;border:0;border-radius:8px;background:#22d05a;color:#000}"
+                  "</style></head><body><h1>ticker setup</h1><form method=post action=/save>"
+                  "<label>Wi-Fi network</label><select name=s>");
+  html += setupSsids;
+  html += F("</select><label>or type its name</label><input name=o placeholder='hidden network'>"
+            "<label>password</label><input type=password name=p>"
+            "<button>save and restart</button></form></body></html>");
+  web->send(200, "text/html", html);
+}
+static void setupSave() {
+  String ssid = web->arg("o");
+  if (!ssid.length()) ssid = web->arg("s");
+  String pass = web->arg("p");
+  if (!ssid.length() || ssid.length() > 32 || pass.length() > 64) {
+    web->send(400, "text/plain", "network name missing or too long");
+    return;
+  }
+  prefs.begin("ticker", false);
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+  prefs.end();
+  web->send(200, "text/html", F("<!doctype html><body style='font-family:-apple-system,Helvetica;background:#000;color:#eee;padding:24px'>"
+                                "<h1>saved</h1><p>The ticker is restarting and joining your network.</p></body>"));
+  Serial.printf("setup: saved network '%s', restarting\n", ssid.c_str());
+  delay(800);
+  ESP.restart();
+}
+static void drawSetup(const char *status) {
+  gfx->fillScreen(C_BG);
+  field(8, 24, 12, 3, C_FG, "SETUP");
+  gfx->drawFastHLine(8, 54, 224, C_RULE);
+  char l[40];
+  textAt(8, 66, 2, C_GOOD, "1");
+  textAt(30, 66, 1, C_MUTED, "on your phone, join the Wi-Fi");
+  textAt(30, 80, 2, C_FG, "ticker-setup");
+  snprintf(l, sizeof l, "password  %s", setupPin);
+  textAt(30, 102, 1, C_MUTED, l);
+  textAt(8, 130, 2, C_GOOD, "2");
+  textAt(30, 130, 1, C_MUTED, "a sign-in page opens by itself;");
+  textAt(30, 144, 1, C_MUTED, "if not, open in the browser");
+  textAt(30, 158, 2, C_FG, "192.168.4.1");
+  textAt(8, 186, 2, C_GOOD, "3");
+  textAt(30, 186, 1, C_MUTED, "pick your network, type its");
+  textAt(30, 200, 1, C_MUTED, "password, save. It restarts.");
+  gfx->drawFastHLine(8, 226, 224, C_RULE);
+  textAt(8, 236, 1, C_DIM, "nothing leaves this board: the password");
+  textAt(8, 248, 1, C_DIM, "is kept in its own flash, and only there.");
+  fieldCentre(LCD_W / 2, 286, 36, 1, C_DIM, status);
+}
+static void startSetup() {
+  setupMode = true;
+  setupStarted = millis();
+  uint64_t mac = ESP.getEfuseMac();
+  snprintf(setupPin, sizeof setupPin, "%08lu", (unsigned long)((mac ^ (mac >> 24)) % 100000000UL));
+  if (strlen(setupPin) < 8) strcpy(setupPin, "12345678");
+  drawSetup("scanning for networks");
+  WiFi.mode(WIFI_AP_STA);
+  int n = WiFi.scanNetworks(false, false, false, 250);
+  setupSsids[0] = '\0';
+  for (int i = 0; i < n && i < 12; i++) {
+    char opt[64];
+    snprintf(opt, sizeof opt, "<option>%.32s</option>", WiFi.SSID(i).c_str());
+    strlcat(setupSsids, opt, sizeof setupSsids);
+  }
+  WiFi.scanDelete();
+  WiFi.softAP("ticker-setup", setupPin);
+  web = new WebServer(80);
+  dns = new DNSServer();
+  dns->start(53, "*", WiFi.softAPIP());
+  web->on("/", HTTP_GET, setupPage);
+  web->on("/save", HTTP_POST, setupSave);
+  web->onNotFound([] {  // the captive probes of every phone land here
+    web->sendHeader("Location", "http://192.168.4.1/", true);
+    web->send(302, "text/plain", "");
+  });
+  web->begin();
+  Serial.printf("setup: AP ticker-setup, password %s, form at http://%s (%d networks heard)\n", setupPin,
+                WiFi.softAPIP().toString().c_str(), n);
+  drawSetup(wifiSsid[0] ? "swipe down to keep the old network" : "waiting for you");
+}
+static void clearDevice() {
+  Serial.println("clear device: NVS wiped, restarting into setup");
+  prefs.begin("ticker", false);
+  prefs.clear();
+  prefs.end();
+  rtcMagic = 0;
+  delay(300);
+  ESP.restart();
+}
+
 // ── settings page: swipe right from the list ─────────────────────────────
 static uint32_t pageOpenedAt = 0;  // settings and info share the auto-return
 
@@ -1221,6 +1334,10 @@ static void loadSettings() {
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
+  }
+  prefs.getString("ssid", wifiSsid, sizeof wifiSsid);
+  prefs.getString("pass", wifiPass, sizeof wifiPass);
+  if (any) {  // (re-enter the block the settings print expects)
   }
   if (prefs.isKey("tx0")) {
     touchCal.swap = prefs.getBool("tsw", false);
@@ -1260,13 +1377,19 @@ static void saveSettings() {
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Touch", "Info", "Shutdown"};
+  // Row numbers run across both pages: 0-6 on the first, 7-11 on the second.
+  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency",
+                                       "Touch", "Wi-Fi", "Info", "Clear device", "Shutdown"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
                 : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
-                : i == 6 ? sCur : i == 7 ? "calibrate" : i == 8 ? ">" : shutdownArmedUntil ? "tap again" : "tap twice";
-  int16_t y = S_Y0 + i * S_H;
-  field(8, y + 3, 11, 2, i == 9 ? C_BAD : C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 3, 9, 2, i == 9 && shutdownArmedUntil ? C_WARN : C_FG, v);
+                : i == 6 ? sCur : i == 7 ? "calibrate" : i == 8 ? (wifiSsid[0] ? wifiSsid : "not set")
+                : i == 9 ? ">" : i == 10 ? (clearArmedUntil ? "tap again" : "tap twice")
+                : shutdownArmedUntil ? "tap again" : "tap twice";
+  if (i / S_N != setPage) return;
+  int16_t y = S_Y0 + (i % S_N) * S_H;
+  bool danger = i >= 10, armed = (i == 10 && clearArmedUntil) || (i == 11 && shutdownArmedUntil);
+  field(8, y + 6, 11, 2, danger ? C_BAD : C_MUTED, labels[i]);
+  fieldRight(X_RIGHT, y + 6, 9, 2, armed ? C_WARN : C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
@@ -1289,19 +1412,26 @@ static void nextCurrency() {
   (void)codes;
 }
 static void drawSettings() {
-  drawPanel("SETTINGS", C_MUTED, nullptr, 0);
-  for (uint8_t i = 0; i < S_N; i++) drawSettingRow(i);
-  drawHint("< list");
+  drawPanel(setPage ? "DEVICE" : "SETTINGS", C_MUTED, nullptr, 0);
+  for (uint8_t i = 0; i < 12; i++) drawSettingRow(i);
+  drawHint(setPage ? "v settings     < list" : "^ device     < list");
 }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
-// 2 (touch calibration), 3 (shut down now).
+// 2 (touch calibration), 3 (shut down now), 4 (Wi-Fi setup), 5 (clear the device).
 static uint8_t tapSetting(uint8_t i) {
-  if (i == 8) return 1;
+  if (i == 9) return 1;
   if (i == 7) return 2;
-  if (i == 9) {
+  if (i == 8) return 4;
+  if (i == 11) {
     if (shutdownArmedUntil && millis() < shutdownArmedUntil) return 3;
     shutdownArmedUntil = millis() + 3000;
-    drawSettingRow(9);
+    drawSettingRow(11);
+    return 0;
+  }
+  if (i == 10) {
+    if (clearArmedUntil && millis() < clearArmedUntil) return 5;
+    clearArmedUntil = millis() + 3000;
+    drawSettingRow(10);
     return 0;
   }
   if (i == 6) nextCurrency();
@@ -2397,7 +2527,7 @@ static void selfCheck() {
   assert(Y_SPK + SPK_H <= ROW_H - 4);
   assert(Y_ROW0 + RING <= LCD_H);  // the ring plus header fills the panel; nothing below it
   assert(72 + GW(1) * 18 <= X_RIGHT - GW(1) * 5);
-  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0);
+  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N * 2 >= 12);
   assert(hitSetting(S_Y0 + S_H * S_N - 1) == S_N - 1 && hitSetting(S_Y0 + S_H * S_N) == -1);
   // Detail: the logo and the text column beside it, then the chart labels
   // and the buttons, all fit.
@@ -2451,7 +2581,7 @@ void setup() {
   tzset();
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
-  if (cause == ESP_SLEEP_WAKEUP_TIMER && haveTime && sleepDue(t)) goToSleep(secondsUntilWake(t));
+  if (wifiSsid[0] && cause == ESP_SLEEP_WAKEUP_TIMER && haveTime && sleepDue(t)) goToSleep(secondsUntilWake(t));
   awakeUntil = millis() + 60000;
 
   gfx = boardDisplay();
@@ -2470,11 +2600,15 @@ void setup() {
     listStart();
   } else {
     char st[40];
-    snprintf(st, sizeof st, "connecting to %.24s", WIFI_SSID);
+    snprintf(st, sizeof st, "connecting to %.24s", wifiSsid);
     drawSplash(st);
     state = State::Boot;
   }
   backlight(blMax);
+  if (!wifiSsid[0]) {  // never set up: the access point and the form, nothing else
+    startSetup();
+    return;
+  }
   // The join runs in the background from here: netTick() in loop() issues
   // the begin() when the scan is in, starts the clock when the link is up,
   // and the state machine keeps the splash (or the restored list) meanwhile.
@@ -2490,7 +2624,7 @@ void setup() {
 // The non-blocking join: the scan's begin(), then NTP once the link is up.
 static void netTick() {
   static bool scanning = true, clockStarted = false;
-  if (scanning && netJoinTick(WIFI_SSID, WIFI_PASS)) scanning = false;
+  if (scanning && netJoinTick(wifiSsid, wifiPass)) scanning = false;
   bool up = WiFi.status() == WL_CONNECTED;
   if (up && !clockStarted) {
     clockStarted = true;
@@ -2525,9 +2659,9 @@ static void drawFailPanel() {
     drawPanel("NO LIST", C_WARN, l, 6);
   } else if (state == State::NoWifi) {
     static char ssid[40];
-    snprintf(ssid, sizeof ssid, "SSID %s", WIFI_SSID);
-    const char *l[] = {ssid, "", "not associated. 2.4GHz only.", "", "retrying..."};
-    drawPanel("NO WIFI", C_BAD, l, 5);
+    snprintf(ssid, sizeof ssid, "SSID %s", wifiSsid);
+    const char *l[] = {ssid, "", "not associated. 2.4GHz only.", "", "retrying...", "", "swipe right: settings > Wi-Fi"};
+    drawPanel("NO WIFI", C_BAD, l, 7);
   } else {
     static char f[34];
     snprintf(f, sizeof f, "%u failed fetches", failures);
@@ -2625,6 +2759,22 @@ void loop() {
   int16_t tx, ty;
   int16_t ddy = 0;
   Gesture g = pollGesture(&tx, &ty, &ddy);
+  if (setupMode) {  // serve the form; a swipe down keeps an existing network
+    web->handleClient();
+    dns->processNextRequest();
+    static uint32_t lastN = 0;
+    if (millis() - lastN > 2000) {
+      lastN = millis();
+      char st[40];
+      int n = WiFi.softAPgetStationNum();
+      if (n) snprintf(st, sizeof st, "%d phone%s joined, form at 192.168.4.1", n, n == 1 ? "" : "s");
+      else snprintf(st, sizeof st, "%s", wifiSsid[0] ? "swipe down to keep the old network" : "waiting for you");
+      fieldCentre(LCD_W / 2, 286, 36, 1, C_DIM, st);
+    }
+    if (g == Gesture::SwipeDown && wifiSsid[0]) ESP.restart();
+    delay(10);
+    return;
+  }
   bool tap = g == Gesture::Tap || (g == Gesture::TapUp && tapUpQuick);
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
@@ -2689,7 +2839,7 @@ void loop() {
     if (millis() - lastStatus > 1000) {
       lastStatus = millis();
       char st[40];
-      if (!up) snprintf(st, sizeof st, "connecting to %.24s", WIFI_SSID);
+      if (!up) snprintf(st, sizeof st, "connecting to %.24s", wifiSsid);
       else if (!haveTime) snprintf(st, sizeof st, "connected, setting the clock");
       else snprintf(st, sizeof st, "fetching prices");
       splashStatus(st);
@@ -2763,7 +2913,7 @@ void loop() {
   if (swipe && state == State::Running) {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
-                (view == View::Settings && g == Gesture::SwipeLeft) ||
+                (view == View::Settings && (g == Gesture::SwipeLeft || g == Gesture::SwipeUp || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (acts && (sSound & 1)) tone(SPK, 1200, 15);
@@ -2800,6 +2950,10 @@ void loop() {
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
+    } else if (view == View::Settings && (g == Gesture::SwipeUp || g == Gesture::SwipeDown)) {
+      setPage = g == Gesture::SwipeUp ? 1 : 0;
+      pageOpenedAt = millis();
+      drawSettings();
     } else if (view == View::Info) {
       if (g == Gesture::SwipeLeft) backToList();
       else if (g == Gesture::SwipeDown) {
@@ -2825,7 +2979,11 @@ void loop() {
   }
   if (shutdownArmedUntil && millis() > shutdownArmedUntil) {
     shutdownArmedUntil = 0;
-    if (view == View::Settings) drawSettingRow(9);
+    if (view == View::Settings) drawSettingRow(11);
+  }
+  if (clearArmedUntil && millis() > clearArmedUntil) {
+    clearArmedUntil = 0;
+    if (view == View::Settings) drawSettingRow(10);
   }
   if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
     removeArmedUntil = 0;
@@ -2861,7 +3019,7 @@ void loop() {
     } else if (view == View::Settings) {
       int8_t i = hitSetting(ty);
       pageOpenedAt = millis();
-      uint8_t r = i >= 0 ? tapSetting((uint8_t)i) : 0;
+      uint8_t r = i >= 0 ? tapSetting((uint8_t)(setPage * S_N + i)) : 0;
       if (r == 1) {
         view = View::Info;
         drawInfo(true);
@@ -2873,6 +3031,13 @@ void loop() {
         drawHint("shutting down. touch to wake", C_WARN);
         delay(600);
         goToSleep(0);  // no timer: a touch is the only way back
+      } else if (r == 4) {
+        WiFi.disconnect(true);
+        startSetup();
+      } else if (r == 5) {
+        drawHint("clearing. it restarts into setup", C_WARN);
+        delay(600);
+        clearDevice();
       }
     } else if (view == View::Info) {  // a tap shows the splash, as the last line says
       view = View::Splash;
