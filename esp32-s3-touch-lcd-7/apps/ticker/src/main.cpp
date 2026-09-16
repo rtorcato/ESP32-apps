@@ -431,10 +431,10 @@ static bool loadConfig() {
 // company name: the symbol is the identity, and the name ran into it.
 static const int16_t Y_HEAD = 10, Y_ROW0 = 40, ROW_H = 44, X_SYM = 12, Y_BADGE = 6, X_LBL = 56, Y_LBL = 12,
                      X_SPK = 200, Y_SPK = 6, SPK_W = 320, SPK_H = 32, X_PRICE = 640, X_RIGHT = 788,
-                     Y_FOOT = 436, TAB_X = 12, TAB_W = 80, TAB_STEP = 84, TAG_X = 440, ICON_X = 600, ICON_STEP = 40;
+                     Y_FOOT = 436, TAB_X = 12, TAB_W = 80, TAB_STEP = 84, TAG_X = 420, ICON_X = 564, ICON_STEP = 40;
 // Settings: title, five 40px rows, the LIST button.
 // Settings: eight 48px rows, all on screen. Heatmap: 6 x 4 tiles.
-static const int16_t S_Y0 = 100, S_H = 34, S_N = 10, S_ROWS = 10;
+static const int16_t S_Y0 = 56, S_H = 38, S_N = 10, S_ROWS = 10;
 // Detail, landscape: a left column (logo, symbol, name, the big price,
 // change, the two range bars) and a right column (chart with high and low
 // inside it, five range chips, three headlines). One gesture hint at the
@@ -481,7 +481,8 @@ struct NewsItem {
   char title[96];
   char age[8];
 };
-static const uint8_t NEWS_N = 6;
+static const uint8_t NEWS_N = 12, NEWS_ALL = 255;  // idx NEWS_ALL: one feed for the whole list
+static uint8_t newsPage = 0;
 static NewsItem news[NEWS_N];  // fetch task writes, UI reads, under mux
 static uint8_t newsN = 0, newsIdx = 255;
 static uint32_t newsAt = 0;
@@ -861,7 +862,7 @@ static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
 static const int16_t STRIP = ROW_H * ROWS;  // the ring, Y_ROW0..Y_ROW0+STRIP
 static char cRow[ROWS][48], cCanvas[48], cHead[64], cFoot[80];
 static void drawTabsAndIcons();
-static void drawHeader(uint8_t lit);
+static void drawHeader(uint8_t lit, const char *title = nullptr, const char *note = nullptr);
 
 static uint16_t rowOf(int32_t v) { return order[modp(v, nShown)]; }
 static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, ROWS); }
@@ -1053,21 +1054,25 @@ static void listTick() {
 // are drawn once by listStart; this keeps the clock and the tag current.
 static const char *const TAB_NAMES[] = {"ALL", "STOCKS", "INDICES", "CRYPTO", "FX"};
 static int16_t tabX[5], tabW[5];  // each tab as wide as its word, laid out left to right
-static uint8_t litIcon = 0;       // 1 search, 2 heatmap, 3 settings: the page that is open
+static uint8_t litIcon = 0;       // 1 search, 2 heatmap, 3 headlines, 4 settings: the page that is open
+static bool tabsShown = false;    // the section tabs are only on the list; other pages put their name there
 static void drawTabsAndIcons() {
   int16_t x = TAB_X;
-  for (uint8_t i = 0; i < 5; i++) {
-    tabX[i] = x;
-    tabW[i] = textWidth(1, TAB_NAMES[i]) + 28;
-    bool on = i == sect;
-    gfx->fillRect(x, 0, tabW[i], Y_ROW0 - 1, C_BG);
-    textAt(x + 14, 12, 1, on ? C_FG : C_DIM, TAB_NAMES[i]);
-    if (on) gfx->fillRect(x + 10, 34, tabW[i] - 20, 3, C_FG);
-    x += tabW[i];
+  gfx->fillRect(0, 0, TAG_X, Y_ROW0 - 1, C_BG);
+  if (tabsShown) {
+    for (uint8_t i = 0; i < 5; i++) {
+      tabX[i] = x;
+      tabW[i] = textWidth(1, TAB_NAMES[i]) + 28;
+      bool on = i == sect;
+      textAt(x + 14, 12, 1, on ? C_FG : C_DIM, TAB_NAMES[i]);
+      if (on) gfx->fillRect(x + 10, 34, tabW[i] - 20, 3, C_FG);
+      x += tabW[i];
+    }
   }
   x = ICON_X;  // a magnifier
-  uint16_t c1 = litIcon == 1 ? C_FG : C_MUTED, c2 = litIcon == 2 ? C_FG : C_MUTED, c3 = litIcon == 3 ? C_FG : C_MUTED;
-  gfx->fillRect(x - 8, 0, 3 * ICON_STEP, Y_ROW0 - 1, C_BG);
+  uint16_t c1 = litIcon == 1 ? C_FG : C_MUTED, c2 = litIcon == 2 ? C_FG : C_MUTED, c3 = litIcon == 3 ? C_FG : C_MUTED,
+           c4 = litIcon == 4 ? C_FG : C_MUTED;
+  gfx->fillRect(x - 8, 0, 4 * ICON_STEP, Y_ROW0 - 1, C_BG);
   gfx->drawCircle(x + 13, 17, 7, c1);
   gfx->drawCircle(x + 13, 17, 6, c1);
   gfx->drawLine(x + 18, 22, x + 26, 30, c1);
@@ -1075,24 +1080,34 @@ static void drawTabsAndIcons() {
   x += ICON_STEP;  // a grid
   for (uint8_t r = 0; r < 2; r++)
     for (uint8_t c = 0; c < 2; c++) gfx->fillRoundRect(x + 6 + c * 12, 9 + r * 12, 9, 9, 2, c2);
+  x += ICON_STEP;  // headlines: three lines of text
+  for (uint8_t r = 0; r < 3; r++) gfx->fillRect(x + 5, 10 + r * 7, r == 1 ? 22 : 16, 3, c3);
   x += ICON_STEP;  // three sliders
   for (uint8_t r = 0; r < 3; r++) {
-    gfx->drawFastHLine(x + 5, 12 + r * 8, 22, c3);
-    gfx->fillCircle(x + 9 + (r == 1 ? 12 : r == 2 ? 6 : 0), 12 + r * 8, 3, c3);
+    gfx->drawFastHLine(x + 5, 12 + r * 8, 22, c4);
+    gfx->fillCircle(x + 9 + (r == 1 ? 12 : r == 2 ? 6 : 0), 12 + r * 8, 3, c4);
   }
   gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
 }
-// The header is on every page: a page draws it right after its fillScreen.
-static void drawHeader(uint8_t lit) {
+// The header is on every page, drawn right after a page's fillScreen. The
+// right side -- the icons and the clock -- is fixed; the left side is the
+// page's: the section tabs on the list, elsewhere a title (and a note).
+static void drawHeader(uint8_t lit, const char *title, const char *note) {
   litIcon = lit;
+  tabsShown = title == nullptr;
   drawTabsAndIcons();
+  if (title) {
+    textAt(TAB_X, 10, 2, C_FG, title);
+    if (note) textAt(TAB_X + textWidth(2, title) + 14, 14, 1, C_MUTED, note);
+  }
   cHead[0] = '\0';
 }
 // Which header thing a tap at x lands on: 0-4 a tab, 10 search, 11 heatmap, 12 settings, -1 nothing.
 static int8_t hitHeader(int16_t x) {
-  for (uint8_t i = 0; i < 5; i++)
-    if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
-  if (x >= ICON_X - 8 && x < ICON_X + 3 * ICON_STEP) return 10 + (x - (ICON_X - 8)) / ICON_STEP;
+  if (tabsShown)
+    for (uint8_t i = 0; i < 5; i++)
+      if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
+  if (x >= ICON_X - 8 && x < ICON_X + 4 * ICON_STEP) return 10 + (x - (ICON_X - 8)) / ICON_STEP;
   return -1;
 }
 static void drawHead(const struct tm *t, bool haveTime) {
@@ -1108,9 +1123,9 @@ static void drawHead(const struct tm *t, bool haveTime) {
   if (ses == Session::Closed) {
     char nx[16];
     nextOpen(*t, nx, sizeof nx);
-    snprintf(tag, sizeof tag, "CLOSED til %s", nx);
+    snprintf(tag, sizeof tag, "CLOSED %s", nx);
   }
-  field(TAG_X, 12, 19, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
+  field(TAG_X, 12, 17, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
 }
 // The footer: an alert for ten seconds, else the session when it is not
 // simply open; and on the right how old the prices are. Quiet colours.
@@ -1172,18 +1187,24 @@ static void drawSplash(const char *status) {
   splashStatus(status);
 }
 
-static void drawPanel(const char *title, uint16_t tc, const char *const *lines, uint8_t n, bool header = true) {
+static void drawPanel(const char *title, uint16_t tc, const char *const *lines, uint8_t n, bool header = true,
+                      uint8_t lit = 4, const char *head = nullptr, const char *note = nullptr) {
   gfx->fillScreen(C_BG);
-  if (header) drawHeader(3);
-  field(20, 52, 24, 3, tc, title);
-  gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
-  for (uint8_t i = 0; i < n && i < 15; i++) field(20, 110 + i * 22, 90, 1, C_MUTED, lines[i]);
+  if (header) drawHeader(lit, head ? head : title, note);
+  int16_t y = header ? 60 : 52;  // with the page named in the header the title is smaller
+  if (!header) {
+    field(20, 52, 24, 3, tc, title);
+    gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
+    y = 110;
+  }
+  for (uint8_t i = 0; i < n && i < 16; i++) field(20, y + i * 22, 90, 1, C_MUTED, lines[i]);
 }
 
 // ── detail page ──────────────────────────────────────────────────────────
 static uint8_t detailIdx = 0;
 static uint32_t detailOpenedAt = 0;
 static char cDetail[64];
+static bool kChartReset = false;  // a chip tap: the chart part repaints on the next pass
 
 // One dim line at the foot of a page saying which swipes it takes. Not a
 // control: the gestures work anywhere on the page.
@@ -1245,7 +1266,9 @@ static void drawDetail(bool full) {
   Row r = rowCopy(detailIdx);
   if (full) {
     gfx->fillScreen(C_BG);
-    drawHeader(0);
+    char head[16];
+    snprintf(head, sizeof head, "< %s", r.label);
+    drawHeader(0, head, r.coin ? "crypto" : r.kind == K_FX ? "currency" : r.kind == K_INDEX ? "index" : r.name);
     cDetail[0] = '\0';
     if (!blitLogo(D_X_LOGO, D_Y_LOGO, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
       gfx->fillRoundRect(D_X_LOGO, D_Y_LOGO, LOGO_BIG, LOGO_BIG, 20, C_RULE);
@@ -1284,7 +1307,7 @@ static void drawDetail(bool full) {
   float shown = ext ? r.last : r.price, base = ext ? r.price : r.prev;
   float pctv = ext ? (r.last - r.price) / r.price * 100.0f : r.pct;
 
-  char price[12], pct[12], key[48];
+  char price[12], pct[12], key[64];
   if (r.valid) {
     priceStr(r, shown, price, sizeof price);
     formatPct(pctv, pct, sizeof pct);
@@ -1293,66 +1316,92 @@ static void drawDetail(bool full) {
     pct[0] = '\0';
   }
   uint8_t dots = r.valid ? 0 : 1 + (millis() / 400) % 3;  // a row with no price yet: an animated "fetching"
-  snprintf(key, sizeof key, "%s|%s|%s|%u|%u|%u|%d|%d|%s|%u|%u|%lu", r.label, price, pct, r.n, rangeSel, n, mine && !sr.valid,
-           ext, sCur, dots, nNews, newsMine ? (unsigned long)newsAt : 0UL);
-  if (strcmp(key, cDetail) == 0) return;
-  strcpy(cDetail, key);
-
   uint16_t fg = !r.valid ? C_DIM : pctv >= 0 ? C_GOOD : C_BAD;
-  char name[28], tag[28] = "";  // the name beside the logo, and one line under it
-  snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.kind == K_FX ? "one US dollar buys" : r.name);
-  if (!r.valid) snprintf(tag, sizeof tag, "fetching %s%.*s", r.label, dots, "...");
-  else if (ext) snprintf(tag, sizeof tag, "%s", ses == Session::Pre ? "pre-market" : "after hours");
-  field(D_X_TXT, D_Y_SYM, MAX_LABEL + 1, 3, C_FG, r.label);
-  field(D_X_TXT, D_Y_NAME, 26, 1, C_MUTED, name);
-  field(D_X_TXT, D_Y_TAG, 26, 1, C_WARN, tag);
-  field(D_X_PRICE, D_Y_PRICE, 8, 4, fg, price);  // the tall digits
-  bool conv = false;
-  disp(r, shown, &conv);  // which currency the number is in
-  const char *code = r.kind == K_FX ? "per USD" : conv ? sCur : r.cur;
-  if (r.valid && (r.kind == K_FX || strcmp(code, "USD") != 0 || strcmp(sCur, "USD") != 0))
-    textAt(D_X_PRICE + textWidth(4, price) + 10, D_Y_PRICE + 32, 1, C_DIM, code);
-  char chg[12] = "";
-  if (r.valid && base > 0) snprintf(chg, sizeof chg, "%+.2f", disp(r, shown) - disp(r, base));
-  field(D_X_PRICE, D_Y_CHG, 12, 2, fg, chg);
-  field(D_X_PCT, D_Y_CHG, 8, 2, fg, pct);
+  (void)cDetail;
+
+  // Four parts, each repainted only when its own key changes, so a price
+  // landing does not blank the chart and the dots do not blank the page.
+  static char kText[64], kChart[48], kRanges[64], kNews[32];
+  if (full || kChartReset) {
+    kChart[0] = '\0';
+    kChartReset = false;
+  }
+  if (full) kText[0] = kRanges[0] = kNews[0] = '\0';
+
+  snprintf(key, sizeof key, "%s|%s|%s|%d|%s|%u", r.label, price, pct, ext, sCur, dots);
+  if (strcmp(key, kText) != 0) {
+    strcpy(kText, key);
+    char name[28], tag[28] = "";  // the name beside the logo, and one line under it
+    snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.kind == K_FX ? "one US dollar buys" : r.name);
+    if (!r.valid) snprintf(tag, sizeof tag, "fetching %s%.*s", r.label, dots, "...");
+    else if (ext) snprintf(tag, sizeof tag, "%s", ses == Session::Pre ? "pre-market" : "after hours");
+    field(D_X_TXT, D_Y_SYM, MAX_LABEL + 1, 3, C_FG, r.label);
+    field(D_X_TXT, D_Y_NAME, 26, 1, C_MUTED, name);
+    field(D_X_TXT, D_Y_TAG, 26, 1, C_WARN, tag);
+    field(D_X_PRICE, D_Y_PRICE, 8, 4, fg, price);  // the tall digits
+    bool conv = false;
+    disp(r, shown, &conv);  // which currency the number is in
+    const char *code = r.kind == K_FX ? "per USD" : conv ? sCur : r.cur;
+    gfx->fillRect(D_X_PRICE + 200, D_Y_PRICE + 30, 100, 20, C_BG);
+    if (r.valid && (r.kind == K_FX || strcmp(code, "USD") != 0 || strcmp(sCur, "USD") != 0))
+      textAt(D_X_PRICE + textWidth(4, price) + 10, D_Y_PRICE + 32, 1, C_DIM, code);
+    char chg[12] = "";
+    if (r.valid && base > 0) snprintf(chg, sizeof chg, "%+.2f", disp(r, shown) - disp(r, base));
+    field(D_X_PRICE, D_Y_CHG, 12, 2, fg, chg);
+    field(D_X_PCT, D_Y_CHG, 8, 2, fg, pct);
+  }
 
   // Chart: the sparkline's data with room to be a chart. The previous close
   // is a dashed reference line -- the percent is measured from it, so
   // without it the shape means nothing.
-  gfx->fillRect(CH_X - 1, CH_Y - 1, CH_W + 2, CH_H + 2, C_BG);  // chips below are left alone
-  gfx->fillRect(0, D_Y_DAY, 380, Y_HINT - 4 - D_Y_DAY, C_BG);
-  gfx->fillRect(CH_X, D_Y_NEWS, LCD_W - CH_X, Y_HINT - 4 - D_Y_NEWS, C_BG);
-  if (r.coin) {
-    field(CH_X + 8, CH_Y + CH_H / 2 - 8, 40, 1, C_DIM, "no intraday series for coins");
-  } else if (rangeSel && mine && !sr.valid) {
-    char m[24];
-    snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
-    field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, m);
-  } else if (rangeSel && n < 2) {
-    char m[24];
-    snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
-    field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, m);
-  } else if (!r.valid || n < 2) {
-    field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, r.valid ? "no series" : "fetching...");
-  } else {
-    drawChart(r, cl, n, prev, fg);
-  }
-  // Headlines under the chips: three, one line each, cut to the column.
-  if (nNews) {
-    for (uint8_t i = 0; i < nNews; i++) {
-      char line[2][64];
-      wrapText(items[i].title, CH_W - 60, line, 1);
-      textAt(CH_X, D_Y_NEWS + i * 38, 1, C_FG, line[0]);
-      fieldRight(X_RIGHT, D_Y_NEWS + i * 38, 5, 1, C_DIM, items[i].age);
-      gfx->drawFastHLine(CH_X, D_Y_NEWS + i * 38 + 30, CH_W, C_RULE);
+  snprintf(key, sizeof key, "%u|%u|%d|%d|%.2f|%d", rangeSel, n, mine && !sr.valid, r.valid, n ? cl[n - 1] : 0.0f, fg == C_GOOD);
+  if (strcmp(key, kChart) != 0) {
+    strcpy(kChart, key);
+    gfx->fillRect(CH_X - 1, CH_Y - 1, CH_W + 2, CH_H + 2, C_BG);  // chips below are left alone
+    if (r.coin) {
+      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 40, 1, C_DIM, "no intraday series for coins");
+    } else if (rangeSel && mine && !sr.valid) {
+      char m[24];
+      snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
+      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, m);
+    } else if (rangeSel && n < 2) {
+      char m[24];
+      snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
+      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, m);
+    } else if (!r.valid || n < 2) {
+      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, r.valid ? "no series" : "fetching...");
+    } else {
+      drawChart(r, cl, n, prev, fg);
     }
-  } else if (!r.coin) {
-    textAt(CH_X, D_Y_NEWS, 1, C_DIM, newsMine ? "no headlines" : "headlines on their way...");
   }
-  if (!r.valid) return;
-  drawRange(r, D_Y_DAY, "day range", r.dayLo, r.dayHi, r.price);
-  drawRange(r, D_Y_WK, "52-week range", r.wkLo, r.wkHi, r.price);
+
+  // Headlines under the chips: three, one line each, cut to the column.
+  snprintf(key, sizeof key, "%u|%lu|%d", nNews, newsMine ? (unsigned long)newsAt : 0UL, r.coin);
+  if (strcmp(key, kNews) != 0) {
+    strcpy(kNews, key);
+    gfx->fillRect(CH_X, D_Y_NEWS, LCD_W - CH_X, Y_HINT - 4 - D_Y_NEWS, C_BG);
+    if (nNews) {
+      for (uint8_t i = 0; i < nNews; i++) {
+        char line[2][64];
+        wrapText(items[i].title, CH_W - 60, line, 1);
+        textAt(CH_X, D_Y_NEWS + i * 38, 1, C_FG, line[0]);
+        fieldRight(X_RIGHT, D_Y_NEWS + i * 38, 5, 1, C_DIM, items[i].age);
+        gfx->drawFastHLine(CH_X, D_Y_NEWS + i * 38 + 30, CH_W, C_RULE);
+      }
+    } else if (!r.coin) {
+      textAt(CH_X, D_Y_NEWS, 1, C_DIM, newsMine ? "no headlines" : "headlines on their way...");
+    }
+  }
+
+  snprintf(key, sizeof key, "%d|%.2f|%.2f|%.2f|%.2f|%.2f|%s", r.valid, r.price, r.dayLo, r.dayHi, r.wkLo, r.wkHi, sCur);
+  if (strcmp(key, kRanges) != 0) {
+    strcpy(kRanges, key);
+    gfx->fillRect(0, D_Y_DAY, 380, Y_HINT - 4 - D_Y_DAY, C_BG);
+    if (r.valid) {
+      drawRange(r, D_Y_DAY, "day range", r.dayLo, r.dayHi, r.price);
+      drawRange(r, D_Y_WK, "52-week range", r.wkLo, r.wkHi, r.price);
+    }
+  }
 }
 
 // ── setup: the device asks for its Wi-Fi ─────────────────────────────────
@@ -1571,7 +1620,7 @@ static void drawColumnRow(uint8_t i) {
   gfx->drawFastHLine(20, y + S_H - 1, LCD_W - 40, C_RULE);
 }
 static void drawColumns() {
-  drawPanel("COLUMNS", C_MUTED, nullptr, 0);
+  drawPanel("COLUMNS", C_MUTED, nullptr, 0, true, 4, "< COLUMNS", "what a row shows");
   for (uint8_t i = 0; i < 6; i++) drawColumnRow(i);
   drawHint("tap a row to turn it on or off        < settings");
 }
@@ -1583,7 +1632,7 @@ static void drawSettingRows() {
   drawHint("< list");
 }
 static void drawSettings() {
-  drawPanel("SETTINGS", C_MUTED, nullptr, 0);
+  drawPanel("SETTINGS", C_MUTED, nullptr, 0, true, 4, "SETTINGS");
   drawSettingRows();
 }
 // The confirm screen for the two rows that cannot be undone: an action
@@ -1599,7 +1648,7 @@ static void powerGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
 }
 static void drawConfirm() {
   gfx->fillScreen(C_BG);
-  drawHeader(3);
+  drawHeader(4, "< SETTINGS");
   bool clear = confirmWhat == 2;
   if (clear) {  // a ring with a cross
     for (int16_t k = 0; k < 4; k++) gfx->drawCircle(LCD_W / 2, 150, 40 - k, C_BAD);
@@ -1645,7 +1694,7 @@ static uint8_t tapSetting(uint8_t i) {
 static void drawInfo(bool full) {
   static uint32_t last = 0;
   if (full) {
-    drawPanel("INFO", C_MUTED, nullptr, 0);
+    drawPanel("INFO", C_MUTED, nullptr, 0, true, 4, "< INFO", "tap for the splash screen");
     drawHint("< list     v settings");
     last = 0;
   }
@@ -1679,7 +1728,7 @@ static void drawInfo(bool full) {
   snprintf(l[n++], 40, "built " __DATE__ " " __TIME__);
   l[n++][0] = '\0';
   snprintf(l[n++], 40, "tap anywhere for the splash screen");
-  for (uint8_t i = 0; i < n; i++) field(20, 110 + i * 22, 90, 1, i == 0 ? C_FG : C_MUTED, l[i]);
+  for (uint8_t i = 0; i < n; i++) field(20, 60 + i * 22, 90, 1, i == 0 ? C_FG : C_MUTED, l[i]);
 }
 
 // ── heatmap: swipe left from the list ────────────────────────────────────
@@ -1710,11 +1759,10 @@ static int8_t hitTile(int16_t x, int16_t y) {
 static void drawHeat(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
-    drawHeader(2);
     char h[48];
-    if (heatPages() > 1) snprintf(h, sizeof h, "^ v  page %u of %u        < search        list >", heatPage + 1, heatPages());
-    else snprintf(h, sizeof h, "< search        list >");
-    drawHint(h);
+    snprintf(h, sizeof h, "%s, page %u of %u", SECT_NAMES[sect], heatPage + 1, heatPages());
+    drawHeader(2, "HEATMAP", heatPages() > 1 ? h : SECT_NAMES[sect]);
+    drawHint(heatPages() > 1 ? "^ v  pages        < search        list >" : "< search        list >");
     cHeat[0] = '\0';
   }
   char key[160] = "";
@@ -1802,7 +1850,7 @@ static void drawSearch(bool full) {
       return;
     }
     gfx->fillScreen(C_BG);
-    drawHeader(1);
+    drawHeader(1, "SEARCH", "a symbol or a company name");
     drawQuery();
     textAt(20, 134, 1, C_DIM, "type a few letters of a symbol or a company name, then tap GO");
     drawKeyboard();
@@ -1819,8 +1867,7 @@ static void drawSearch(bool full) {
   xSemaphoreGive(mux);
   if (full) {
     gfx->fillScreen(C_BG);
-    drawHeader(1);
-    textAt(20, 52, 3, C_MUTED, searchQ);
+    drawHeader(1, "< SEARCH", searchQ);
     textAt(LCD_W - 20 - textWidth(1, "v back to the keyboard"), 62, 1, C_DIM, "v back to the keyboard");
     gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
     cSearch[0] = '\0';
@@ -1849,7 +1896,7 @@ static void drawSearch(bool full) {
   drawHint("tap one to add it and open it");
 }
 // ── news page: swipe up from a stock ─────────────────────────────────────
-static char cNews[24];
+static char cNews[32];
 // Greedy word wrap by measured width into at most `lines` lines of `w` px.
 static uint8_t wrapText(const char *s, int16_t w, char out[][64], uint8_t lines) {  // forward-declared above
   uint8_t n = 0;
@@ -1877,14 +1924,20 @@ static uint8_t wrapText(const char *s, int16_t w, char out[][64], uint8_t lines)
   return n;
 }
 static void drawNews(bool full) {
-  Row r = rowCopy(detailIdx);
+  bool all = detailIdx == NEWS_ALL;
+  Row r;
+  if (all) {
+    memset(&r, 0, sizeof r);
+    strcpy(r.label, "ALL");
+  } else {
+    r = rowCopy(detailIdx);
+  }
   if (full) {
     gfx->fillScreen(C_BG);
-    drawHeader(0);
-    field(20, 52, 6, 3, C_FG, r.label);
-    textAt(20 + textWidth(3, r.label) + 16, 62, 1, C_MUTED, "headlines");
-    gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
-    drawHint("< next        v stock        prev >");
+    char head[16];
+    snprintf(head, sizeof head, "< %s", all ? "HEADLINES" : r.label);
+    drawHeader(all ? 3 : 0, head, all ? "every stock and coin on the list" : "headlines");
+    drawHint(all ? "^ v  pages        v list" : "< next        v stock        prev >");
     cNews[0] = '\0';
   }
   NewsItem items[NEWS_N];
@@ -1897,10 +1950,10 @@ static void drawNews(bool full) {
   memcpy(items, news, sizeof items);
   xSemaphoreGive(mux);
   char key[24];
-  snprintf(key, sizeof key, "%u|%u|%d|%lu", detailIdx, n, failed, (unsigned long)newsAt);
+  snprintf(key, sizeof key, "%u|%u|%d|%lu|%u", detailIdx, n, failed, (unsigned long)newsAt, newsPage);
   if (strcmp(key, cNews) == 0) return;
   strcpy(cNews, key);
-  gfx->fillRect(0, 100, LCD_W, Y_HINT - 104, C_BG);
+  gfx->fillRect(0, Y_ROW0, LCD_W, Y_HINT - 4 - Y_ROW0, C_BG);
   if (!mine || (!n && !failed)) {
     field(20, 220, 30, 1, C_DIM, "loading headlines...");
     return;
@@ -1909,8 +1962,8 @@ static void drawNews(bool full) {
     field(20, 220, 30, 1, C_DIM, "no headlines");
     return;
   }
-  int16_t y = 110;
-  for (uint8_t i = 0; i < n && y + 40 <= Y_HINT - 8; i++) {
+  int16_t y = 56;
+  for (uint8_t i = newsPage * 6; i < n && i < newsPage * 6 + 6 && y + 40 <= Y_HINT - 8; i++) {
     char lines[2][64];
     uint8_t k = wrapText(items[i].title, LCD_W - 40 - 70, lines, 2);
     for (uint8_t j = 0; j < k; j++) textAt(20, y + j * 20, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
@@ -2170,10 +2223,22 @@ static void doSearch() {
 }
 
 static void doNews(uint8_t idx) {
-  Row r = rowCopy(idx);
-  char url[160];
-  snprintf(url, sizeof url, "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s%s&region=US&lang=en-US", r.label,
-           r.coin ? "-USD" : "");  // ^GSPC and CAD=X have feeds of their own
+  Row r;
+  char syms[300] = "", url[420];
+  if (idx == NEWS_ALL) {  // every stock and coin in one feed; Yahoo takes a comma list
+    for (uint8_t i = 0; i < nRows; i++) {
+      if (rows[i].kind == K_FX || rows[i].kind == K_INDEX) continue;
+      if (syms[0]) strlcat(syms, ",", sizeof syms);
+      strlcat(syms, rows[i].label, sizeof syms);
+      if (rows[i].coin) strlcat(syms, "-USD", sizeof syms);
+    }
+    memset(&r, 0, sizeof r);
+    strcpy(r.label, "ALL");
+  } else {
+    r = rowCopy(idx);
+    snprintf(syms, sizeof syms, "%s%s", r.label, r.coin ? "-USD" : "");  // ^GSPC and CAD=X have feeds of their own
+  }
+  snprintf(url, sizeof url, "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s&region=US&lang=en-US", syms);
   NetworkClientSecure client;
   client.setInsecure();
   HTTPClient http;
@@ -2620,8 +2685,8 @@ static void selfCheck() {
   assert(Y_BADGE + LOGO_BADGE <= ROW_H && Y_LBL + GH(2) <= ROW_H && Y_SPK + SPK_H <= ROW_H);
   assert(Y_ROW0 + STRIP <= Y_FOOT && Y_FOOT + 14 + GH(1) <= LCD_H && Y_HEAD + GH(2) <= Y_ROW0);
   assert(STRIP % 20 != 1 || true);  // (the bounce buffer is 20 lines; the ring maps per line, any height works)
-  assert(TAG_X + GW(1) * 19 <= ICON_X - 8 && ICON_X + 3 * ICON_STEP <= X_RIGHT - GW(1) * 8);
-  assert(hitHeader(ICON_X) == 10 && hitHeader(ICON_X + 2 * ICON_STEP + 10) == 12 && hitHeader(TAG_X + 20) == -1);
+  assert(TAG_X + GW(1) * 17 <= ICON_X - 8 && ICON_X + 4 * ICON_STEP <= X_RIGHT - GW(1) * 8);
+  assert(hitHeader(ICON_X) == 10 && hitHeader(ICON_X + 3 * ICON_STEP + 10) == 13 && hitHeader(TAG_X + 20) == -1);
   assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N <= S_ROWS);
   // Detail: the left column stacks, the right column stacks, neither crosses the middle.
   assert(D_X_LOGO + LOGO_BIG <= D_X_TXT && D_X_TXT + GW(1) * 26 <= CH_X && D_Y_LOGO + LOGO_BIG <= D_Y_PRICE);
@@ -2800,6 +2865,7 @@ static void openHeat() {
 }
 static void openSearch();
 static void openHeat();
+static void openNews(uint8_t idx);
 static void headerTap(int16_t x) {
   int8_t h = hitHeader(x);
   if (h >= 0 && h < 5) {
@@ -2821,6 +2887,9 @@ static void headerTap(int16_t x) {
     if (view == View::Heat) backToList();
     else openHeat();
   } else if (h == 12) {
+    if (view == View::News && detailIdx == NEWS_ALL) backToList();
+    else openNews(NEWS_ALL);
+  } else if (h == 13) {
     if (view == View::Settings) backToList();
     else {
       view = View::Settings;
@@ -2834,6 +2903,7 @@ static void openNews(uint8_t idx) {
   view = View::News;
   detailIdx = idx;
   detailOpenedAt = millis();
+  newsPage = 0;
   if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000)) newsWant = idx;
   drawNews(true);
 }
@@ -3067,6 +3137,9 @@ void loop() {
       else if (g == Gesture::SwipeRight) openDetail((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) backToList();
       else if (g == Gesture::SwipeUp) openNews(detailIdx);
+    } else if (view == View::News && detailIdx == NEWS_ALL) {
+      if (g == Gesture::SwipeDown) backToList();
+      else if (g == Gesture::SwipeUp && newsN > 6) { newsPage = (newsPage + 1) % ((newsN + 5) / 6); }
     } else if (view == View::News) {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
@@ -3201,7 +3274,7 @@ void loop() {
         rangeSel = (uint8_t)rg;
         if (rg && !seriesHeld(detailIdx, rg)) seriesWant = seriesWant | (1 << rg);  // failed earlier: retry
         drawRangeChips();
-        cDetail[0] = '\0';  // the chart must redraw for the new range
+        kChartReset = true;  // the chart must redraw for the new range
       }
     }
     Serial.printf("tap %d,%d -> view %u %s\n", tx, ty, (unsigned)view, view == View::Detail ? rows[detailIdx].label : "");
