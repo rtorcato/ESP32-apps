@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker SETTINGS: eight rows, tap to cycle, swipe left for the list">
+  <!-- 240x320 native, drawn from the firmware's layout constants (2026-09-16).
+       Swipe right from the list. Kept in NVS, so they beat config.json. Touch is a
+       three-point calibration; Info is the page the footer used to be.
+  -->
+  <rect width="240" height="320" fill="#000000"/>
+  <text x="8" y="43" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="bold" fill="#9aa4ae" text-anchor="start">SETTINGS</text>
+  <line x1="8" y1="54" x2="232" y2="54" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="84" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Scroll</text>
+  <text x="234" y="84" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">normal</text>
+  <line x1="8" y1="93" x2="232" y2="93" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="114" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Backlight</text>
+  <text x="234" y="114" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">auto</text>
+  <line x1="8" y1="123" x2="232" y2="123" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="144" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Sound</text>
+  <text x="234" y="144" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">both</text>
+  <line x1="8" y1="153" x2="232" y2="153" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="174" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Auto return</text>
+  <text x="234" y="174" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">60s</text>
+  <line x1="8" y1="183" x2="232" y2="183" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="204" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Sleep</text>
+  <text x="234" y="204" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">night</text>
+  <line x1="8" y1="213" x2="232" y2="213" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="234" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">LED</text>
+  <text x="234" y="234" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">both</text>
+  <line x1="8" y1="243" x2="232" y2="243" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="264" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Touch</text>
+  <text x="234" y="264" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">calibrate</text>
+  <line x1="8" y1="273" x2="232" y2="273" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="294" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">Info</text>
+  <text x="234" y="294" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="end">></text>
+  <line x1="8" y1="303" x2="232" y2="303" stroke="#20242a" stroke-width="1"/>
+  <text x="120" y="314" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="middle">&lt; list</text>
+</svg>

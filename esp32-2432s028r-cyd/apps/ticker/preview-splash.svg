@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker boot splash: a navy-to-black sky, nine candles on the way up with a gold average, the wordmark, a status line">
+  <!-- 240x320 native, drawn from the firmware's layout constants (2026-09-16).
+       Drawn from primitives on the device, so there is no asset to push. A wake from
+       deep sleep skips it and shows the restored list at once.
+  -->
+  <rect width="240" height="320" fill="#000000"/>
+  <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000a1e"/><stop offset="1" stop-color="#000000"/></linearGradient></defs>
+  <rect x="0" y="0" width="240" height="320" rx="0" fill="url(#sky)"/>
+  <line x1="35.5" y1="192" x2="35.5" y2="212" stroke="#22d05a" stroke-width="1"/>
+  <rect x="30" y="196" width="11" height="11" rx="0" fill="#22d05a"/>
+  <line x1="57.5" y1="190" x2="57.5" y2="206" stroke="#f0473c" stroke-width="1"/>
+  <rect x="52" y="196" width="11" height="7" rx="0" fill="#f0473c"/>
+  <line x1="79.5" y1="180" x2="79.5" y2="205" stroke="#22d05a" stroke-width="1"/>
+  <rect x="74" y="184" width="11" height="19" rx="0" fill="#22d05a"/>
+  <line x1="101.5" y1="166" x2="101.5" y2="189" stroke="#22d05a" stroke-width="1"/>
+  <rect x="96" y="172" width="11" height="13" rx="0" fill="#22d05a"/>
+  <line x1="123.5" y1="168" x2="123.5" y2="183" stroke="#f0473c" stroke-width="1"/>
+  <rect x="118" y="172" width="11" height="7" rx="0" fill="#f0473c"/>
+  <line x1="145.5" y1="152" x2="145.5" y2="181" stroke="#22d05a" stroke-width="1"/>
+  <rect x="140" y="158" width="11" height="21" rx="0" fill="#22d05a"/>
+  <line x1="167.5" y1="144" x2="167.5" y2="163" stroke="#22d05a" stroke-width="1"/>
+  <rect x="162" y="148" width="11" height="11" rx="0" fill="#22d05a"/>
+  <line x1="189.5" y1="142" x2="189.5" y2="157" stroke="#f0473c" stroke-width="1"/>
+  <rect x="184" y="148" width="11" height="7" rx="0" fill="#f0473c"/>
+  <line x1="211.5" y1="126" x2="211.5" y2="157" stroke="#22d05a" stroke-width="1"/>
+  <rect x="206" y="132" width="11" height="23" rx="0" fill="#22d05a"/>
+  <polyline points="35,209 57,207 79,201 101,186 123,183 145,176 167,161 189,159 211,151" fill="none" stroke="#e8a020" stroke-width="2" stroke-linejoin="round"/>
+  <line x1="24" y1="218" x2="216" y2="218" stroke="#20242a" stroke-width="1"/>
+  <text x="120" y="73" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" font-weight="bold" fill="#e6edf3" text-anchor="middle">TICKER</text>
+  <rect x="96" y="86" width="48" height="2" rx="0" fill="#e8a020"/>
+  <text x="120" y="106" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="middle">STOCKS   CRYPTO   HEADLINES</text>
+  <text x="120" y="294" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="middle">connecting to MatrixZeroIOT</text>
+</svg>

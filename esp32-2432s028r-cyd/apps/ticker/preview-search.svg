@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker SEARCH: a query box and a 6x5 keyboard of 40px keys, A to X then Y Z . - backspace GO">
+  <!-- 240x320 native, drawn from the firmware's layout constants (2026-09-16).
+       Swipe left from the list. Symbols are short and upper-case, so the keys can be
+       finger-sized. GO asks Yahoo's keyless lookup; tapping a result adds the symbol
+       to the list and opens its page.
+  -->
+  <rect width="240" height="320" fill="#000000"/>
+  <text x="8" y="22" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#9aa4ae" text-anchor="start">SEARCH</text>
+  <text x="232" y="22" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">v list</text>
+  <rect x="8" y="44" width="224" height="40" rx="8" fill="#20242a"/>
+  <text x="20" y="73" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="bold" fill="#e6edf3" text-anchor="start">MIC</text>
+  <text x="8" y="104" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="start">type a few letters, tap GO</text>
+  <rect x="2" y="122" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="20" y="147" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">A</text>
+  <rect x="42" y="122" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="60" y="147" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">B</text>
+  <rect x="82" y="122" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="100" y="147" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">C</text>
+  <rect x="122" y="122" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="140" y="147" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">D</text>
+  <rect x="162" y="122" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="180" y="147" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">E</text>
+  <rect x="202" y="122" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="220" y="147" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">F</text>
+  <rect x="2" y="162" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="20" y="187" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">G</text>
+  <rect x="42" y="162" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="60" y="187" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">H</text>
+  <rect x="82" y="162" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="100" y="187" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">I</text>
+  <rect x="122" y="162" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="140" y="187" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">J</text>
+  <rect x="162" y="162" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="180" y="187" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">K</text>
+  <rect x="202" y="162" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="220" y="187" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">L</text>
+  <rect x="2" y="202" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="20" y="227" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">M</text>
+  <rect x="42" y="202" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="60" y="227" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">N</text>
+  <rect x="82" y="202" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="100" y="227" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">O</text>
+  <rect x="122" y="202" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="140" y="227" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">P</text>
+  <rect x="162" y="202" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="180" y="227" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">Q</text>
+  <rect x="202" y="202" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="220" y="227" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">R</text>
+  <rect x="2" y="242" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="20" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">S</text>
+  <rect x="42" y="242" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="60" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">T</text>
+  <rect x="82" y="242" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="100" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">U</text>
+  <rect x="122" y="242" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="140" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">V</text>
+  <rect x="162" y="242" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="180" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">W</text>
+  <rect x="202" y="242" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="220" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">X</text>
+  <rect x="2" y="282" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="20" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">Y</text>
+  <rect x="42" y="282" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="60" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">Z</text>
+  <rect x="82" y="282" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="100" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">.</text>
+  <rect x="122" y="282" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="140" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">-</text>
+  <rect x="162" y="282" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="180" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="middle">&lt;</text>
+  <rect x="202" y="282" width="36" height="36" rx="6" fill="none" stroke="#20242a"/>
+  <text x="220" y="307" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="middle">GO</text>
+</svg>

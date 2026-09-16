@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker NEWS: six headlines for one symbol with their age, from Yahoo's per-symbol RSS">
+  <!-- 240x320 native, drawn from the firmware's layout constants (2026-09-16).
+       Swipe up from a stock. Word-wrapped to two measured lines; left and right walk
+       the watchlist, down returns to the stock. Cached ten minutes per symbol.
+  -->
+  <rect width="240" height="320" fill="#000000"/>
+  <text x="8" y="27" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="21" font-weight="bold" fill="#e6edf3" text-anchor="start">NVDA</text>
+  <text x="74" y="22" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">headlines</text>
+  <line x1="8" y1="38" x2="232" y2="38" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="52" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e6edf3" text-anchor="start">CoreWeave Stock Jumps After Major Nvidia AI</text>
+  <text x="8" y="63" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">System Goes Live</text>
+  <text x="234" y="52" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">3h</text>
+  <line x1="8" y1="69" x2="232" y2="69" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="82" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e6edf3" text-anchor="start">10-year Treasury sits below 5% as market</text>
+  <text x="8" y="93" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">awaits Fed decision</text>
+  <text x="234" y="82" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">3h</text>
+  <line x1="8" y1="99" x2="232" y2="99" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="112" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e6edf3" text-anchor="start">Is Nvidia Still the Best AI Stock to Buy in</text>
+  <text x="8" y="123" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">September?</text>
+  <text x="234" y="112" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">5h</text>
+  <line x1="8" y1="129" x2="232" y2="129" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="142" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e6edf3" text-anchor="start">Fewer and Fewer S&amp;P 500 Stocks Yield Over</text>
+  <text x="8" y="153" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">4%. Here's My Top Pick to Buy Now.</text>
+  <text x="234" y="142" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">6h</text>
+  <line x1="8" y1="159" x2="232" y2="159" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="172" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e6edf3" text-anchor="start">Chip stocks rally as data-centre orders</text>
+  <text x="8" y="183" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">extend into 2027</text>
+  <text x="234" y="172" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">9h</text>
+  <line x1="8" y1="189" x2="232" y2="189" stroke="#20242a" stroke-width="1"/>
+  <text x="8" y="202" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e6edf3" text-anchor="start">What Wall Street expects from Nvidia's next</text>
+  <text x="8" y="213" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">quarter</text>
+  <text x="234" y="202" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="end">1d</text>
+  <line x1="8" y1="219" x2="232" y2="219" stroke="#20242a" stroke-width="1"/>
+  <text x="120" y="314" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="middle">&lt; next     v stock     prev &gt;</text>
+</svg>

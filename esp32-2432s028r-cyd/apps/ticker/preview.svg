@@ -1,88 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker LIST layout: six rows of logo badge, symbol, intraday sparkline, price and signed percent change">
-  <!-- 240x320 native. Six rows at a 42px pitch, each carrying a 24px logo badge
-       and a sparkline that the 172px C6 panel had no room for.
-       The badge is RECOGNITION, not identification - the symbol text stays
-       beside it, so a wordmark reduced to an unreadable smudge costs nothing
-       and a missing small logo is a non-event.
-       The series is free: it arrives in the same one-request-per-symbol Yahoo
-       call the C6 already makes, which reads two fields out of it and discards
-       ~78 intraday closes. Each sparkline is scaled to its OWN min/max - a
-       shared scale would flatten a $12 stock beside a $600 one.
-       Tapping a row opens that stock's own page. The symbol is resolved at
-       touch-DOWN and the page timer freezes while the touch is held, because
-       the slot is not the symbol. -->
-  <rect width="240" height="320" fill="#0b0f14"/>
-
-  <!-- header: page number so a page flip can't read as prices changing -->
-  <rect width="240" height="26" fill="#161d26"/>
-  <text x="8" y="18" font-family="monospace" font-size="11" fill="#e6edf3">WATCHLIST</text>
-  <text x="232" y="18" font-family="monospace" font-size="10" fill="#8b98a5" text-anchor="end">1/2  14:32</text>
-
-  <!-- row 1: up -->
-  <rect x="6" y="40" width="22" height="22" rx="4" fill="#10241a"/>
-  <text x="17" y="56" font-family="monospace" font-size="13" fill="#3fb950" text-anchor="middle">N</text>
-  <text x="32" y="50" font-family="monospace" font-size="15" fill="#e6edf3">NVDA</text>
-  <polyline points="74,58 80,56 86,57 92,52 98,54 104,48 110,45 116,47 122,42 128,39 134,38"
-            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
-  <text x="232" y="48" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">184.62</text>
-  <text x="232" y="62" font-family="monospace" font-size="10" fill="#3fb950" text-anchor="end">+2.41%</text>
-  <line x1="6" y1="70" x2="232" y2="70" stroke="#161d26" stroke-width="1"/>
-
-  <!-- row 2: down -->
-  <rect x="6" y="82" width="22" height="22" rx="4" fill="#1c2531"/>
-  <text x="17" y="98" font-family="monospace" font-size="13" fill="#e6edf3" text-anchor="middle">A</text>
-  <text x="32" y="92" font-family="monospace" font-size="15" fill="#e6edf3">AAPL</text>
-  <polyline points="74,84 80,86 86,85 92,89 98,88 104,92 110,95 116,93 122,97 128,100 134,102"
-            fill="none" stroke="#f85149" stroke-width="1.5" stroke-linejoin="round"/>
-  <text x="232" y="90" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">271.08</text>
-  <text x="232" y="104" font-family="monospace" font-size="10" fill="#f85149" text-anchor="end">-1.13%</text>
-  <line x1="6" y1="112" x2="232" y2="112" stroke="#161d26" stroke-width="1"/>
-
-  <!-- row 3 -->
-  <rect x="6" y="124" width="22" height="22" rx="4" fill="#2a1618"/>
-  <text x="17" y="140" font-family="monospace" font-size="13" fill="#f85149" text-anchor="middle">T</text>
-  <text x="32" y="134" font-family="monospace" font-size="15" fill="#e6edf3">TSLA</text>
-  <polyline points="74,143 80,141 86,142 92,136 98,133 104,135 110,129 116,126 122,128 128,123 134,122"
-            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
-  <text x="232" y="132" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">412.55</text>
-  <text x="232" y="146" font-family="monospace" font-size="10" fill="#3fb950" text-anchor="end">+4.02%</text>
-  <line x1="6" y1="154" x2="232" y2="154" stroke="#161d26" stroke-width="1"/>
-
-  <!-- row 4: a genuinely flat day, which must not look like a missing series -->
-  <rect x="6" y="166" width="22" height="22" rx="4" fill="#14212e"/>
-  <text x="17" y="182" font-family="monospace" font-size="13" fill="#58a6ff" text-anchor="middle">M</text>
-  <text x="32" y="176" font-family="monospace" font-size="15" fill="#e6edf3">MSFT</text>
-  <polyline points="74,178 80,177 86,178 92,176 98,177 104,175 110,176 116,174 122,175 128,173 134,173"
-            fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round"/>
-  <text x="232" y="174" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">498.30</text>
-  <text x="232" y="188" font-family="monospace" font-size="10" fill="#3fb950" text-anchor="end">+0.18%</text>
-  <line x1="6" y1="196" x2="232" y2="196" stroke="#161d26" stroke-width="1"/>
-
-  <!-- row 5: nulls in the close array leave a real gap. Drawing THROUGH the gap
-       would invent prices that never printed. -->
-  <rect x="6" y="208" width="22" height="22" rx="4" fill="#2a2213"/>
-  <text x="17" y="224" font-family="monospace" font-size="13" fill="#d29922" text-anchor="middle">B</text>
-  <text x="32" y="218" font-family="monospace" font-size="15" fill="#e6edf3">BTC</text>
-  <polyline points="74,212 80,214 86,213 92,217 98,216"
-            fill="none" stroke="#f85149" stroke-width="1.5" stroke-linejoin="round"/>
-  <polyline points="116,222 122,224 128,226 134,228"
-            fill="none" stroke="#f85149" stroke-width="1.5" stroke-linejoin="round"/>
-  <text x="232" y="216" font-family="monospace" font-size="15" fill="#e6edf3" text-anchor="end">104,820</text>
-  <text x="232" y="230" font-family="monospace" font-size="10" fill="#f85149" text-anchor="end">-3.27%</text>
-  <line x1="6" y1="238" x2="232" y2="238" stroke="#161d26" stroke-width="1"/>
-
-  <!-- row 6: not fetched yet. Dashed and dim, so "no data" can never be mistaken
-       for "didn't move" - a solid flat line would read as a real quote. -->
-  <rect x="6" y="250" width="22" height="22" rx="4" fill="#161d26"/>
-  <text x="17" y="266" font-family="monospace" font-size="13" fill="#4d5560" text-anchor="middle">S</text>
-  <text x="32" y="260" font-family="monospace" font-size="15" fill="#4d5560">SOL</text>
-  <line x1="74" y1="262" x2="134" y2="262" stroke="#2d353f" stroke-width="1.5" stroke-dasharray="3 3"/>
-  <text x="232" y="258" font-family="monospace" font-size="15" fill="#4d5560" text-anchor="end">--</text>
-  <text x="232" y="272" font-family="monospace" font-size="10" fill="#4d5560" text-anchor="end">--</text>
-
-  <!-- footer: says the prices are delayed rather than implying they're live -->
-  <rect x="0" y="288" width="240" height="32" fill="#161d26"/>
-  <circle cx="12" cy="304" r="4" fill="#3fb950"/>
-  <text x="24" y="308" font-family="monospace" font-size="8" fill="#8b98a5">delayed, 3m ago</text>
-  <text x="232" y="308" font-family="monospace" font-size="8" fill="#3fb950" text-anchor="end">MARKET OPEN</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 320" width="360" height="480" role="img" aria-label="ticker LIST: a scrolling ring of seven rows, each a logo badge, symbol, intraday sparkline, price and signed percent">
+  <!-- 240x320 native, drawn from the firmware's layout constants (2026-09-16).
+       The list scrolls continuously (ILI9341 hardware scroll) and wraps, so the top
+       row is cut mid-transit here and an eighth is entering at the bottom. No pages,
+       no footer: the header says only CLOSED (and when it opens) when that is so.
+       Badges are 24px, cropped to the mark on the host. A finger drags the list,
+       a still finger opens the stock on lift, swipe right is settings, left is search.
+  -->
+  <rect width="240" height="320" fill="#000000"/>
+  <text x="6" y="12" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="start">WATCHLIST</text>
+  <text x="72" y="12" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#e3b341" text-anchor="start">CLOSED til Mon 09:30</text>
+  <text x="234" y="12" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="end">14:32</text>
+  <clipPath id="ring"><rect x="0" y="22" width="240" height="294"/></clipPath>
+  <g clip-path="url(#ring)">
+  <rect x="6" y="12" width="24" height="24" rx="5" fill="#dfe3e8"/>
+  <text x="18" y="31" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#000" text-anchor="middle">A</text>
+  <text x="34" y="30" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">AAPL</text>
+  <polyline points="98,32 104,28 110,24 116,32 122,24 128,20 134,16 140,24 146,16" fill="none" stroke="#22d05a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="24" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="end">334.6</text>
+  <text x="234" y="38" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#22d05a" text-anchor="end">+0.9%</text>
+  <rect x="6" y="54" width="24" height="24" rx="5" fill="#76b900"/>
+  <text x="18" y="73" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">N</text>
+  <text x="34" y="72" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">NVDA</text>
+  <polyline points="98,74 104,70 110,66 116,74 122,66 128,62 134,58 140,66 146,58" fill="none" stroke="#22d05a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="66" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="end">215.8</text>
+  <text x="234" y="80" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#22d05a" text-anchor="end">+2.1%</text>
+  <rect x="6" y="96" width="24" height="24" rx="5" fill="#f25022"/>
+  <text x="18" y="115" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">M</text>
+  <text x="34" y="114" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">MSFT</text>
+  <polyline points="98,116 104,112 110,108 116,116 122,108 128,104 134,100 140,108 146,100" fill="none" stroke="#22d05a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="108" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="end">498.3</text>
+  <text x="234" y="122" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#22d05a" text-anchor="end">+0.2%</text>
+  <rect x="6" y="138" width="24" height="24" rx="5" fill="#e82127"/>
+  <text x="18" y="157" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">T</text>
+  <text x="34" y="156" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">TSLA</text>
+  <polyline points="98,142 104,142 110,142 116,154 122,150 128,150 134,150 140,162 146,158" fill="none" stroke="#f0473c" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="150" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#f0473c" text-anchor="end">412.5</text>
+  <text x="234" y="164" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#f0473c" text-anchor="end">-1.3%</text>
+  <rect x="6" y="180" width="24" height="24" rx="5" fill="#ff9900"/>
+  <text x="18" y="199" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">A</text>
+  <text x="34" y="198" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">AMZN</text>
+  <polyline points="98,200 104,196 110,192 116,200 122,192 128,188 134,184 140,192 146,184" fill="none" stroke="#22d05a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="192" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="end">231.0</text>
+  <text x="234" y="206" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#22d05a" text-anchor="end">+1.7%</text>
+  <rect x="6" y="222" width="24" height="24" rx="5" fill="#4285f4"/>
+  <text x="18" y="241" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">G</text>
+  <text x="34" y="240" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">GOOGL</text>
+  <polyline points="98,242 104,238 110,234 116,242 122,234 128,230 134,226 140,234 146,226" fill="none" stroke="#22d05a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="234" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="end">184.2</text>
+  <text x="234" y="248" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#22d05a" text-anchor="end">+0.6%</text>
+  <rect x="6" y="264" width="24" height="24" rx="5" fill="#0866ff"/>
+  <text x="18" y="283" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">M</text>
+  <text x="34" y="282" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">META</text>
+  <polyline points="98,268 104,268 110,268 116,280 122,276 128,276 134,276 140,288 146,284" fill="none" stroke="#f0473c" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="276" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#f0473c" text-anchor="end">702.1</text>
+  <text x="234" y="290" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#f0473c" text-anchor="end">-0.4%</text>
+  <rect x="6" y="306" width="24" height="24" rx="5" fill="#1c1c1c"/>
+  <text x="18" y="325" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">A</text>
+  <text x="34" y="324" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#e6edf3" text-anchor="start">AMD</text>
+  <polyline points="98,326 104,322 110,318 116,326 122,318 128,314 134,310 140,318 146,310" fill="none" stroke="#22d05a" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="234" y="318" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#22d05a" text-anchor="end">154.9</text>
+  <text x="234" y="332" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#22d05a" text-anchor="end">+3.4%</text>
+  </g>
+  <rect x="0" y="262" width="3" height="38" rx="0" fill="#e6edf3"/>
+  <!-- the bar at the left edge: a finger is resting on that row -->
 </svg>

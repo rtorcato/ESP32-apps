@@ -109,8 +109,13 @@ Verified 2026-09-16: `logos 24px: 26/26 present`, `logos 96px: 26/26 present`
 on the boot log, ~162KB heap free after the first coin fetch.
 
 
-<img src="preview.svg" alt="ticker list layout with logo badges and sparklines" width="240">
+<img src="preview.svg" alt="ticker list: a scrolling ring of seven rows" width="240">
 <img src="preview-detail.svg" alt="ticker detail page for one symbol" width="240">
+<img src="preview-news.svg" alt="headlines for one symbol" width="240">
+
+<img src="preview-search.svg" alt="search keyboard" width="240">
+<img src="preview-settings.svg" alt="settings page" width="240">
+<img src="preview-splash.svg" alt="boot splash" width="240">
 
 
 The [C6 ticker](../../../esp32-c6-lcd-1.47/apps/ticker/), ported to a screen with
