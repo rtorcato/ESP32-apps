@@ -2253,7 +2253,7 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
   static int16_t x0 = 0, y0 = 0, lx = 0, ly = 0;
   static uint32_t t0 = 0, lastTap = 0;
   static uint8_t axis = 0, gap = 0;  // axis: 0 undecided, 1 horizontal, 2 vertical
-  static bool tapped = false, longed = false;
+  static bool tapped = false, longed = false, dragging = false;
   int16_t cx, cy;
   bool contact = touchRead(&cx, &cy);
   if (contact) gap = 0;
@@ -2265,7 +2265,7 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
     y0 = ly = cy;
     t0 = millis();
     axis = 0;
-    tapped = longed = false;
+    tapped = longed = dragging = false;
   } else if (now) {
     int16_t ddx = cx - x0, ddy = cy - y0;
     if (!axis && (abs(ddx) >= AXIS_PX || abs(ddy) >= AXIS_PX)) {
@@ -2273,7 +2273,20 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
       else if (abs(ddy) * 2 >= abs(ddx) * 3) axis = 2;
     }
     if (axis == 2) {
-      *dy = cy - ly;
+      // A resistive panel jitters a few px between polls and a drag applied
+      // raw shakes the list under the finger. Smooth the position and
+      // report only whole pixels of real movement.
+      static float sy = 0;
+      static int16_t applied = 0;
+      if (!dragging) {
+        sy = cy;
+        applied = cy;
+      }
+      sy += (cy - sy) * 0.5f;
+      int16_t target = (int16_t)lroundf(sy);
+      *dy = abs(target - applied) >= 2 ? target - applied : 0;
+      if (*dy) applied = target;
+      dragging = true;
       g = Gesture::Drag;
     } else if (!axis && !tapped && millis() - t0 >= TAP_MS && millis() - lastTap > 150) {
       tapped = true;
@@ -2908,7 +2921,7 @@ void loop() {
   // finger drags the list; any touch holds the crawl for 3s after.
   static int8_t hilite = -1;
   if (state == State::Running && view == View::List) {
-    if (touchHeld) holdUntil = millis() + 3000;
+    if (touchHeld) holdUntil = millis() + (g == Gesture::Drag ? 8000 : 3000);  // a drag went somewhere to read
     if (g == Gesture::Drag && ddy) scrollBy(-ddy);
     if (g == Gesture::Tap && hilite < 0) {
       int16_t r = hitRow(ty, pos, nShown);

@@ -35,9 +35,11 @@ when their price changes; the shared slot waits for the boundary. A list
 shorter than seven simply repeats. The board's `boardBus()` exists so an app
 can send the two panel commands Arduino_GFX has no API for.
 
-**A finger drives it too.** Drag up or down and the list follows; the crawl
-pauses while a finger is down and for three seconds after, so a drag or a
-press is never fought. A still finger highlights its row at once and **opens
+**A finger drives it too.** Drag up or down and the list follows -- the
+finger's position is smoothed and only whole pixels of real movement are
+applied, or a resistive panel's jitter shakes the list under it; the crawl
+pauses while a finger is down, for three seconds after a press and eight
+after a drag, so a drag or a press is never fought. A still finger highlights its row at once and **opens
 the stock when it lifts** -- touch-up, the way a phone list works, so it is
 as quick as the lift itself and a drag can still start anywhere on a row.
 
