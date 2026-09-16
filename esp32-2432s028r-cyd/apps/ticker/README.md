@@ -293,9 +293,10 @@ alerts / both), Currency; then the advanced rows, Info, Wi-Fi (the setup
 below, again), Touch (the calibration above), and last, in red, Clear device
 (wipes everything the device holds -- network, settings, edits, calibration
 -- and restarts into setup).
-Shutdown and Clear device open a **confirm screen** that says what will
-happen, with one red tile to tap; a swipe down or a tap anywhere else
-cancels.
+Shutdown and Clear device open a **confirm sheet** the way a phone asks: a
+glyph, a title, one quiet line, a pill to act (red text for the one that
+wipes) and Cancel under it; a swipe down or a tap anywhere else cancels
+too.
 
 **Setup: the device asks for its Wi-Fi.** There is no `secrets.h` in this
 app and nothing compiled in. With no network in NVS -- first boot, after

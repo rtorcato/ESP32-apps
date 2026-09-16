@@ -30,6 +30,7 @@
 // ── one colour scheme: black, white symbols, green and red numbers ───────
 static const uint16_t C_BG = RGB565_BLACK, C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
                       C_DIM = 0x630C, C_MUTED = 0xA534, C_RULE = 0x2104, C_WARN = RGB565_YELLOW, C_GOLD = 0xFD40;
+static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 
 // ── settings (defaults; data/config.json overrides) ──────────────────────
 static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
@@ -1441,26 +1442,41 @@ static void drawSettings() {
   drawPanel("SETTINGS", C_MUTED, nullptr, 0);
   drawSettingRows();
 }
-// The confirm screen for the two rows that cannot be undone.
+// The confirm screen for the two rows that cannot be undone: an action
+// sheet, the way a phone asks. A glyph, a title, one quiet line, a pill
+// to act -- red text for the one that wipes -- and Cancel under it.
+static const int16_t CF_Y = 210, CF_H = 44, CF_CANCEL_Y = 264;
+static void powerGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
+  for (int16_t a = 35; a <= 325; a++) {  // an open ring, gap at the top, three px thick
+    float rad = (a - 90) * 3.14159265f / 180;
+    for (int16_t k = 0; k < 3; k++) gfx->drawPixel(cx + (int16_t)lroundf((r - k) * cosf(rad)), cy + (int16_t)lroundf((r - k) * sinf(rad)), c);
+  }
+  gfx->fillRect(cx - 1, cy - r - 3, 3, r + 2, c);
+}
 static void drawConfirm() {
   gfx->fillScreen(C_BG);
   bool clear = confirmWhat == 2;
-  field(8, 24, 12, 3, C_BAD, clear ? "CLEAR DEVICE" : "SHUT DOWN");
-  gfx->drawFastHLine(8, 54, 224, C_RULE);
-  const char *const l1[] = {"This wipes everything the board", "holds: the Wi-Fi network and its",
-                            "password, every setting, the list", "edits, the touch calibration.", "",
-                            "It restarts into setup, ready for", "someone else."};
-  const char *const l2[] = {"The panel, the radio and the chip", "go dark. A touch wakes it.", "",
-                            "Prices on screen are kept and come", "back the moment it wakes."};
-  const char *const *l = clear ? l1 : l2;
-  uint8_t n = clear ? 7 : 5;
-  for (uint8_t i = 0; i < n; i++) textAt(8, 66 + i * 13, 1, C_MUTED, l[i]);
-  gfx->fillRoundRect(8, 200, 224, 60, 10, C_BAD);
-  const char *t = clear ? "TAP TO CLEAR" : "TAP TO SHUT DOWN";
-  textAt((LCD_W - textWidth(2, t)) / 2, 200 + (60 - FACES[1].cap) / 2, 2, C_FG, t);
-  drawHint("v cancel, or tap anywhere else");
+  if (clear) {  // a ring with a cross
+    for (int16_t k = 0; k < 3; k++) gfx->drawCircle(LCD_W / 2, 84, 24 - k, C_BAD);
+    for (int16_t k = -1; k <= 1; k++) {
+      gfx->drawLine(LCD_W / 2 - 10 + k, 74, LCD_W / 2 + 10 + k, 94, C_BAD);
+      gfx->drawLine(LCD_W / 2 + 10 + k, 74, LCD_W / 2 - 10 + k, 94, C_BAD);
+    }
+  } else {
+    powerGlyph(LCD_W / 2, 84, 24, C_FG);
+  }
+  const char *title = clear ? "Clear Device" : "Shut Down";
+  textAt((LCD_W - textWidth(3, title)) / 2, 128, 3, C_FG, title);
+  const char *l1 = clear ? "Wipes the network, settings, edits" : "The screen goes dark.";
+  const char *l2 = clear ? "and calibration. Restarts into setup." : "Touch it to wake.";
+  textAt((LCD_W - textWidth(1, l1)) / 2, 160, 1, C_MUTED, l1);
+  textAt((LCD_W - textWidth(1, l2)) / 2, 173, 1, C_MUTED, l2);
+  gfx->fillRoundRect(20, CF_Y, LCD_W - 40, CF_H, CF_H / 2, rgb(44, 48, 54));
+  textAt((LCD_W - textWidth(2, title)) / 2, CF_Y + (CF_H - FACES[1].cap) / 2, 2, clear ? C_BAD : C_FG, title);
+  gfx->drawRoundRect(20, CF_CANCEL_Y, LCD_W - 40, 36, 18, C_RULE);
+  textAt((LCD_W - textWidth(2, "Cancel")) / 2, CF_CANCEL_Y + (36 - FACES[1].cap) / 2, 2, C_MUTED, "Cancel");
 }
-static bool hitConfirm(int16_t x, int16_t y) { return y >= 200 && y < 260 && x >= 8 && x < 232; }
+static bool hitConfirm(int16_t x, int16_t y) { return y >= CF_Y && y < CF_Y + CF_H && x >= 20 && x < LCD_W - 20; }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
 // 2 (touch calibration), 3 (confirm a shutdown), 4 (Wi-Fi setup), 5 (confirm
 // clearing the device).
@@ -1615,7 +1631,6 @@ static void drawInfo(bool full) {
 static const int16_t H_Y0 = 24, H_W = 78, H_H = 62, H_COLS = 3, H_ROWS = 4;
 static uint8_t heatPage = 0;
 static char cHeat[64];
-static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 static uint16_t heatColour(float pct, bool valid) {
   if (!valid) return C_RULE;
   static const float steps[] = {0.3f, 1.0f, 2.0f, 4.0f, 7.0f};
