@@ -415,7 +415,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 58, S_H = 27, S_N = 9;
+static const int16_t S_Y0 = 56, S_H = 24, S_N = 10;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -782,8 +782,8 @@ static uint32_t secondsUntilWake(const struct tm &t) {
   uint32_t secs = (uint32_t)mins * 60 - t.tm_sec + 5;
   return secs > 6UL * 3600 ? 6UL * 3600 : secs;
 }
-static void goToSleep(uint32_t secs) {
-  Serial.printf("deep sleep for up to %lus, or a touch\n", (unsigned long)secs);
+static void goToSleep(uint32_t secs) {  // secs == 0: no timer, a touch alone wakes it
+  Serial.printf(secs ? "deep sleep for up to %lus, or a touch\n" : "shutdown: deep sleep until a touch\n", (unsigned long)secs);
   snapshotToRtc();
   backlight(0);
   ledGlow(0, 0, 0);
@@ -797,7 +797,7 @@ static void goToSleep(uint32_t secs) {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);  // TP_IRQ: low while a finger is down
-  esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
+  if (secs) esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
   Serial.flush();
   esp_deep_sleep_start();
 }
@@ -1256,15 +1256,19 @@ static void saveSettings() {
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Touch", "Info"};
+  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Touch", "Info", "Shutdown"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
                 : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
-                : i == 6 ? sCur : i == 7 ? "calibrate" : ">";
+                : i == 6 ? sCur : i == 7 ? "calibrate" : i == 8 ? ">" : shutdownArmedUntil ? "tap again" : "tap twice";
   int16_t y = S_Y0 + i * S_H;
-  field(8, y + 4, 11, 2, C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 4, 9, 2, C_FG, v);
+  field(8, y + 3, 11, 2, i == 9 ? C_BAD : C_MUTED, labels[i]);
+  fieldRight(X_RIGHT, y + 3, 9, 2, i == 9 && shutdownArmedUntil ? C_WARN : C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
+// Shutdown is deep sleep with nothing but a touch to wake it: this board has
+// no power switch, and the panel, radio and chip all go dark. Two taps
+// within three seconds, so a stray finger cannot turn it off.
+static uint32_t shutdownArmedUntil = 0;
 // The next display currency: USD, then each CURRENCIES row, round again.
 static void nextCurrency() {
   int8_t cur = -1;
@@ -1289,10 +1293,17 @@ static void drawSettings() {
   for (uint8_t i = 0; i < S_N; i++) drawSettingRow(i);
   drawHint("< list");
 }
-// A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info), 2 (touch calibration).
+// A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
+// 2 (touch calibration), 3 (shut down now).
 static uint8_t tapSetting(uint8_t i) {
   if (i == 8) return 1;
   if (i == 7) return 2;
+  if (i == 9) {
+    if (shutdownArmedUntil && millis() < shutdownArmedUntil) return 3;
+    shutdownArmedUntil = millis() + 3000;
+    drawSettingRow(9);
+    return 0;
+  }
   if (i == 6) nextCurrency();
   else if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
@@ -2812,6 +2823,10 @@ void loop() {
     drawHint(m, C_WARN);
     if (sSound & 1) tone(SPK, 600, 40);
   }
+  if (shutdownArmedUntil && millis() > shutdownArmedUntil) {
+    shutdownArmedUntil = 0;
+    if (view == View::Settings) drawSettingRow(9);
+  }
   if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
     removeArmedUntil = 0;
     drawHint("< next    ^ news    v list    prev >");
@@ -2854,6 +2869,10 @@ void loop() {
         view = View::Calib;
         calStep = 0;
         drawCalTarget();
+      } else if (r == 3) {
+        drawHint("shutting down. touch to wake", C_WARN);
+        delay(600);
+        goToSleep(0);  // no timer: a touch is the only way back
       }
     } else if (view == View::Info) {  // a tap shows the splash, as the last line says
       view = View::Splash;
