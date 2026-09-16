@@ -1249,7 +1249,7 @@ static void drawDetail(bool full) {
 static WebServer *web = nullptr;
 static DNSServer *dns = nullptr;
 static bool setupMode = false;
-static char setupPin[9], setupSsids[600];
+static char setupPin[9], setupSsids[600], setupError[80] = "";
 static uint32_t setupStarted = 0;
 static void setupPage() {
   String html = F("<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -1257,8 +1257,13 @@ static void setupPage() {
                   "margin:0;padding:24px}h1{font-size:22px}label{display:block;margin:18px 0 6px;color:#9aa4ae}"
                   "select,input{width:100%;font-size:18px;padding:10px;border-radius:8px;border:1px solid #444;background:#111;color:#eee}"
                   "button{margin-top:24px;width:100%;font-size:18px;padding:12px;border:0;border-radius:8px;background:#22d05a;color:#000}"
-                  "</style></head><body><h1>ticker setup</h1><form method=post action=/save>"
-                  "<label>Wi-Fi network</label><select name=s>");
+                  "</style></head><body><h1>ticker setup</h1>");
+  if (setupError[0]) {
+    html += F("<p style='color:#f0473c'>");
+    html += setupError;
+    html += F("</p>");
+  }
+  html += F("<form method=post action=/save><label>Wi-Fi network</label><select name=s>");
   html += setupSsids;
   html += F("</select><label>or type its name</label><input name=o placeholder='hidden network'>"
             "<label>password</label><input type=password name=p id=p>"
@@ -1275,13 +1280,29 @@ static void setupSave() {
     web->send(400, "text/plain", "network name missing or too long");
     return;
   }
+  // Try the network before keeping it: the access point stays up while the
+  // station side joins, so a wrong password comes straight back to the
+  // phone as an error instead of a board stuck on NO WIFI.
+  fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_DIM, "trying that network...");
+  Serial.printf("setup: trying '%s'\n", ssid.c_str());
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(100);
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.disconnect();
+    snprintf(setupError, sizeof setupError, "Could not join \"%.32s\". Wrong password? Try again.", ssid.c_str());
+    Serial.printf("setup: join failed (%s)\n", setupError);
+    fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_WARN, "that network did not let it in. wrong password?");
+    setupPage();  // the form again, with the reason at the top
+    return;
+  }
   prefs.begin("ticker", false);
   prefs.putString("ssid", ssid);
   prefs.putString("pass", pass);
   prefs.end();
   web->send(200, "text/html", F("<!doctype html><body style='font-family:-apple-system,Helvetica;background:#000;color:#eee;padding:24px'>"
-                                "<h1>saved</h1><p>The ticker is restarting and joining your network.</p></body>"));
-  Serial.printf("setup: saved network '%s', restarting\n", ssid.c_str());
+                                "<h1>connected</h1><p>The ticker joined your network and is restarting.</p></body>"));
+  Serial.printf("setup: joined '%s' (%ddBm), saved, restarting\n", ssid.c_str(), WiFi.RSSI());
   delay(800);
   ESP.restart();
 }
@@ -2585,7 +2606,7 @@ static void drawFailPanel() {
   } else if (state == State::NoWifi) {
     static char ssid[40];
     snprintf(ssid, sizeof ssid, "SSID %s", wifiSsid);
-    const char *l[] = {ssid, "", "not associated. 2.4GHz only.", "", "retrying...", "", "swipe right: settings > Wi-Fi"};
+    const char *l[] = {ssid, "", "not associated. 2.4GHz only.", "", "retrying...", "", "tap anywhere to set up Wi-Fi again"};
     drawPanel("NO WIFI", C_BAD, l, 7);
   } else {
     static char f[34];
@@ -2768,6 +2789,10 @@ void loop() {
     }
   } else if (state != State::Running) {
     drawFailPanel();
+    if (state == State::NoWifi && (g == Gesture::Tap || g == Gesture::TapUp || g == Gesture::SwipeRight)) {
+      WiFi.disconnect(true);  // the panel said so: any touch on NO WIFI opens setup
+      startSetup();
+    }
   } else if (view == View::List) {
     drawHead(&t, haveTime);
     listTick();
