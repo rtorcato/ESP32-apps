@@ -29,7 +29,7 @@
 
 // ── one colour scheme: black, white symbols, green and red numbers ───────
 static const uint16_t C_BG = RGB565_BLACK, C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
-                      C_DIM = 0x630C, C_MUTED = 0xA534, C_RULE = 0x2104, C_WARN = RGB565_YELLOW;
+                      C_DIM = 0x630C, C_MUTED = 0xA534, C_RULE = 0x2104, C_WARN = RGB565_YELLOW, C_GOLD = 0xFD40;
 
 // ── settings (defaults; data/config.json overrides) ──────────────────────
 static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
@@ -1014,7 +1014,6 @@ static void drawHead(const struct tm *t, bool haveTime) {
 // A navy-to-black sky, nine candles on the way up with a gold average
 // through them, the wordmark, and one status line that follows the Wi-Fi
 // join. Primitives only, so there is no asset to generate or push.
-static const uint16_t C_GOLD = 0xFD40;
 static void splashStatus(const char *s) { fieldCentre(LCD_W / 2, 286, 36, 1, C_DIM, s); }
 static void drawSplash(const char *status) {
   for (int16_t y = 0; y < LCD_H; y++) {  // (0,10,30) at the top fading to black
@@ -1227,7 +1226,9 @@ static void setupPage() {
                   "<label>Wi-Fi network</label><select name=s>");
   html += setupSsids;
   html += F("</select><label>or type its name</label><input name=o placeholder='hidden network'>"
-            "<label>password</label><input type=password name=p>"
+            "<label>password</label><input type=password name=p id=p>"
+            "<label style='display:flex;align-items:center;gap:8px;margin-top:10px'>"
+            "<input type=checkbox style='width:auto' onchange=\"p.type=this.checked?'text':'password'\">show password</label>"
             "<button>save and restart</button></form></body></html>");
   web->send(200, "text/html", html);
 }
@@ -1254,21 +1255,22 @@ static void drawSetup(const char *status) {
   field(8, 24, 12, 3, C_FG, "SETUP");
   gfx->drawFastHLine(8, 54, 224, C_RULE);
   char l[40];
-  textAt(8, 66, 2, C_GOOD, "1");
-  textAt(30, 66, 1, C_MUTED, "on your phone, join the Wi-Fi");
-  textAt(30, 80, 2, C_FG, "ticker-setup");
-  snprintf(l, sizeof l, "password  %s", setupPin);
-  textAt(30, 102, 1, C_MUTED, l);
-  textAt(8, 130, 2, C_GOOD, "2");
-  textAt(30, 130, 1, C_MUTED, "a sign-in page opens by itself;");
-  textAt(30, 144, 1, C_MUTED, "if not, open in the browser");
-  textAt(30, 158, 2, C_FG, "192.168.4.1");
-  textAt(8, 186, 2, C_GOOD, "3");
-  textAt(30, 186, 1, C_MUTED, "pick your network, type its");
-  textAt(30, 200, 1, C_MUTED, "password, save. It restarts.");
-  gfx->drawFastHLine(8, 226, 224, C_RULE);
-  textAt(8, 236, 1, C_DIM, "nothing leaves this board: the password");
-  textAt(8, 248, 1, C_DIM, "is kept in its own flash, and only there.");
+  textAt(8, 62, 2, C_GOOD, "1");
+  textAt(30, 62, 1, C_MUTED, "on your phone, join the Wi-Fi");
+  textAt(30, 76, 2, C_FG, "ticker-setup");
+  textAt(30, 98, 1, C_MUTED, "password");
+  snprintf(l, sizeof l, "%.4s %.4s", setupPin, setupPin + 4);  // the one thing on this page to read across a room
+  textAt(30, 108, 4, C_GOLD, l);
+  textAt(8, 148, 2, C_GOOD, "2");
+  textAt(30, 148, 1, C_MUTED, "a sign-in page opens by itself;");
+  textAt(30, 162, 1, C_MUTED, "if not, open in the browser");
+  textAt(30, 176, 2, C_FG, "192.168.4.1");
+  textAt(8, 204, 2, C_GOOD, "3");
+  textAt(30, 204, 1, C_MUTED, "pick your network, type its");
+  textAt(30, 218, 1, C_MUTED, "password, save. It restarts.");
+  gfx->drawFastHLine(8, 240, 224, C_RULE);
+  textAt(8, 248, 1, C_DIM, "nothing leaves this board: the password");
+  textAt(8, 260, 1, C_DIM, "is kept in its own flash, and only there.");
   fieldCentre(LCD_W / 2, 286, 36, 1, C_DIM, status);
 }
 static void startSetup() {
