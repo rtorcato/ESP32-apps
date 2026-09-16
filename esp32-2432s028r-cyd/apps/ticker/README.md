@@ -2,14 +2,14 @@
 
 Built 2026-09-15, first version: the LIST layout with a sparkline on every
 row, tap a row for the stock's own page (chart with previous-close line, day
-and 52-week range bars, PREV / LIST / NEXT buttons), fetches on core 0,
+and 52-week range bars), fetches on core 0,
 brightness from the LDR. 2026-09-16: logos at two sizes from LittleFS; the
 list became a **continuously scrolling ring** (hardware scroll, seven rows,
 no pages, no footer); a range selector (1D / 5D / 1M / 6M / 1Y) under the
 detail chart, prefetched so a tap is instant; **market sessions** (nothing is
 fetched while the market is closed, the header says CLOSED and when it
-opens, the detail page shows the after-hours price); an INFO page behind the
-circled i in the header. **Not built yet:** the SD card, the HEATMAP layout,
+opens, the detail page shows the after-hours price); a SETTINGS page a swipe right
+away, with an INFO page in it. **Not built yet:** the SD card, the HEATMAP layout,
 and the NVS layout memory -- the design below is the roadmap for those.
 
 ## The list scrolls, it doesn't page
@@ -21,15 +21,24 @@ whole list one pixel is one two-byte command, so the crawl costs nothing to
 draw. `timing.pageSeconds` is now how long one screen (seven rows) takes to
 pass; 10 reads well.
 
-The catch is that the slot scrolling off the top **is** the slot the next row
-enters from the bottom, a line at a time. So the incoming row is painted
-off-screen into a one-row `Arduino_Canvas` (20KB) and its lines are fed into
-the slot as they come into view. Rows fully in the ring update in place when
-their price changes; the two rows in transit wait until the transit is over.
-The scroll freezes while a finger is down, and `hitRow()` maps a tap through
-the current offset, so a tap lands on the row it was aimed at. A list shorter
-than seven simply repeats. The board's `boardBus()` exists so an app can send
-the two panel commands Arduino_GFX has no API for.
+The catch is that between row boundaries the top row and the row entering at
+the bottom share **one** slot (they are seven virtual rows apart and the ring
+has seven slots): the top row owns the slot's lower lines, the entering row
+its upper lines. So the entering row is painted off-screen into a one-row
+`Arduino_Canvas` (20KB) and its lines are fed into the slot as the scroll
+brings them into view -- forward that is the row below, from the top of the
+slot down; backward it is the row above, from the bottom up; the canvas is
+repainted on a reversal. The list is modelled as an endless strip of virtual
+rows over one signed pixel position, so it scrolls either way and wraps, and
+`hitRow()` maps a touch through it. Rows fully in the ring update in place
+when their price changes; the shared slot waits for the boundary. A list
+shorter than seven simply repeats. The board's `boardBus()` exists so an app
+can send the two panel commands Arduino_GFX has no API for.
+
+**A finger drives it too.** Drag up or down and the list follows; the crawl
+pauses while a finger is down and for three seconds after, so a drag or a
+press is never fought. A **long press** (450ms, still) opens the stock -- a
+plain tap does not, so a drag can start anywhere on a row.
 
 ## Market sessions
 
@@ -199,11 +208,30 @@ have no series and show no chips. High and low are printed inside the chart
 box so the chips get the full width. Taps fire at touch-down, not release --
 release made every button feel a beat late.
 
-**INFO page.** The circled i in the list header (or anywhere on the header)
-opens a page with what the footer used to carry: session and next open,
-how stale the prices are, refresh intervals, wifi and RSSI, heap, uptime,
-LDR reading and backlight level, symbol and logo counts, build date. Any
-tap returns; so does `detail.returnSeconds`.
+**No buttons; swipes are the navigation**, the way a phone app works. On a
+stock's page swipe left for the next stock, right for the previous, down for
+the list. Settings: swipe left for the list. Info: left for the list, down
+for settings. Each page carries one dim hint line at its foot saying so; the
+gestures work anywhere on the page. The button bar's 40px went to the chart.
+
+**SETTINGS, swipe right from the list.** Five rows, tap to cycle: scroll
+speed (slow / normal / fast), backlight (auto / bright / dim), tap sound,
+auto-return (15s / 60s / never), and Info. The four settings are kept in
+**NVS and beat config.json**, the way the C6's layout choice does, or a
+config push would undo a tap on every boot; the boot log says which is in
+force. Everything that needs a keyboard stays in config.json. Swipe left or
+the auto-return goes back.
+
+**INFO page**, the last settings row: what the footer used to carry --
+session and next open, how stale the prices are, refresh intervals, wifi
+and RSSI, heap, uptime, LDR reading and backlight level, symbol and logo
+counts, build date. Swipe down for settings, left for the list.
+
+**Gestures.** A finger that holds still for 100ms is a tap, fired then and
+there (firing on release felt a beat late; 100ms is below notice); still at
+450ms it is a long press. A finger that moves more than 20px first locks to
+an axis and never becomes a tap: vertical is a drag, horizontal is a swipe if
+it goes 60px by release. Resistive touch jitters a few px, hence 20.
 
 Tap a LIST row or a HEATMAP tile — same gesture, same result in both layouts, no
 modes to learn. **The page is free**, for the same reason the sparkline is: the

@@ -18,6 +18,7 @@
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <NetworkClientSecure.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <assert.h>
 #include <time.h>
@@ -30,7 +31,8 @@ static const uint16_t C_BG = RGB565_BLACK, C_FG = RGB565_WHITE, C_GOOD = 0x07E0,
 static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
 static uint16_t mktOpenMin = 9 * 60 + 30, mktCloseMin = 16 * 60, mktPreMin = 4 * 60, mktPostMin = 20 * 60;
 static uint32_t pageMs = 10000;  // six rows scroll past in this long
-static bool blAuto = true;
+static bool blAuto = true, cfgBlAuto = true;
+static uint8_t blFixed = 220;  // the level when not auto
 static uint8_t blMin = 20, blMax = 220, blClosedScale = 60;
 static uint16_t ldrDark = 3000;  // raw LDR reading that counts as a dark room
 static char sparkInterval[4] = "5m";
@@ -50,7 +52,21 @@ static const uint8_t LOGO_BADGE = 24, LOGO_BIG = 96;
 #define GH(s) (8 * (s))
 
 static Arduino_GFX *gfx;
-static bool touchHeld = false;  // set by pollTap; the list freezes while a finger is down
+static bool touchHeld = false;  // set by pollGesture; the list freezes while a finger is down
+
+// ── settings the finger can change ───────────────────────────────────────
+// Four things worth a tap on the device itself, each a short cycle. They
+// live in NVS and beat config.json, the way the C6's layout choice does --
+// otherwise a config push would undo a tap on every boot. Everything else
+// stays in config.json, where a keyboard is.
+static const char *const SPEED_NAMES[] = {"slow", "normal", "fast"};
+static const uint32_t SPEED_MS[] = {20000, 10000, 5000};
+static const char *const BL_NAMES[] = {"auto", "bright", "dim"};
+static const char *const RET_NAMES[] = {"15s", "60s", "never"};
+static const uint32_t RET_MS[] = {15000, 60000, 0};
+static uint8_t sSpeed = 1, sBl = 0, sRet = 1;
+static bool sSound = true;
+static Preferences prefs;
 static int blApplied = -1, ldrRaw = 0;  // brightnessTick's last reading and level, for the info page
 
 // ── the watchlist ────────────────────────────────────────────────────────
@@ -121,7 +137,7 @@ static bool loadConfig() {
     return false;
   }
 
-  blAuto = cfgBool("brightness.auto", blAuto);
+  cfgBlAuto = cfgBool("brightness.auto", cfgBlAuto);
   blMin = (uint8_t)cfgInt("brightness.min", blMin, 8, 255);
   blMax = (uint8_t)cfgInt("brightness.max", blMax, 8, 255);
   if (blMax < blMin) blMax = blMin;
@@ -174,14 +190,17 @@ static bool loadConfig() {
 // Everything in a row is centred on y+16: badge 4..28, symbol 8..24, the
 // sparkline 2..30, price 2..18 over percent 22..30.
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
-                     X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234, X_INFO = 186;
+                     X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
+// Settings: title, five 40px rows, the LIST button.
+static const int16_t S_Y0 = 64, S_H = 40, S_N = 5;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
-// chips sized for a finger, two range bars, three buttons.
+// chips sized for a finger, two range bars, and a one-line gesture hint.
+// No buttons: swipe left/right for the next/previous stock, down for the
+// list, like any phone app.
 static const int16_t D_X_TXT = 108, D_Y_SYM = 6, D_Y_NAME = 34, D_Y_PRICE = 46, D_Y_CHG = 74, D_Y_PCT = 92,
-                     CH_X = 6, CH_Y = 112, CH_W = 228, CH_H = 78, R_Y = 194, R_W = 44, R_STEP = 46, R_H = 24,
-                     D_Y_DAY = 222, D_Y_WK = 246, BAR_X = 40, BAR_W = 194, BAR_H = 6, D_Y_BTN = 282,
-                     BTN_H = 34, BTN_W = 76;
+                     CH_X = 6, CH_Y = 112, CH_W = 228, CH_H = 96, R_Y = 212, R_W = 44, R_STEP = 46, R_H = 24,
+                     D_Y_DAY = 244, D_Y_WK = 268, BAR_X = 40, BAR_W = 194, BAR_H = 6, Y_HINT = 306;
 
 // ── the detail chart's range ─────────────────────────────────────────────
 // 1D is the row's own sparkline series. The other four are fetched the
@@ -248,20 +267,25 @@ static void nextOpen(const struct tm &t, char *out, size_t n) {
   if (today) snprintf(out, n, "%02u:%02u", mktOpenMin / 60, mktOpenMin % 60);
   else snprintf(out, n, "%s %02u:%02u", days[wday], mktOpenMin / 60, mktOpenMin % 60);
 }
-// The list is a ring of ROWS slots scrolled by `off` pixels with row `head`
-// at the top: which row is under screen y, or -1. Pure, so selfCheck can
-// drive it. p can reach ROWS: the row entering from the bottom.
+// The list is an endless strip of "virtual rows" v (any integer): v maps to
+// watchlist row v mod n and to ring slot v mod ROWS, and the strip is
+// scrolled by pos pixels, either sign. Floor-mod so a drag back past the
+// start behaves. Which row is under screen y, or -1. Pure, so selfCheck
+// can drive it.
 static const int16_t RING = ROW_H * ROWS;
-static int16_t rowAt(uint16_t head, uint8_t p, uint8_t n) { return (head + p) % n; }
-static int16_t hitRow(int16_t y, uint16_t head, uint8_t off, uint8_t n) {
-  if (n == 0 || y < Y_ROW0 || y >= Y_ROW0 + RING) return -1;
-  return rowAt(head, (y - Y_ROW0 + off) / ROW_H, n);
+static int32_t modp(int32_t a, int32_t m) {
+  int32_t r = a % m;
+  return r < 0 ? r + m : r;
 }
-// Which detail button, or -1. Hit zones are 80px, wider than the drawn 76.
-static int8_t hitButton(int16_t x, int16_t y) {
-  if (y < D_Y_BTN) return -1;
-  int8_t b = x / 79;
-  return b > 2 ? 2 : b;
+static int32_t floordiv(int32_t a, int32_t m) { return (a - modp(a, m)) / m; }
+static int16_t hitRow(int16_t y, int32_t pos, uint8_t n) {
+  if (n == 0 || y < Y_ROW0 || y >= Y_ROW0 + RING) return -1;
+  return (int16_t)modp(floordiv(pos + y - Y_ROW0, ROW_H), n);
+}
+// Which settings row, or -1.
+static int8_t hitSetting(int16_t y) {
+  if (y < S_Y0 || y >= S_Y0 + S_H * S_N) return -1;
+  return (y - S_Y0) / S_H;
 }
 // Which range chip, or -1. The zone is the whole strip between the chart
 // and the day bar, taller than the drawn chip, because the chip is small.
@@ -368,26 +392,34 @@ static void drawSpark(int16_t x, int16_t y, int16_t w, int16_t h, const Row &r) 
 }
 
 // ── the list: a scrolling ring ───────────────────────────────────────────
-// The panel scrolls in hardware. VSCRDEF (0x33) fences the six row slots
-// between the fixed header and footer, VSCRSADD (0x37) says which line of
-// that region shows at the top, and the region wraps. Moving the whole list
-// one pixel is one two-byte command. The catch: the slot scrolling off the
-// top IS the slot the next row enters from the bottom, one line at a time.
-// So the incoming row is painted off-screen into a one-row canvas and its
-// lines are fed into that slot as they come into view.
+// The panel scrolls in hardware. VSCRDEF (0x33) fences the seven row slots
+// under the fixed header, VSCRSADD (0x37) says which line of that region
+// shows at the top, and the region wraps. Moving the whole list one pixel
+// is one two-byte command. The catch: when pos is not on a row boundary,
+// the top row and the row entering at the bottom share ONE slot (they are
+// seven virtual rows apart, and the ring has seven slots): the top row owns
+// lines [off, ROW_H), the entering row owns [0, off). So whichever row is
+// entering is painted off-screen into a one-row canvas, and as pos moves
+// its lines are fed into the shared slot -- forward that is row v0+7 from
+// the top of the slot down, backward it is row v0 from the bottom up. The
+// canvas holds whichever one the direction needs and is repainted on a
+// reversal.
 static Arduino_Canvas *rowCanvas;
-static uint16_t head = 0;       // row index at the top at the last row boundary
-static uint8_t headSlot = 0;    // the ring slot holding it
-static uint8_t off = 0;         // pixels of it scrolled off, 0..ROW_H-1
-static uint16_t scrollPos = 0;  // region line shown at the top, 0..RING-1
-static uint32_t scrollLast = 0, scrollAcc = 0;
+static int32_t pos = 0;                 // pixels scrolled; row 0 sat at the top at 0
+static int32_t canvasV = INT32_MIN;     // the virtual row in the canvas
+static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
 static char cRow[ROWS][48], cCanvas[48], cHead[24];
 
-static void panelScroll(uint16_t pos) {
+static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, ROWS); }
+static uint16_t rowOf(int32_t v) { return (uint16_t)modp(v, nRows); }
+static int32_t topV() { return floordiv(pos, ROW_H); }
+static uint8_t offPx() { return (uint8_t)modp(pos, ROW_H); }
+
+static void panelScroll(int32_t p) {
   Arduino_DataBus *bus = boardBus();
   bus->beginWrite();
   bus->writeCommand(0x37);  // VSCRSADD
-  bus->write16(Y_ROW0 + pos);
+  bus->write16(Y_ROW0 + (uint16_t)modp(p, RING));
   bus->endWrite();
 }
 static void panelScrollArea() {
@@ -432,69 +464,102 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
 }
 static bool seam(uint16_t rowIdx) { return nStocks && nCoins && (rowIdx == 0 || rowIdx == nStocks); }
 
-// A slot fully in the ring: repaint only if the row's key changed.
-static void paintSlot(uint8_t slot, uint16_t rowIdx) {
-  Row r = rowCopy(rowIdx);
+// A slot fully owned by virtual row v: repaint only if the row's key changed.
+static void paintSlot(int32_t v) {
+  Row r = rowCopy(rowOf(v));
   char key[48], price[12], pct[12];
   rowKey(r, key, sizeof key, price, pct);
-  if (strcmp(key, cRow[slot]) == 0) return;
-  strcpy(cRow[slot], key);
-  paintRow(Y_ROW0 + slot * ROW_H, r, seam(rowIdx));
+  if (strcmp(key, cRow[slotOf(v)]) == 0) return;
+  strcpy(cRow[slotOf(v)], key);
+  paintRow(Y_ROW0 + slotOf(v) * ROW_H, r, seam(rowOf(v)));
 }
 
-// The row about to enter, painted off-screen. ponytail: the drawing
-// helpers all go through the global gfx, so point it at the canvas for the
-// duration rather than thread a target through every one of them.
-static void paintCanvas(uint16_t rowIdx) {
-  Row r = rowCopy(rowIdx);
+// The entering row, painted off-screen. ponytail: the drawing helpers all
+// go through the global gfx, so point it at the canvas for the duration
+// rather than thread a target through every one of them.
+static void paintCanvas(int32_t v) {
+  if (v == canvasV) return;
+  canvasV = v;
+  Row r = rowCopy(rowOf(v));
   char price[12], pct[12];
   rowKey(r, cCanvas, sizeof cCanvas, price, pct);
   Arduino_GFX *panel = gfx;
   gfx = rowCanvas;
   gfx->fillScreen(C_BG);
-  paintRow(0, r, seam(rowIdx));
+  paintRow(0, r, seam(rowOf(v)));
   gfx = panel;
+}
+// Canvas lines [from, to) into the slot of virtual row v.
+static void feed(int32_t v, uint8_t from, uint8_t to) {
+  gfx->draw16bitRGBBitmap(0, Y_ROW0 + slotOf(v) * ROW_H + from, rowCanvas->getFramebuffer() + from * LCD_W, LCD_W,
+                          to - from);
+}
+
+// Move the strip by delta pixels, either sign, one row-boundary chunk at a
+// time: scroll the panel, then feed the lines that just came into view.
+static void scrollBy(int32_t delta) {
+  while (delta) {
+    int32_t v0 = topV();
+    uint8_t off = offPx();
+    if (delta > 0) {
+      uint8_t k = (uint8_t)min<int32_t>(delta, ROW_H - off);
+      paintCanvas(v0 + ROWS);
+      pos += k;
+      panelScroll(pos);
+      feed(v0, off, off + k);
+      if (off + k == ROW_H) strcpy(cRow[slotOf(v0)], cCanvas);  // v0+7 owns the slot now
+      delta -= k;
+    } else {
+      if (off == 0) {  // step back across the boundary: v0-1 starts entering at the top
+        v0 -= 1;
+        off = ROW_H;
+      }
+      uint8_t k = (uint8_t)min<int32_t>(-delta, off);
+      paintCanvas(v0);
+      pos -= k;
+      panelScroll(pos);
+      feed(v0, off - k, off);
+      if (off == k) strcpy(cRow[slotOf(v0)], cCanvas);  // v0 owns the slot now
+      delta += k;
+    }
+  }
 }
 
 static void listStart() {
   gfx->fillScreen(C_BG);
   panelScrollArea();
-  scrollPos = 0;
-  headSlot = 0;
-  off = 0;
-  panelScroll(0);
+  panelScroll(pos);
   invalidateCache();
+  canvasV = INT32_MIN;
   field(X_SYM, Y_HEAD, 9, 1, C_MUTED, "WATCHLIST");
-  for (uint8_t p = 0; p < ROWS; p++) paintSlot(p, rowAt(head, p, nRows));
-  paintCanvas(rowAt(head, ROWS, nRows));
+  int32_t v0 = topV();
+  uint8_t off = offPx();
+  for (uint8_t p = 0; p < ROWS; p++) paintSlot(v0 + p);
+  if (off) {  // the shared slot: the entering row's lines over the top row's
+    paintCanvas(v0 + ROWS);
+    feed(v0, 0, off);
+  }
   scrollLast = millis();
   scrollAcc = 0;
 }
 
-// Every pass: refresh the slots fully in view, then advance the scroll by
-// however many pixels the clock owes. Frozen while a finger is down, so a
-// tap lands on what it was aimed at.
+// Every pass: refresh the slots fully in view, then advance the crawl by
+// however many pixels the clock owes. Frozen while a finger is down and
+// for a moment after, so a drag or a press is not fought.
 static void listTick() {
   uint32_t now = millis(), dt = now - scrollLast;
   scrollLast = now;
-  for (uint8_t p = off ? 1 : 0; p < ROWS; p++) paintSlot((headSlot + p) % ROWS, rowAt(head, p, nRows));
-  if (touchHeld) return;
+  int32_t v0 = topV();
+  for (uint8_t p = offPx() ? 1 : 0; p < ROWS; p++) paintSlot(v0 + p);
+  if (touchHeld || now < holdUntil) {
+    scrollAcc = 0;
+    return;
+  }
   scrollAcc += dt * RING;  // pixels, scaled by pageMs
-  uint8_t step = (uint8_t)min<uint32_t>(scrollAcc / pageMs, ROW_H - off);
+  int32_t step = scrollAcc / pageMs;
   if (!step) return;
   scrollAcc -= (uint32_t)step * pageMs;
-  scrollPos = (scrollPos + step) % RING;
-  panelScroll(scrollPos);  // scroll first: the lines revealed are stale for ~100us, not wrong
-  gfx->draw16bitRGBBitmap(0, Y_ROW0 + headSlot * ROW_H + off, rowCanvas->getFramebuffer() + off * LCD_W, LCD_W,
-                          step);
-  off += step;
-  if (off == ROW_H) {  // the incoming row now owns the slot; stage the next one
-    off = 0;
-    strcpy(cRow[headSlot], cCanvas);
-    head = rowAt(head, 1, nRows);
-    headSlot = (headSlot + 1) % ROWS;
-    paintCanvas(rowAt(head, ROWS, nRows));
-  }
+  scrollBy(step);
 }
 
 static void drawHead(const struct tm *t, bool haveTime) {
@@ -513,8 +578,6 @@ static void drawHead(const struct tm *t, bool haveTime) {
     snprintf(tag, sizeof tag, "CLOSED til %s", nx);
   }
   field(72, Y_HEAD, 18, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
-  gfx->drawCircle(X_INFO, Y_HEAD + 3, 5, C_MUTED);
-  field(X_INFO - 2, Y_HEAD, 1, 1, C_MUTED, "i");
 }
 
 static void drawPanel(const char *title, uint16_t tc, const char *const *lines, uint8_t n) {
@@ -529,20 +592,9 @@ static uint8_t detailIdx = 0;
 static uint32_t detailOpenedAt = 0;
 static char cDetail[48];
 
-// Three filled, rounded buttons across the bottom; the chevrons are drawn,
-// not typed, and LIST is the brighter one because it is the way back.
-static void drawButton(uint8_t i, const char *s) {
-  int16_t x = 3 + i * 79, cy = D_Y_BTN + BTN_H / 2;
-  gfx->fillRoundRect(x, D_Y_BTN, BTN_W, BTN_H, 6, i == 1 ? C_DIM : C_RULE);
-  gfx->drawRoundRect(x, D_Y_BTN, BTN_W, BTN_H, 6, C_MUTED);
-  int16_t tw = GW(2) * (int16_t)strlen(s) - 2, tx = x + (BTN_W - tw) / 2 + (i == 0 ? 5 : i == 2 ? -5 : 0);
-  gfx->setTextSize(2);
-  gfx->setTextColor(C_FG);
-  gfx->setCursor(tx, cy - GH(2) / 2 + 1);
-  gfx->print(s);
-  if (i == 0) gfx->fillTriangle(tx - 6, cy, tx - 1, cy - 5, tx - 1, cy + 5, C_FG);
-  if (i == 2) gfx->fillTriangle(tx + tw + 7, cy, tx + tw + 2, cy - 5, tx + tw + 2, cy + 5, C_FG);
-}
+// One dim line at the foot of a page saying which swipes it takes. Not a
+// control: the gestures work anywhere on the page.
+static void drawHint(const char *s) { fieldCentre(LCD_W / 2, Y_HINT, 38, 1, C_DIM, s); }
 
 static void drawRange(int16_t y, const char *label, float lo, float hi, float v) {
   char b[12];
@@ -603,9 +655,7 @@ static void drawDetail(bool full) {
     gfx->fillScreen(C_BG);
     cDetail[0] = '\0';
     blitLogo(X_SYM, D_Y_SYM, LOGO_BIG, r.label);  // missing: the square stays black
-    drawButton(0, "PREV");
-    drawButton(1, "LIST");
-    drawButton(2, "NEXT");
+    drawHint("< next     v list     prev >");
     if (!r.coin) drawRangeChips();
   }
   // The selected range's series: the row's own for 1D, else that range's
@@ -656,7 +706,7 @@ static void drawDetail(bool full) {
   // is a dashed reference line -- the percent is measured from it, so
   // without it the shape means nothing.
   gfx->fillRect(0, CH_Y - 1, 240, CH_H + 2, C_BG);  // chips below are left alone
-  gfx->fillRect(0, D_Y_DAY, 240, D_Y_BTN - 2 - D_Y_DAY, C_BG);
+  gfx->fillRect(0, D_Y_DAY, 240, Y_HINT - 2 - D_Y_DAY, C_BG);
   if (r.coin) {
     field(X_SYM, CH_Y + CH_H / 2 - 4, 30, 1, C_DIM, "no intraday series for coins");
     return;
@@ -679,13 +729,76 @@ static void drawDetail(bool full) {
   drawRange(D_Y_WK, "52w", r.wkLo, r.wkHi, r.price);
 }
 
-// ── info page: what the footer used to say, behind the circled i ─────────
-static uint32_t infoOpenedAt = 0;
+// ── settings page: swipe right from the list ─────────────────────────────
+static uint32_t pageOpenedAt = 0;  // settings and info share the auto-return
+
+static void applySettings() {
+  pageMs = SPEED_MS[sSpeed];
+  blAuto = sBl == 0 ? cfgBlAuto : false;
+  blFixed = sBl == 2 ? blMin : blMax;
+  returnMs = RET_MS[sRet];
+}
+static void loadSettings() {
+  prefs.begin("ticker", true);
+  bool any = prefs.isKey("speed");
+  if (any) {
+    sSpeed = prefs.getUChar("speed", sSpeed) % 3;
+    sBl = prefs.getUChar("bl", sBl) % 3;
+    sRet = prefs.getUChar("ret", sRet) % 3;
+    sSound = prefs.getBool("snd", sSound);
+    applySettings();
+  } else {  // nothing saved yet: the config's own values stand
+    for (uint8_t i = 0; i < 3; i++) if (SPEED_MS[i] == pageMs) sSpeed = i;
+    for (uint8_t i = 0; i < 3; i++) if (RET_MS[i] == returnMs) sRet = i;
+    blAuto = cfgBlAuto;
+    blFixed = blMax;
+  }
+  prefs.end();
+  Serial.printf("settings from %s: speed %s, backlight %s, sound %s, return %s\n", any ? "NVS (beats config.json)" : "config.json",
+                SPEED_NAMES[sSpeed], BL_NAMES[sBl], sSound ? "on" : "off", RET_NAMES[sRet]);
+}
+static void saveSettings() {
+  prefs.begin("ticker", false);
+  prefs.putUChar("speed", sSpeed);
+  prefs.putUChar("bl", sBl);
+  prefs.putUChar("ret", sRet);
+  prefs.putBool("snd", sSound);
+  prefs.end();
+  applySettings();
+}
+
+static void drawSettingRow(uint8_t i) {
+  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Info"};
+  const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? (sSound ? "on" : "off")
+                : i == 3 ? RET_NAMES[sRet] : ">";
+  int16_t y = S_Y0 + i * S_H;
+  field(8, y + 12, 11, 2, C_MUTED, labels[i]);
+  fieldRight(X_RIGHT, y + 12, 7, 2, C_FG, v);
+  gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
+}
+static void drawSettings() {
+  drawPanel("SETTINGS", C_MUTED, nullptr, 0);
+  for (uint8_t i = 0; i < S_N; i++) drawSettingRow(i);
+  drawHint("< list");
+}
+// A tap on row i: cycle it, or open info. Returns true if info was opened.
+static bool tapSetting(uint8_t i) {
+  if (i == 4) return true;
+  if (i == 0) sSpeed = (sSpeed + 1) % 3;
+  else if (i == 1) sBl = (sBl + 1) % 3;
+  else if (i == 2) sSound = !sSound;
+  else sRet = (sRet + 1) % 3;
+  saveSettings();
+  drawSettingRow(i);
+  return false;
+}
+
+// ── info page: what the footer used to say, one row of settings ──────────
 static void drawInfo(bool full) {
   static uint32_t last = 0;
   if (full) {
     drawPanel("INFO", C_MUTED, nullptr, 0);
-    drawButton(1, "LIST");
+    drawHint("< list     v settings");
     last = 0;
   }
   if (millis() - last < 1000) return;
@@ -949,21 +1062,67 @@ static void fetchTask(void *) {
   }
 }
 
-// ── touch: a tap fires the moment the finger lands ───────────────────────
-// Firing on release made every button feel a beat late. Nothing here needs
-// a drag or a long press, so touch-down is the gesture.
-static bool pollTap(int16_t *x, int16_t *y) {
-  static uint32_t lastTap = 0;
+// ── touch: tap, long press, vertical drag, horizontal swipe ──────────────
+// A finger that holds still for 100ms is a tap, fired then and there -- on
+// release it felt a beat late, and 100ms is below notice. Still at 450ms
+// it is a long press (the list opens a stock on that, so a drag can start
+// on a row without opening it). A finger that moves 20px first locks to an
+// axis: vertical is a drag, reported as the delta since the last poll;
+// horizontal is a swipe if it goes 60px by release. Resistive touch
+// jitters a few px, hence 20.
+enum class Gesture : uint8_t { None, Tap, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
+static const uint32_t TAP_MS = 100, LONG_MS = 450;
+static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
+  static int16_t x0 = 0, y0 = 0, lx = 0, ly = 0;
+  static uint32_t t0 = 0, lastTap = 0;
+  static uint8_t axis = 0;  // 0 undecided, 1 horizontal, 2 vertical
+  static bool tapped = false, longed = false;
   int16_t cx, cy;
   bool now = touchRead(&cx, &cy);
-  bool tap = now && !touchHeld && millis() - lastTap > 150;
-  if (tap) {
-    *x = cx;
-    *y = cy;
-    lastTap = millis();
+  Gesture g = Gesture::None;
+  if (now && !touchHeld) {
+    x0 = lx = cx;
+    y0 = ly = cy;
+    t0 = millis();
+    axis = 0;
+    tapped = longed = false;
+  } else if (now) {
+    int16_t ddx = cx - x0, ddy = cy - y0;
+    if (!axis && (abs(ddx) > 20 || abs(ddy) > 20)) axis = abs(ddx) > abs(ddy) ? 1 : 2;
+    if (axis == 2) {
+      *dy = cy - ly;
+      g = Gesture::Drag;
+    } else if (!axis) {
+      *x = x0;
+      *y = y0;
+      if (!tapped && millis() - t0 >= TAP_MS && millis() - lastTap > 150) {
+        tapped = true;
+        lastTap = millis();
+        g = Gesture::Tap;
+      } else if (tapped && !longed && millis() - t0 >= LONG_MS) {
+        longed = true;
+        g = Gesture::LongPress;
+      }
+    }
+    lx = cx;
+    ly = cy;
+  } else if (touchHeld) {  // release
+    int16_t ddx = lx - x0, ddy = ly - y0;
+    if (axis == 1) {
+      if (ddx > 60 && abs(ddy) < 60) g = Gesture::SwipeRight;
+      else if (ddx < -60 && abs(ddy) < 60) g = Gesture::SwipeLeft;
+    } else if (axis == 2) {  // a vertical drag that went far enough is also a swipe; the list ignores it
+      if (ddy > 60 && abs(ddx) < 60) g = Gesture::SwipeDown;
+      else if (ddy < -60 && abs(ddx) < 60) g = Gesture::SwipeUp;
+    } else if (!axis && !tapped && millis() - lastTap > 150) {  // a tap quicker than TAP_MS
+      lastTap = millis();
+      *x = x0;
+      *y = y0;
+      g = Gesture::Tap;
+    }
   }
   touchHeld = now;
-  return tap;
+  return g;
 }
 
 // ── brightness from the LDR ──────────────────────────────────────────────
@@ -980,7 +1139,7 @@ static void brightnessTick(bool open) {
   ldrRaw = ldr;
   if (ema < 0) ema = ldr;
   ema += (ldr - ema) * 0.3f;
-  int lvl = blMax;
+  int lvl = blFixed;
   if (blAuto) {
     float dark = constrain(ema / ldrDark, 0.0f, 1.0f);
     lvl = blMax - (int)(dark * (blMax - blMin));
@@ -1033,15 +1192,15 @@ static void selfCheck() {
   nRows = 0;
 
   // Hit tests: the head and footer are not rows, every row maps to itself.
-  // Ring hit tests: head at the top, the incoming row at the bottom edge once
-  // scrolled, and the wrap back to row 0 on a 26-row list.
-  assert(hitRow(Y_ROW0 - 1, 0, 0, 26) == -1 && hitRow(Y_ROW0, 0, 0, 26) == 0 && hitRow(Y_ROW0, 0, 0, 0) == -1);
-  assert(hitRow(Y_ROW0 + RING - 1, 0, 0, 26) == ROWS - 1 && hitRow(Y_ROW0 + RING, 0, 0, 26) == -1);
-  assert(hitRow(Y_ROW0, 0, ROW_H - 1, 26) == 0 && hitRow(Y_ROW0 + 1, 0, ROW_H - 1, 26) == 1);
-  assert(hitRow(Y_ROW0 + RING - 1, 0, ROW_H - 1, 26) == ROWS && hitRow(Y_ROW0 + RING - 1, 24, ROW_H - 1, 26) == (24 + ROWS) % 26);
-  assert(rowAt(2, 3, 3) == 2 && rowAt(2, 1, 3) == 0);  // a three-symbol list simply repeats
-  assert(hitButton(0, D_Y_BTN - 1) == -1 && hitButton(0, D_Y_BTN) == 0);
-  assert(hitButton(120, 319) == 1 && hitButton(239, 319) == 2);
+  // Ring hit tests on a 26-row list: row 0 at the top at pos 0, the entering
+  // row at the bottom edge once scrolled, the wrap, and a drag back past 0.
+  assert(modp(-1, 26) == 25 && floordiv(-1, ROW_H) == -1 && floordiv(ROW_H, ROW_H) == 1);
+  assert(hitRow(Y_ROW0 - 1, 0, 26) == -1 && hitRow(Y_ROW0, 0, 26) == 0 && hitRow(Y_ROW0, 0, 0) == -1);
+  assert(hitRow(Y_ROW0 + RING - 1, 0, 26) == ROWS - 1 && hitRow(Y_ROW0 + RING, 0, 26) == -1);
+  assert(hitRow(Y_ROW0, ROW_H - 1, 26) == 0 && hitRow(Y_ROW0 + 1, ROW_H - 1, 26) == 1);
+  assert(hitRow(Y_ROW0 + RING - 1, ROW_H - 1, 26) == ROWS);
+  assert(hitRow(Y_ROW0 + RING - 1, 24 * ROW_H + ROW_H - 1, 26) == (24 + ROWS) % 26);
+  assert(hitRow(Y_ROW0, -1, 26) == 25 && hitRow(Y_ROW0, 26 * ROW_H, 26) == 0);
   assert(hitRange(X_SYM, CH_Y + CH_H) == 0 && hitRange(X_SYM + R_STEP * 4, D_Y_DAY - 1) == 4);
   assert(hitRange(X_SYM, CH_Y + CH_H - 1) == -1 && hitRange(X_SYM, D_Y_DAY) == -1);
   assert(hitRange(X_SYM - 1, R_Y) == -1 && hitRange(X_SYM + R_STEP * 5, R_Y) == -1);
@@ -1056,7 +1215,9 @@ static void selfCheck() {
   assert(X_SPK + SPK_W <= X_RIGHT - GW(2) * 7);
   assert(Y_SPK + SPK_H <= ROW_H - 4);
   assert(Y_ROW0 + RING <= LCD_H);  // the ring plus header fills the panel; nothing below it
-  assert(X_INFO + 5 < X_RIGHT - GW(1) * 5 && 72 + GW(1) * 18 <= X_INFO - 6);
+  assert(72 + GW(1) * 18 <= X_RIGHT - GW(1) * 5);
+  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0);
+  assert(hitSetting(S_Y0 + S_H * S_N - 1) == S_N - 1 && hitSetting(S_Y0 + S_H * S_N) == -1);
   // Detail: the logo and the text column beside it, then the chart labels
   // and the buttons, all fit.
   assert(X_SYM + LOGO_BIG <= D_X_TXT && D_Y_SYM + LOGO_BIG <= CH_Y);
@@ -1066,14 +1227,13 @@ static void selfCheck() {
   // Range chips fill the strip between the chart and the day bar.
   assert(CH_Y + CH_H <= R_Y && R_Y + R_H <= D_Y_DAY && R_W <= R_STEP && GW(2) * 2 <= R_W && GH(2) <= R_H);
   assert(X_SYM + R_STEP * (N_RANGES - 1) + R_W <= LCD_W);
-  assert(D_Y_DAY + 10 + GH(1) <= D_Y_WK && D_Y_WK + 10 + GH(1) <= D_Y_BTN);
-  assert(D_Y_BTN + BTN_H <= 320 && 3 + 2 * 79 + BTN_W <= 240);
+  assert(D_Y_DAY + 10 + GH(1) <= D_Y_WK && D_Y_WK + 10 + GH(1) <= Y_HINT && Y_HINT + GH(1) <= LCD_H);
   assert(sizeof logoBuf >= (size_t)LOGO_BADGE * LOGO_BADGE * 2);
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
-enum class View { List, Detail, Info };
+enum class View { List, Detail, Settings, Info };
 static State state = State::Boot;
 static View view = View::List;
 
@@ -1096,6 +1256,7 @@ void setup() {
   }
   cfgRelease();
   logoInventory();
+  loadSettings();
 
   const char *boot[] = {"connecting to wifi", WIFI_SSID};
   drawPanel("STARTING", C_MUTED, boot, 2);
@@ -1161,7 +1322,9 @@ static void backToList() {
 
 void loop() {
   int16_t tx, ty;
-  bool tap = pollTap(&tx, &ty);
+  int16_t ddy = 0;
+  Gesture g = pollGesture(&tx, &ty, &ddy);
+  bool tap = g == Gesture::Tap;
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
   bool open = haveTime && marketOpen(t);
@@ -1178,6 +1341,7 @@ void loop() {
     panelScroll(0);  // panels draw the screen 1:1
     if (state == State::Running) {
       if (view == View::List) listStart();
+      else if (view == View::Settings) drawSettings();
       else if (view == View::Info) drawInfo(true);
       else drawDetail(true);
     }
@@ -1209,41 +1373,81 @@ void loop() {
     listTick();
   } else if (view == View::Info) {
     drawInfo(false);
-  } else {
+  } else if (view == View::Detail) {
     drawDetail(false);
   }
 
-  if (tap && state == State::Running) {
-    tone(SPK, 1200, 15);
-    if (view == View::List) {
-      int16_t r = hitRow(ty, head, off, nRows);
-      if (r >= 0) openDetail((uint8_t)r);
-      else if (ty < Y_ROW0) {  // the header: the circled i, or anywhere on it
+  // On the list: drag scrolls it, any touch holds the crawl for 3s after,
+  // and a long press opens the stock. Swipe right opens settings; swipe
+  // left there goes back.
+  if (state == State::Running && view == View::List) {
+    if (touchHeld) holdUntil = millis() + 3000;
+    if (g == Gesture::Drag && ddy) scrollBy(-ddy);
+    if (g == Gesture::LongPress) {
+      int16_t r = hitRow(ty, pos, nRows);
+      if (r >= 0) {
+        if (sSound) tone(SPK, 1200, 15);
+        openDetail((uint8_t)r);
+      }
+    }
+  }
+  // Swipes are the navigation, phone style. List: right opens settings.
+  // Detail: left is the next stock, right the previous, down the list.
+  // Settings: left is the list. Info: left the list, down settings.
+  bool swipe = g == Gesture::SwipeLeft || g == Gesture::SwipeRight || g == Gesture::SwipeDown || g == Gesture::SwipeUp;
+  if (swipe && state == State::Running) {
+    bool acts = (view == View::List && g == Gesture::SwipeRight) ||
+                (view == View::Detail && g != Gesture::SwipeUp) ||
+                (view == View::Settings && g == Gesture::SwipeLeft) ||
+                (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown));
+    if (acts && sSound) tone(SPK, 1200, 15);
+    if (view == View::List && g == Gesture::SwipeRight) {
+      view = View::Settings;
+      pageOpenedAt = millis();
+      panelScroll(0);
+      drawSettings();
+    } else if (view == View::Detail) {
+      if (g == Gesture::SwipeLeft) openDetail((detailIdx + 1) % nRows);
+      else if (g == Gesture::SwipeRight) openDetail((detailIdx + nRows - 1) % nRows);
+      else if (g == Gesture::SwipeDown) backToList();
+    } else if (view == View::Settings && g == Gesture::SwipeLeft) {
+      backToList();
+    } else if (view == View::Info) {
+      if (g == Gesture::SwipeLeft) backToList();
+      else if (g == Gesture::SwipeDown) {
+        view = View::Settings;
+        pageOpenedAt = millis();
+        drawSettings();
+      }
+    }
+  }
+
+  if (tap && state == State::Running && view != View::List) {
+    if (sSound) tone(SPK, 1200, 15);
+    if (view == View::Settings) {
+      int8_t i = hitSetting(ty);
+      pageOpenedAt = millis();
+      if (i >= 0 && tapSetting((uint8_t)i)) {
         view = View::Info;
-        infoOpenedAt = millis();
-        panelScroll(0);
         drawInfo(true);
       }
     } else if (view == View::Info) {
-      backToList();
+      pageOpenedAt = millis();  // a tap only keeps it open
     } else {
-      int8_t b = hitButton(tx, ty), rg = hitRange(tx, ty);
-      if (b == 0) openDetail((detailIdx + nRows - 1) % nRows);
-      else if (b == 2) openDetail((detailIdx + 1) % nRows);
-      else if (b == 1) backToList();
-      else if (rg >= 0 && !rows[detailIdx].coin && rg != rangeSel) {
+      int8_t rg = hitRange(tx, ty);
+      if (rg >= 0 && !rows[detailIdx].coin && rg != rangeSel) {
         rangeSel = (uint8_t)rg;
         if (rg && !seriesHeld(detailIdx, rg)) seriesWant = seriesWant | (1 << rg);  // failed earlier: retry
         drawRangeChips();
         cDetail[0] = '\0';  // the chart must redraw for the new range
       }
     }
-    Serial.printf("tap %d,%d -> %s %s\n", tx, ty, view == View::List ? "list" : view == View::Info ? "info" : "detail",
-                  view == View::Detail ? rows[detailIdx].label : "");
+    Serial.printf("tap %d,%d -> view %u %s\n", tx, ty, (unsigned)view, view == View::Detail ? rows[detailIdx].label : "");
   }
 
   if (view == View::Detail && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs) backToList();
-  if (view == View::Info && returnMs && !touchHeld && millis() - infoOpenedAt > returnMs) backToList();
+  if ((view == View::Info || view == View::Settings) && returnMs && !touchHeld && millis() - pageOpenedAt > returnMs)
+    backToList();
 
   brightnessTick(open);
 

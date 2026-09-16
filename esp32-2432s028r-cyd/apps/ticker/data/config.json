@@ -23,10 +23,13 @@
   "brightness": { "auto": true, "min": 20, "max": 220, "ldrDark": 3000, "closedScale": 60 },
 
   "_timing": [
-    "pageSeconds  the list scrolls continuously; this is how long six rows",
-    "             (one screen) take to pass, 2-600. 10 is a readable crawl.",
+    "pageSeconds  the list scrolls continuously; this is how long one screen",
+    "             of rows takes to pass, 2-600. 10 is a readable crawl.",
     "The scroll is frozen while a finger is down, so a tap lands on the row",
-    "it was aimed at."
+    "it was aimed at. Swipe right on the list for the SETTINGS page: scroll",
+    "speed, backlight, tap sound and auto-return changed there are kept in",
+    "NVS and WIN over this file, like the C6's layout choice. The boot log",
+    "says which is in force."
   ],
   "timing": { "pageSeconds": 10 },
 
