@@ -41,6 +41,13 @@
   ],
   "sparkline": { "interval": "5m" },
 
+  "_sleep": [
+    "The night window for the SETTINGS page's sleep=night option, hours 0-23,",
+    "may wrap midnight. Asleep: backlight off, nothing drawn, nothing fetched;",
+    "a touch wakes it for a minute. sleep=closed follows the market instead."
+  ],
+  "sleep": { "from": 23, "to": 7 },
+
   "_detail": [
     "The per-stock page, reached by tapping a row.",
     "returnSeconds  auto-return to the list after this long, 0-3600; 0 never.",

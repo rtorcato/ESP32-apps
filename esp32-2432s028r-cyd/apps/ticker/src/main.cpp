@@ -11,6 +11,7 @@
 // -- each TLS session is ~40KB of a 320KB heap with no PSRAM behind it.
 #include <appcfg.h>
 #include <board.h>
+#include <helv.h>
 #include <netjoin.h>
 #include <secrets.h>
 
@@ -48,8 +49,21 @@ static const uint8_t ROWS = 7, MAX_SYMBOLS = 32, MAX_LABEL = 5, SPARK_N = 200;  
 // ponytail: 96 on the detail page, not the README's 128 -- 26 x 32KB plus
 // badges overflows the 896KB LittleFS partition. 128 when the SD card lands.
 static const uint8_t LOGO_BADGE = 24, LOGO_BIG = 96;
+// Text comes in four logical sizes, each a Helvetica bitmap face (the X11
+// Adobe set, via U8g2 -- the closest thing to a phone's type that fits in
+// 18KB). GW is the width reserved per character in the layout: Helvetica is
+// narrower than that in every size, so nothing overflows its box. GH is the
+// real box height, cap plus descender.
+struct Face {
+  const uint8_t *font;
+  uint8_t cap, desc;
+};
+static const Face FACES[] = {{u8g2_font_helvR08_tr, 8, 2},
+                             {u8g2_font_helvB14_tr, 14, 4},
+                             {u8g2_font_helvB18_tr, 19, 5},
+                             {u8g2_font_helvB24_tr, 25, 7}};
 #define GW(s) (6 * (s))
-#define GH(s) (8 * (s))
+#define GH(s) (FACES[(s) - 1].cap + FACES[(s) - 1].desc)
 
 static Arduino_GFX *gfx;
 static bool touchHeld = false;  // set by pollGesture; the list freezes while a finger is down
@@ -64,7 +78,10 @@ static const uint32_t SPEED_MS[] = {20000, 10000, 5000};
 static const char *const BL_NAMES[] = {"auto", "bright", "dim"};
 static const char *const RET_NAMES[] = {"15s", "60s", "never"};
 static const uint32_t RET_MS[] = {15000, 60000, 0};
-static uint8_t sSpeed = 1, sBl = 0, sRet = 1;
+static const char *const SLEEP_NAMES[] = {"never", "night", "closed"};
+static uint8_t sSpeed = 1, sBl = 0, sRet = 1, sSleep = 0;
+static uint8_t sleepFrom = 23, sleepTo = 7;  // the night window, config.json
+static volatile bool asleep = false;         // backlight off, nothing drawn, nothing fetched
 static bool sSound = true;
 static Preferences prefs;
 static int blApplied = -1, ldrRaw = 0;  // brightnessTick's last reading and level, for the info page
@@ -151,6 +168,8 @@ static bool loadConfig() {
   }
   returnMs = (uint32_t)cfgInt("detail.returnSeconds", returnMs / 1000, 0, 3600) * 1000UL;
   refreshOnOpen = cfgBool("detail.refreshOnOpen", refreshOnOpen);
+  sleepFrom = (uint8_t)cfgInt("sleep.from", sleepFrom, 0, 23);
+  sleepTo = (uint8_t)cfgInt("sleep.to", sleepTo, 0, 23);
   stockOpenMs = (uint32_t)cfgInt("refresh.openMinutes", stockOpenMs / 60000, 1, 240) * 60000UL;
   stockExtMs = (uint32_t)cfgInt("refresh.extendedMinutes", stockExtMs / 60000, 1, 1440) * 60000UL;
   coinMs = (uint32_t)cfgInt("refresh.coinMinutes", coinMs / 60000, 1, 240) * 60000UL;
@@ -192,7 +211,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 64, S_H = 40, S_N = 5;
+static const int16_t S_Y0 = 64, S_H = 36, S_N = 6;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -248,6 +267,8 @@ static Session session(const struct tm &t) {
   return Session::Post;
 }
 static bool marketOpen(const struct tm &t) { return session(t) == Session::Regular; }
+// Inside the sleep window, which may wrap midnight (23 -> 7). Pure.
+static bool inNight(uint8_t h, uint8_t from, uint8_t to) { return from <= to ? (h >= from && h < to) : (h >= from || h < to); }
 static const char *sessionWord(Session s) {
   switch (s) {
     case Session::Pre: return "pre-market";
@@ -302,28 +323,34 @@ static int16_t sparkY(float v, float lo, float hi, int16_t y0, int16_t h) {
 }
 
 // ── drawing ──────────────────────────────────────────────────────────────
+// y is the TOP of the text box; the face's cap height turns it into the
+// baseline the font wants. Widths are measured, not counted.
+static int16_t textWidth(uint8_t size, const char *s) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  gfx->setFont(FACES[size - 1].font);
+  gfx->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  return (int16_t)w;
+}
+static void textAt(int16_t x, int16_t y, uint8_t size, uint16_t fg, const char *s) {
+  gfx->setFont(FACES[size - 1].font);
+  gfx->setTextColor(fg);
+  gfx->setCursor(x, y + FACES[size - 1].cap);
+  gfx->print(s);
+}
 static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
   gfx->fillRect(x, y, GW(size) * chars, GH(size), C_BG);
-  gfx->setTextSize(size);
-  gfx->setTextColor(fg);
-  gfx->setCursor(x, y);
-  gfx->print(s);
+  textAt(x, y, size, fg, s);
 }
 static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
   int16_t w = GW(size) * chars;
   gfx->fillRect(right - w, y, w, GH(size), C_BG);
-  gfx->setTextSize(size);
-  gfx->setTextColor(fg);
-  gfx->setCursor(right - (int16_t)(GW(size) * strlen(s)), y);
-  gfx->print(s);
+  textAt(right - textWidth(size, s), y, size, fg, s);
 }
 static void fieldCentre(int16_t cx, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
   int16_t w = GW(size) * chars;
   gfx->fillRect(cx - w / 2, y, w, GH(size), C_BG);
-  gfx->setTextSize(size);
-  gfx->setTextColor(fg);
-  gfx->setCursor(cx - GW(size) * (int16_t)strlen(s) / 2, y);
-  gfx->print(s);
+  textAt(cx - textWidth(size, s) / 2, y, size, fg, s);
 }
 
 // Logos are raw RGB565 files on LittleFS: open, check the length is exactly
@@ -616,10 +643,8 @@ static void drawRangeChips() {
     bool on = i == rangeSel;
     gfx->fillRoundRect(x, R_Y, R_W, R_H, 4, on ? C_DIM : C_BG);
     gfx->drawRoundRect(x, R_Y, R_W, R_H, 4, on ? C_MUTED : C_RULE);
-    gfx->setTextSize(2);
-    gfx->setTextColor(on ? C_FG : C_MUTED);
-    gfx->setCursor(x + (R_W - GW(2) * 2) / 2, R_Y + (R_H - GH(2)) / 2);
-    gfx->print(RANGES[i].label);
+    textAt(x + (R_W - textWidth(2, RANGES[i].label)) / 2, R_Y + (R_H - FACES[1].cap) / 2, 2, on ? C_FG : C_MUTED,
+           RANGES[i].label);
   }
 }
 
@@ -746,6 +771,7 @@ static void loadSettings() {
     sBl = prefs.getUChar("bl", sBl) % 3;
     sRet = prefs.getUChar("ret", sRet) % 3;
     sSound = prefs.getBool("snd", sSound);
+    sSleep = prefs.getUChar("slp", sSleep) % 3;
     applySettings();
   } else {  // nothing saved yet: the config's own values stand
     for (uint8_t i = 0; i < 3; i++) if (SPEED_MS[i] == pageMs) sSpeed = i;
@@ -754,8 +780,9 @@ static void loadSettings() {
     blFixed = blMax;
   }
   prefs.end();
-  Serial.printf("settings from %s: speed %s, backlight %s, sound %s, return %s\n", any ? "NVS (beats config.json)" : "config.json",
-                SPEED_NAMES[sSpeed], BL_NAMES[sBl], sSound ? "on" : "off", RET_NAMES[sRet]);
+  Serial.printf("settings from %s: speed %s, backlight %s, sound %s, return %s, sleep %s\n",
+                any ? "NVS (beats config.json)" : "config.json", SPEED_NAMES[sSpeed], BL_NAMES[sBl], sSound ? "on" : "off",
+                RET_NAMES[sRet], SLEEP_NAMES[sSleep]);
 }
 static void saveSettings() {
   prefs.begin("ticker", false);
@@ -763,14 +790,15 @@ static void saveSettings() {
   prefs.putUChar("bl", sBl);
   prefs.putUChar("ret", sRet);
   prefs.putBool("snd", sSound);
+  prefs.putUChar("slp", sSleep);
   prefs.end();
   applySettings();
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Info"};
+  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Sleep", "Info"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? (sSound ? "on" : "off")
-                : i == 3 ? RET_NAMES[sRet] : ">";
+                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : ">";
   int16_t y = S_Y0 + i * S_H;
   field(8, y + 12, 11, 2, C_MUTED, labels[i]);
   fieldRight(X_RIGHT, y + 12, 7, 2, C_FG, v);
@@ -783,11 +811,12 @@ static void drawSettings() {
 }
 // A tap on row i: cycle it, or open info. Returns true if info was opened.
 static bool tapSetting(uint8_t i) {
-  if (i == 4) return true;
+  if (i == 5) return true;
   if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
   else if (i == 2) sSound = !sSound;
-  else sRet = (sRet + 1) % 3;
+  else if (i == 3) sRet = (sRet + 1) % 3;
+  else sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
   return false;
@@ -1009,7 +1038,7 @@ static void fetchTask(void *) {
   uint8_t sweepIdx = 0;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(250));
-    if (WiFi.status() != WL_CONNECTED) continue;
+    if (WiFi.status() != WL_CONNECTED || asleep) continue;
     uint8_t want = seriesWant;
     if (want) {  // the page is waiting on these; they jump even the tapped symbol
       uint8_t rg = (want >> rangeSel) & 1 ? rangeSel : (uint8_t)__builtin_ctz(want);
@@ -1066,19 +1095,25 @@ static void fetchTask(void *) {
 // A finger that holds still for 100ms is a tap, fired then and there -- on
 // release it felt a beat late, and 100ms is below notice. Still at 450ms
 // it is a long press (the list opens a stock on that, so a drag can start
-// on a row without opening it). A finger that moves 20px first locks to an
-// axis: vertical is a drag, reported as the delta since the last poll;
-// horizontal is a swipe if it goes 60px by release. Resistive touch
-// jitters a few px, hence 20.
+// on a row without opening it). Once the finger has moved 24px with one
+// axis clearly winning it locks to that axis: vertical is a drag, reported
+// as the delta since the last poll; horizontal is a swipe if it goes 50px
+// by release. Resistive panels jitter on first contact and drop contact
+// for a poll or two mid-stroke, so a release counts only after three
+// polls without contact. Every stroke is traced on serial.
 enum class Gesture : uint8_t { None, Tap, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
 static const uint32_t TAP_MS = 100, LONG_MS = 450;
+static const int16_t AXIS_PX = 24, SWIPE_PX = 50;
 static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
   static int16_t x0 = 0, y0 = 0, lx = 0, ly = 0;
   static uint32_t t0 = 0, lastTap = 0;
-  static uint8_t axis = 0;  // 0 undecided, 1 horizontal, 2 vertical
+  static uint8_t axis = 0, gap = 0;  // axis: 0 undecided, 1 horizontal, 2 vertical
   static bool tapped = false, longed = false;
   int16_t cx, cy;
-  bool now = touchRead(&cx, &cy);
+  bool contact = touchRead(&cx, &cy);
+  if (contact) gap = 0;
+  else if (touchHeld && ++gap < 3) return Gesture::None;  // a dropped poll, not a release
+  bool now = contact;
   Gesture g = Gesture::None;
   if (now && !touchHeld) {
     x0 = lx = cx;
@@ -1088,7 +1123,10 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
     tapped = longed = false;
   } else if (now) {
     int16_t ddx = cx - x0, ddy = cy - y0;
-    if (!axis && (abs(ddx) > 20 || abs(ddy) > 20)) axis = abs(ddx) > abs(ddy) ? 1 : 2;
+    if (!axis && (abs(ddx) >= AXIS_PX || abs(ddy) >= AXIS_PX)) {
+      if (abs(ddx) * 2 >= abs(ddy) * 3) axis = 1;
+      else if (abs(ddy) * 2 >= abs(ddx) * 3) axis = 2;
+    }
     if (axis == 2) {
       *dy = cy - ly;
       g = Gesture::Drag;
@@ -1109,17 +1147,20 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
   } else if (touchHeld) {  // release
     int16_t ddx = lx - x0, ddy = ly - y0;
     if (axis == 1) {
-      if (ddx > 60 && abs(ddy) < 60) g = Gesture::SwipeRight;
-      else if (ddx < -60 && abs(ddy) < 60) g = Gesture::SwipeLeft;
+      if (ddx >= SWIPE_PX) g = Gesture::SwipeRight;
+      else if (ddx <= -SWIPE_PX) g = Gesture::SwipeLeft;
     } else if (axis == 2) {  // a vertical drag that went far enough is also a swipe; the list ignores it
-      if (ddy > 60 && abs(ddx) < 60) g = Gesture::SwipeDown;
-      else if (ddy < -60 && abs(ddx) < 60) g = Gesture::SwipeUp;
-    } else if (!axis && !tapped && millis() - lastTap > 150) {  // a tap quicker than TAP_MS
+      if (ddy >= SWIPE_PX) g = Gesture::SwipeDown;
+      else if (ddy <= -SWIPE_PX) g = Gesture::SwipeUp;
+    } else if (!tapped && millis() - lastTap > 150) {  // a tap quicker than TAP_MS
       lastTap = millis();
       *x = x0;
       *y = y0;
       g = Gesture::Tap;
     }
+    static const char *const names[] = {"none", "tap", "long", "drag", "swipe right", "swipe left", "swipe up", "swipe down"};
+    Serial.printf("touch: %d,%d -> %d,%d  %lums  axis %c  %s%s\n", x0, y0, lx, ly, (unsigned long)(millis() - t0),
+                  axis == 1 ? 'h' : axis == 2 ? 'v' : '-', names[(uint8_t)g], longed ? " (after long press)" : "");
   }
   touchHeld = now;
   return g;
@@ -1178,6 +1219,8 @@ static void selfCheck() {
   t.tm_hour = 16; t.tm_min = 0;                 assert(!marketOpen(t) && session(t) == Session::Post);
   t.tm_hour = 20;                               assert(session(t) == Session::Closed);
   t.tm_hour = 12; t.tm_wday = 6;                assert(session(t) == Session::Closed);
+  assert(inNight(23, 23, 7) && inNight(3, 23, 7) && !inNight(7, 23, 7) && !inNight(12, 23, 7));
+  assert(inNight(1, 0, 6) && !inNight(6, 0, 6) && !inNight(5, 23, 23));
   char nx[24];
   t.tm_wday = 6; t.tm_hour = 12;  nextOpen(t, nx, sizeof nx);  assert(strcmp(nx, "Mon 09:30") == 0);
   t.tm_wday = 5; t.tm_hour = 17;  nextOpen(t, nx, sizeof nx);  assert(strcmp(nx, "Mon 09:30") == 0);
@@ -1229,6 +1272,7 @@ static void selfCheck() {
   assert(X_SYM + R_STEP * (N_RANGES - 1) + R_W <= LCD_W);
   assert(D_Y_DAY + 10 + GH(1) <= D_Y_WK && D_Y_WK + 10 + GH(1) <= Y_HINT && Y_HINT + GH(1) <= LCD_H);
   assert(sizeof logoBuf >= (size_t)LOGO_BADGE * LOGO_BADGE * 2);
+  for (const Face &f : FACES) assert(f.font[13] == f.cap && (uint8_t)(-(int8_t)f.font[14]) == f.desc);  // u8g2 header: ascent_A, descent_g
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
@@ -1246,8 +1290,10 @@ void setup() {
   gfx = boardDisplay();
   gfx->begin();
   gfx->fillScreen(C_BG);
+  gfx->setTextWrap(false);
   rowCanvas = new Arduino_Canvas(LCD_W, ROW_H, nullptr);
   if (!rowCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) Serial.println("row canvas: alloc failed");  // 20KB
+  rowCanvas->setTextWrap(false);
   backlight(blMax);
 
   if (!loadConfig()) {
@@ -1328,6 +1374,33 @@ void loop() {
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
   bool open = haveTime && marketOpen(t);
+  Session ses = haveTime ? session(t) : Session::Regular;
+
+  // Sleep: backlight off, nothing drawn, nothing fetched, once the chosen
+  // condition holds and nobody has touched the panel for a minute. Any
+  // touch wakes it for a minute and is otherwise swallowed.
+  static uint32_t awakeUntil = 60000;
+  if (touchHeld) awakeUntil = millis() + 60000;
+  bool wantSleep = state == State::Running && haveTime && millis() > awakeUntil &&
+                   ((sSleep == 1 && inNight(t.tm_hour, sleepFrom, sleepTo)) || (sSleep == 2 && ses == Session::Closed));
+  if (wantSleep && !asleep) {
+    asleep = true;
+    backlight(0);
+    Serial.println("sleep");
+  } else if (asleep && !wantSleep) {
+    asleep = false;
+    blApplied = -1;  // brightnessTick re-applies
+    invalidateCache();
+    if (view == View::List) listStart();
+    else if (view == View::Settings) drawSettings();
+    else if (view == View::Info) drawInfo(true);
+    else drawDetail(true);
+    Serial.println("wake");
+  }
+  if (asleep) {
+    delay(50);
+    return;
+  }
 
   bool anyValid = false;
   for (uint8_t i = 0; i < nRows; i++) anyValid |= rows[i].valid;  // a bool read; no lock needed

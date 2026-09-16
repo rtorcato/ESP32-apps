@@ -214,9 +214,11 @@ the list. Settings: swipe left for the list. Info: left for the list, down
 for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
-**SETTINGS, swipe right from the list.** Five rows, tap to cycle: scroll
+**SETTINGS, swipe right from the list.** Six rows, tap to cycle: scroll
 speed (slow / normal / fast), backlight (auto / bright / dim), tap sound,
-auto-return (15s / 60s / never), and Info. The four settings are kept in
+auto-return (15s / 60s / never), sleep (never / night / closed -- backlight
+off, nothing drawn or fetched, a touch wakes it for a minute; the night
+window is `sleep.from` / `.to` in config.json), and Info. The four settings are kept in
 **NVS and beat config.json**, the way the C6's layout choice does, or a
 config push would undo a tap on every boot; the boot log says which is in
 force. Everything that needs a keyboard stays in config.json. Swipe left or
@@ -229,9 +231,21 @@ counts, build date. Swipe down for settings, left for the list.
 
 **Gestures.** A finger that holds still for 100ms is a tap, fired then and
 there (firing on release felt a beat late; 100ms is below notice); still at
-450ms it is a long press. A finger that moves more than 20px first locks to
-an axis and never becomes a tap: vertical is a drag, horizontal is a swipe if
-it goes 60px by release. Resistive touch jitters a few px, hence 20.
+450ms it is a long press. A finger that moves 24px with one axis clearly
+winning locks to that axis and never becomes a tap: vertical is a drag,
+horizontal is a swipe if it goes 50px by release. Resistive panels jitter on
+first contact and drop contact for a poll or two mid-stroke, so a release
+only counts after three polls without contact. Every stroke is traced on
+serial (`touch: 40,150 -> 130,148  210ms  axis h  swipe right`) -- read that
+first if a gesture "does nothing".
+
+**Type.** Four logical text sizes, each a Helvetica bitmap face (the X11
+Adobe set, via U8g2, extracted into `lib/fonts/helv.h` rather than pulling
+the whole library in for eleven arrays): regular 8px for small text, bold
+14 / 19 / 25px for symbols and prices. Arduino_GFX draws U8g2 fonts natively.
+The layout still reserves 6px per character per size; Helvetica is narrower
+than that in every size, so nothing overflows its box, and right-aligned
+text is measured, not counted.
 
 Tap a LIST row or a HEATMAP tile — same gesture, same result in both layouts, no
 modes to learn. **The page is free**, for the same reason the sparkline is: the
