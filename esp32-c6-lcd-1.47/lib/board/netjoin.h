@@ -44,8 +44,9 @@ inline void netTune() {
 //
 // Re-scanning on every call means a genuinely better AP still wins later, so
 // this is not a permanent lock -- call it again on each retry.
-inline bool netJoinBest(const char *ssid, const char *pass) {
-  int n = WiFi.scanNetworks(false /*async*/, false /*hidden*/, false /*passive*/, 250);
+// Given a finished scan of n networks, pin to the strongest AP for ssid
+// and begin. Shared by the blocking and the non-blocking joins.
+inline bool netBeginBest(int n, const char *ssid, const char *pass) {
   int best = -1, bestRssi = -127;
   for (int i = 0; i < n; i++) {
     if (WiFi.SSID(i) != ssid) continue;
@@ -67,6 +68,24 @@ inline bool netJoinBest(const char *ssid, const char *pass) {
                 bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
   WiFi.scanDelete();
   WiFi.begin(ssid, pass, ch, bssid);
+  return true;
+}
+inline bool netJoinBest(const char *ssid, const char *pass) {
+  return netBeginBest(WiFi.scanNetworks(false /*async*/, false /*hidden*/, false /*passive*/, 250), ssid, pass);
+}
+// The same join without the ~3s the scan blocks for: netJoinStart() kicks
+// off an async scan, then netJoinTick() each loop pass issues the begin()
+// once the scan is in and returns true that once. The panel stays alive
+// throughout, which matters after a deep-sleep wake with prices to show.
+inline void netJoinStart() { WiFi.scanNetworks(true /*async*/, false /*hidden*/, false /*passive*/, 250); }
+inline bool netJoinTick(const char *ssid, const char *pass) {
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) return false;
+  if (n < 0) {  // WIFI_SCAN_FAILED: no scan to pick from, plain join
+    WiFi.begin(ssid, pass);
+    return true;
+  }
+  netBeginBest(n, ssid, pass);
   return true;
 }
 

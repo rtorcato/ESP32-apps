@@ -113,7 +113,8 @@ struct Row {
   char name[32];
   bool coin, valid;
   float price, pct, prev, dayLo, dayHi, wkLo, wkHi;
-  float last;  // the newest bar, extended hours included; == price in the regular session
+  float last;     // the newest bar, extended hours included; == price in the regular session
+  time_t traded;  // Yahoo's regularMarketTime: the last regular-session trade
   uint8_t n;
   float close[SPARK_N];
 };
@@ -448,7 +449,28 @@ static Session session(const struct tm &t) {
   if (mins < mktCloseMin) return Session::Regular;
   return Session::Post;
 }
-static bool marketOpen(const struct tm &t) { return session(t) == Session::Regular; }
+// A holiday looks like a weekday to the clock. The quotes know better: on
+// a weekday, a quarter hour past the open, if every stock's last regular
+// trade is from an earlier day, nothing is trading today. Pre-market on a
+// holiday cannot be told apart from a normal one (yesterday's trade is
+// normal then) and costs a few extended-hours fetches; fine.
+static volatile bool holiday = false;  // set in loop, read by the fetch task
+static bool holidayFrom(const struct tm &t) {
+  if (t.tm_wday == 0 || t.tm_wday == 6) return false;
+  if (t.tm_hour * 60 + t.tm_min < mktOpenMin + 15) return false;
+  bool seen = false;
+  for (uint8_t i = 0; i < nRows; i++) {
+    if (!rows[i].valid || rows[i].coin || !rows[i].traded) continue;  // plain reads; a torn one costs nothing
+    struct tm tt;
+    time_t when = rows[i].traded;
+    localtime_r(&when, &tt);
+    if (tt.tm_year == t.tm_year && tt.tm_yday == t.tm_yday) return false;
+    seen = true;
+  }
+  return seen;
+}
+static Session sessionNow(const struct tm &t) { return holiday ? Session::Closed : session(t); }
+static bool marketOpen(const struct tm &t) { return sessionNow(t) == Session::Regular; }
 // Inside the sleep window, which may wrap midnight (23 -> 7). Pure.
 static bool inNight(uint8_t h, uint8_t from, uint8_t to) { return from <= to ? (h >= from && h < to) : (h >= from || h < to); }
 static const char *sessionWord(Session s) {
@@ -668,7 +690,7 @@ static bool restoreFromRtc() {
 }
 // The sleep condition, pure in t. Closed follows the market; night the window.
 static bool sleepDue(const struct tm &t) {
-  return (sSleep == 1 && inNight(t.tm_hour, sleepFrom, sleepTo)) || (sSleep == 2 && session(t) == Session::Closed);
+  return (sSleep == 1 && inNight(t.tm_hour, sleepFrom, sleepTo)) || (sSleep == 2 && sessionNow(t) == Session::Closed);
 }
 // Seconds until the sleep window ends: the night's `to` hour, or the next
 // weekday's pre-market. Capped at six hours so a long weekend still gets a
@@ -891,7 +913,7 @@ static void drawHead(const struct tm *t, bool haveTime) {
   char buf[20], clk[8];
   if (haveTime) strftime(clk, sizeof clk, "%H:%M", t);
   else snprintf(clk, sizeof clk, "--:--");
-  Session ses = haveTime ? session(*t) : Session::Regular;
+  Session ses = haveTime ? sessionNow(*t) : Session::Regular;
   snprintf(buf, sizeof buf, "%s|%u", clk, (unsigned)ses);
   if (strcmp(buf, cHead) == 0) return;
   strcpy(cHead, buf);
@@ -1037,7 +1059,7 @@ static void drawDetail(bool full) {
   // bar as the price, with its move measured from the regular close, and
   // says so where the company name goes. The list keeps the regular figures.
   struct tm t;
-  Session ses = getLocalTime(&t, 0) ? session(t) : Session::Regular;
+  Session ses = getLocalTime(&t, 0) ? sessionNow(t) : Session::Regular;
   bool ext = !r.coin && r.valid && ses != Session::Regular && r.last > 0 && r.price > 0 && r.last != r.price;
   float shown = ext ? r.last : r.price, base = ext ? r.price : r.prev;
   float pctv = ext ? (r.last - r.price) / r.price * 100.0f : r.pct;
@@ -1275,7 +1297,7 @@ static void drawInfo(bool full) {
   char l[12][40];
   uint8_t n = 0;
   if (haveTime) {
-    Session ses = session(t);
+    Session ses = sessionNow(t);
     char nx[16];
     nextOpen(t, nx, sizeof nx);
     if (ses == Session::Regular || ses == Session::Post) snprintf(l[n++], 40, "%s", sessionWord(ses));
@@ -1488,7 +1510,7 @@ static bool fetchChart(NetworkClientSecure &client, const char *id, const char *
   JsonDocument filter;
   JsonObject fm = filter["chart"]["result"][0]["meta"].to<JsonObject>();
   for (const char *k : {"regularMarketPrice", "chartPreviousClose", "longName", "shortName", "regularMarketDayHigh",
-                        "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow"})
+                        "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "regularMarketTime"})
     fm[k] = true;
   filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
   if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return false;
@@ -1522,6 +1544,7 @@ static bool fetchStock(NetworkClientSecure &client, Row &r) {
   JsonVariant res = doc["chart"]["result"][0];
   JsonVariant m = res["meta"];
   r.price = m["regularMarketPrice"] | 0.0f;
+  r.traded = (time_t)(m["regularMarketTime"] | 0L);
   r.prev = m["chartPreviousClose"] | 0.0f;
   r.pct = r.prev > 0 ? (r.price - r.prev) / r.prev * 100.0f : 0.0f;
   r.dayLo = m["regularMarketDayLow"] | 0.0f;
@@ -1834,7 +1857,7 @@ static void fetchTask(void *) {
     // the next pre-market. A boot while closed still gets its first sweep.
     struct tm t;
     bool haveTime = getLocalTime(&t, 0);
-    Session ses = haveTime ? session(t) : Session::Regular;
+    Session ses = haveTime ? sessionNow(t) : Session::Regular;
     static Session prevSes = Session::Regular;
     static uint32_t closedAt = 0;
     if (ses != prevSes) {
@@ -2116,6 +2139,24 @@ static void selfCheck() {
     labelFor("BRK-B", lab, sizeof lab);    assert(strcmp(lab, "BRK-B") == 0);
     assert(hitKey(0, K_Y0 - 1) == -1 && hitKey(0, K_Y0) == 0 && hitKey(239, K_Y0 + 4 * K_H) == 29);
   }
+  {  // holiday: a weekday at 10:00 with the only stock last traded yesterday
+    struct tm w = {};
+    w.tm_wday = 3; w.tm_hour = 10; w.tm_year = 126; w.tm_yday = 258;
+    assert(!holidayFrom(w));  // no rows: nothing to go on
+    assert(addRow("AAA", "aaa", false));
+    rows[0].valid = true;
+    time_t now = time(nullptr);
+    rows[0].traded = now;
+    struct tm tn;
+    localtime_r(&now, &tn);
+    w.tm_year = tn.tm_year; w.tm_yday = tn.tm_yday; w.tm_wday = tn.tm_wday == 0 || tn.tm_wday == 6 ? 3 : tn.tm_wday;
+    assert(!holidayFrom(w));
+    rows[0].traded = now - 86400 * 3;
+    assert(holidayFrom(w));
+    w.tm_hour = 9; w.tm_min = 30;
+    assert(!holidayFrom(w));  // before open + 15: yesterday's trade is normal
+    nRows = 0;
+  }
   assert(nRows == 0);
   assert(!addRow("TOOLONG", "TOOLONG", false));
   assert(!addRow("", "X", false));
@@ -2167,6 +2208,7 @@ static void selfCheck() {
 
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
+static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 enum class View { List, Detail, Settings, Info, Calib, News, Search, Splash };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
@@ -2223,23 +2265,46 @@ void setup() {
     char st[40];
     snprintf(st, sizeof st, "connecting to %.24s", WIFI_SSID);
     drawSplash(st);
+    state = State::Boot;
   }
   backlight(blMax);
+  // The join runs in the background from here: netTick() in loop() issues
+  // the begin() when the scan is in, starts the clock when the link is up,
+  // and the state machine keeps the splash (or the restored list) meanwhile.
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   netTune();
-  netJoinBest(WIFI_SSID, WIFI_PASS);
-  for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("wifi ok %s %ddBm\n", WiFi.SSID().c_str(), WiFi.RSSI());
-    if (!restored) splashStatus("connected, setting the clock");
-    configTzTime(tzString, "pool.ntp.org", "time.nist.gov");
-    struct tm t;
-    for (int i = 0; i < 40 && !getLocalTime(&t, 250); i++) {}
-  }
-
+  netJoinStart();
+  joinStarted = millis();
   xTaskCreatePinnedToCore(fetchTask, "fetch", 12288, nullptr, 1, nullptr, 0);
+}
+
+// The non-blocking join: the scan's begin(), then NTP once the link is up.
+static void netTick() {
+  static bool scanning = true, clockStarted = false;
+  if (scanning && netJoinTick(WIFI_SSID, WIFI_PASS)) scanning = false;
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (up && !clockStarted) {
+    clockStarted = true;
+    Serial.printf("wifi ok %s %ddBm\n", WiFi.SSID().c_str(), WiFi.RSSI());
+    configTzTime(tzString, "pool.ntp.org", "time.nist.gov");
+  }
+  // Retry with a fresh scan, backing off, whenever the link is down for a
+  // while -- whatever is on the screen.
+  static uint32_t lastRetry = 0;
+  static uint16_t retries = 0;
+  if (up) {
+    retries = 0;
+    lastRetry = 0;
+  } else if (millis() - joinStarted > WIFI_RETRY_MS &&
+             (lastRetry == 0 || millis() - lastRetry > netRetryDelay(retries, WIFI_RETRY_MS))) {
+    lastRetry = millis();
+    Serial.printf("wifi retry #%u\n", ++retries);
+    WiFi.disconnect();
+    netJoinStart();
+    scanning = true;
+  }
 }
 
 static void drawFailPanel() {
@@ -2270,7 +2335,7 @@ static void openDetail(uint8_t idx) {
   detailIdx = idx;
   detailOpenedAt = millis();
   struct tm t;
-  if (refreshOnOpen && !(getLocalTime(&t, 0) && session(t) == Session::Closed)) priority = idx;  // nothing new when closed
+  if (refreshOnOpen && !(getLocalTime(&t, 0) && sessionNow(t) == Session::Closed)) priority = idx;  // nothing new when closed
   seriesIdx = idx;
   uint8_t want = 0;
   for (uint8_t rg = 1; rg < N_RANGES; rg++)
@@ -2346,7 +2411,14 @@ void loop() {
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
   bool open = haveTime && marketOpen(t);
-  Session ses = haveTime ? session(t) : Session::Regular;
+  static uint32_t holidayAt = 0;
+  if (haveTime && millis() - holidayAt > 10000) {  // 32 localtime_r calls; not every pass
+    holidayAt = millis();
+    bool h = holidayFrom(t);
+    if (h != holiday) Serial.println(h ? "market holiday: no stock has traded today" : "trading again");
+    holiday = h;
+  }
+  Session ses = haveTime ? sessionNow(t) : Session::Regular;
 
   // Sleep: once the chosen condition holds and nobody has touched the panel
   // for a minute, the chip deep-sleeps (see goToSleep). Not from a
@@ -2355,12 +2427,18 @@ void loop() {
   if (state == State::Running && view != View::Calib && haveTime && millis() > awakeUntil && sleepDue(t))
     goToSleep(secondsUntilWake(t));
 
+  netTick();
   bool anyValid = false;
   for (uint8_t i = 0; i < nRows; i++) anyValid |= rows[i].valid;  // a bool read; no lock needed
-  State want = cfgErr                          ? State::NoConfig
-               : WiFi.status() != WL_CONNECTED ? State::NoWifi
-               : !anyValid                     ? State::NoData
-                                               : State::Running;
+  bool up = WiFi.status() == WL_CONNECTED, joining = !up && millis() - joinStarted < 20000;
+  bool firstFetch = up && !anyValid && failures == 0 && millis() - joinStarted < 60000;
+  // Prices on hand (restored from sleep, or fetched before the link dropped)
+  // beat any panel: the list stays up and the join or retry runs behind it.
+  State want = cfgErr                  ? State::NoConfig
+               : anyValid              ? State::Running
+               : joining || firstFetch ? State::Boot  // the splash, with its status line
+               : !up                   ? State::NoWifi
+                                       : State::NoData;
   if (want != state) {
     state = want;
     invalidateCache();
@@ -2387,21 +2465,17 @@ void loop() {
     return;
   }
 
-  static uint32_t lastRetry = 0;
-  static uint16_t retries = 0;
-  if (state == State::NoWifi) {
-    if (lastRetry == 0 || millis() - lastRetry > netRetryDelay(retries, WIFI_RETRY_MS)) {
-      lastRetry = millis();
-      Serial.printf("wifi retry #%u\n", ++retries);
-      WiFi.disconnect();
-      netJoinBest(WIFI_SSID, WIFI_PASS);
+  if (state == State::Boot) {  // the splash is up from setup; only its status line moves
+    static uint32_t lastStatus = 0;
+    if (millis() - lastStatus > 1000) {
+      lastStatus = millis();
+      char st[40];
+      if (!up) snprintf(st, sizeof st, "connecting to %.24s", WIFI_SSID);
+      else if (!haveTime) snprintf(st, sizeof st, "connected, setting the clock");
+      else snprintf(st, sizeof st, "fetching prices");
+      splashStatus(st);
     }
-  } else {
-    retries = 0;
-    lastRetry = 0;
-  }
-
-  if (state != State::Running) {
+  } else if (state != State::Running) {
     drawFailPanel();
   } else if (view == View::List) {
     drawHead(&t, haveTime);

@@ -87,8 +87,14 @@ follows it: `refresh.openMinutes` in the regular session,
 `refresh.extendedMinutes` in pre/post, and when closed **one sweep after the
 close** to keep the final after-hours prints, then nothing until the next
 pre-market. Crypto never closes and keeps its own interval. Tapping a row
-while closed does not refetch it either. A holiday looks like a weekday and
-costs a handful of unchanged fetches; not worth a calendar.
+while closed does not refetch it either.
+
+**Holidays come from the quotes, not a calendar.** Yahoo's
+`regularMarketTime` is the last regular-session trade. On a weekday a quarter
+hour past the open, if every stock's last trade is from an earlier day,
+nothing is trading today: the header says CLOSED, the sweep stops, sleep on
+`closed` applies. Pre-market on a holiday cannot be told from a normal one
+(yesterday's trade is normal then) and costs a few extended-hours fetches.
 
 Quotes are requested with `includePrePost=true`, so the 1D series runs
 04:00-20:00 and the row keeps its newest bar as `last`. The list always shows
@@ -316,6 +322,15 @@ first contact and drop contact for a poll or two mid-stroke, so a release
 only counts after three polls without contact. Every stroke is traced on
 serial (`touch: 40,150 -> 130,148  210ms  axis h  swipe right`) -- read that
 first if a gesture "does nothing".
+
+**The join never blocks.** The scan is asynchronous and the begin() is
+issued from `loop()` when it lands, NTP starts when the link is up, and
+retries back off behind whatever is on the screen. So a wake from deep sleep
+draws the restored list and the finger works at once while the radio comes
+up; a cold boot holds the splash, its status line moving from "connecting"
+to "setting the clock" to "fetching prices", and only shows the NO WIFI
+panel after twenty seconds without a link. Prices on hand always beat a
+panel: a link that drops later leaves the list up and retries behind it.
 
 **Boot splash**, drawn rather than shipped: a navy-to-black sky, nine
 candles on the way up with a gold average through them, the wordmark, and
