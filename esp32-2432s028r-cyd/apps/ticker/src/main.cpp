@@ -426,7 +426,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 64, S_H = 30, S_N = 7;  // rows per page; two pages, swipe up and down
+static const int16_t S_Y0 = 64, S_H = 30, S_N = 8;  // rows per page; two pages, a row or a swipe apart
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -1379,17 +1379,19 @@ static void saveSettings() {
 }
 
 static void drawSettingRow(uint8_t i) {
-  // Row numbers run across both pages: 0-6 on the first, 7-11 on the second.
-  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency",
-                                       "Touch", "Wi-Fi", "Info", "Clear device", "Shutdown"};
+  // Row numbers run across both pages: 0-7 on the first (the last one opens
+  // the second), 8-13 on the second (the last one comes back). A swipe up
+  // or down does the same, but a row is something you can see.
+  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Device",
+                                       "Touch", "Wi-Fi", "Info", "Clear device", "Shutdown", "Back"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
                 : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
-                : i == 6 ? sCur : i == 7 ? "calibrate" : i == 8 ? (wifiSsid[0] ? wifiSsid : "not set")
-                : i == 9 ? ">" : i == 10 ? (clearArmedUntil ? "tap again" : "tap twice")
-                : shutdownArmedUntil ? "tap again" : "tap twice";
+                : i == 6 ? sCur : i == 7 ? ">" : i == 8 ? "calibrate" : i == 9 ? (wifiSsid[0] ? wifiSsid : "not set")
+                : i == 10 ? ">" : i == 11 ? (clearArmedUntil ? "tap again" : "tap twice")
+                : i == 12 ? (shutdownArmedUntil ? "tap again" : "tap twice") : "<";
   if (i / S_N != setPage) return;
   int16_t y = S_Y0 + (i % S_N) * S_H;
-  bool danger = i >= 10, armed = (i == 10 && clearArmedUntil) || (i == 11 && shutdownArmedUntil);
+  bool danger = i == 11 || i == 12, armed = (i == 11 && clearArmedUntil) || (i == 12 && shutdownArmedUntil);
   field(8, y + 6, 11, 2, danger ? C_BAD : C_MUTED, labels[i]);
   fieldRight(X_RIGHT, y + 6, 9, 2, armed ? C_WARN : C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
@@ -1415,27 +1417,30 @@ static void nextCurrency() {
 }
 static void drawSettings() {
   drawPanel(setPage ? "DEVICE" : "SETTINGS", C_MUTED, nullptr, 0);
-  for (uint8_t i = 0; i < 12; i++) drawSettingRow(i);
+  for (uint8_t i = 0; i < 14; i++) drawSettingRow(i);
   drawHint(setPage ? "v settings     < list" : "^ device     < list");
 }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
-// 2 (touch calibration), 3 (shut down now), 4 (Wi-Fi setup), 5 (clear the device).
+// 2 (touch calibration), 3 (shut down now), 4 (Wi-Fi setup), 5 (clear the
+// device), 6 (the other settings page).
 static uint8_t tapSetting(uint8_t i) {
-  if (i == 9) return 1;
-  if (i == 7) return 2;
-  if (i == 8) return 4;
-  if (i == 11) {
+  if (i == 7 || i == 13) return 6;
+  if (i == 10) return 1;
+  if (i == 8) return 2;
+  if (i == 9) return 4;
+  if (i == 12) {
     if (shutdownArmedUntil && millis() < shutdownArmedUntil) return 3;
     shutdownArmedUntil = millis() + 3000;
+    drawSettingRow(12);
+    return 0;
+  }
+  if (i == 11) {
+    if (clearArmedUntil && millis() < clearArmedUntil) return 5;
+    clearArmedUntil = millis() + 3000;
     drawSettingRow(11);
     return 0;
   }
-  if (i == 10) {
-    if (clearArmedUntil && millis() < clearArmedUntil) return 5;
-    clearArmedUntil = millis() + 3000;
-    drawSettingRow(10);
-    return 0;
-  }
+  if (i > 6) return 0;
   if (i == 6) nextCurrency();
   else if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
@@ -2529,7 +2534,7 @@ static void selfCheck() {
   assert(Y_SPK + SPK_H <= ROW_H - 4);
   assert(Y_ROW0 + RING <= LCD_H);  // the ring plus header fills the panel; nothing below it
   assert(72 + GW(1) * 18 <= X_RIGHT - GW(1) * 5);
-  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N * 2 >= 12);
+  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N * 2 >= 14);
   assert(hitSetting(S_Y0 + S_H * S_N - 1) == S_N - 1 && hitSetting(S_Y0 + S_H * S_N) == -1);
   // Detail: the logo and the text column beside it, then the chart labels
   // and the buttons, all fit.
@@ -2981,11 +2986,11 @@ void loop() {
   }
   if (shutdownArmedUntil && millis() > shutdownArmedUntil) {
     shutdownArmedUntil = 0;
-    if (view == View::Settings) drawSettingRow(11);
+    if (view == View::Settings) drawSettingRow(12);
   }
   if (clearArmedUntil && millis() > clearArmedUntil) {
     clearArmedUntil = 0;
-    if (view == View::Settings) drawSettingRow(10);
+    if (view == View::Settings) drawSettingRow(11);
   }
   if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
     removeArmedUntil = 0;
@@ -3040,6 +3045,9 @@ void loop() {
         drawHint("clearing. it restarts into setup", C_WARN);
         delay(600);
         clearDevice();
+      } else if (r == 6) {
+        setPage = !setPage;
+        drawSettings();
       }
     } else if (view == View::Info) {  // a tap shows the splash, as the last line says
       view = View::Splash;

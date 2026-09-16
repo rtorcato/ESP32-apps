@@ -279,7 +279,9 @@ the list. Settings: swipe left for the list. Info: left for the list, down
 for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
-**SETTINGS, swipe right from the list.** Two pages, swipe up and down.
+**SETTINGS, swipe right from the list.** Two pages: a Device row at the
+foot of the first opens the second, a Back row returns, and a swipe up or
+down does the same.
 The everyday page, tap to cycle: scroll speed (slow / normal / fast),
 backlight (auto / bright / dim), sound (off / taps / alerts / both),
 auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
