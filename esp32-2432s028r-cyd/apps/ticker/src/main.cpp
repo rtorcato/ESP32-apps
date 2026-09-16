@@ -723,6 +723,7 @@ static const uint32_t RTC_MAGIC = 0x7469636B;  // "tick"
 RTC_DATA_ATTR static uint32_t rtcMagic = 0, rtcLabelHash = 0;
 RTC_DATA_ATTR static time_t rtcLastOk = 0;
 RTC_DATA_ATTR static int32_t rtcPos = 0;
+RTC_DATA_ATTR static bool rtcShutdown = false;  // the last sleep was a shutdown: the BOOT button is the only way back
 RTC_DATA_ATTR static RtcRow rtcRows[MAX_SYMBOLS];
 static int32_t pos;  // defined with the list below; the snapshot needs it here
 
@@ -797,8 +798,12 @@ static uint32_t secondsUntilWake(const struct tm &t) {
   uint32_t secs = (uint32_t)mins * 60 - t.tm_sec + 5;
   return secs > 6UL * 3600 ? 6UL * 3600 : secs;
 }
-static void goToSleep(uint32_t secs) {  // secs == 0: no timer, a touch alone wakes it
-  Serial.printf(secs ? "deep sleep for up to %lus, or a touch\n" : "shutdown: deep sleep until a touch\n", (unsigned long)secs);
+// A sleep wakes on a touch (and the timer); a shutdown (secs == 0) wakes on
+// the BOOT button alone -- "off" has to mean off, and a screen that comes
+// back when brushed is not off. GPIO0 is RTC-capable, so ext0 can watch it.
+static void goToSleep(uint32_t secs) {
+  Serial.printf(secs ? "deep sleep for up to %lus, or a touch\n" : "shutdown: deep sleep until the BOOT button\n", (unsigned long)secs);
+  rtcShutdown = secs == 0;
   snapshotToRtc();
   backlight(0);
   ledGlow(0, 0, 0);
@@ -818,8 +823,12 @@ static void goToSleep(uint32_t secs) {  // secs == 0: no timer, a touch alone wa
   while (digitalRead(TP_IRQ) == LOW && millis() - t0 < 10000) delay(20);
   delay(300);
   while (digitalRead(TP_IRQ) == LOW && millis() - t0 < 10000) delay(20);
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);  // TP_IRQ: low while a finger is down
-  if (secs) esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
+  if (secs) {
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);  // TP_IRQ: low while a finger is down
+    esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
+  } else {
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);  // the BOOT button, low while pressed
+  }
   Serial.flush();
   esp_deep_sleep_start();
 }
@@ -1467,8 +1476,8 @@ static void drawConfirm() {
   }
   const char *title = clear ? "Clear Device" : "Shut Down";
   textAt((LCD_W - textWidth(3, title)) / 2, 128, 3, C_FG, title);
-  const char *l1 = clear ? "Wipes the network, settings, edits" : "The screen goes dark.";
-  const char *l2 = clear ? "and calibration. Restarts into setup." : "Touch it to wake.";
+  const char *l1 = clear ? "Wipes the network, settings, edits" : "Everything goes dark and stays dark.";
+  const char *l2 = clear ? "and calibration. Restarts into setup." : "The BOOT button on the back turns it on.";
   textAt((LCD_W - textWidth(1, l1)) / 2, 160, 1, C_MUTED, l1);
   textAt((LCD_W - textWidth(1, l2)) / 2, 173, 1, C_MUTED, l2);
   gfx->fillRoundRect(20, CF_Y, LCD_W - 40, CF_H, CF_H / 2, rgb(44, 48, 54));
@@ -2628,7 +2637,13 @@ void setup() {
   // to sleep without touching the panel or the radio.
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
   bool fromSleep = cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_TIMER;
-  if (fromSleep) Serial.printf("woke by %s\n", cause == ESP_SLEEP_WAKEUP_EXT0 ? "touch" : "timer");
+  if (fromSleep && rtcShutdown) {  // the BOOT button after a shutdown: a fresh start, splash and all
+    Serial.println("powered on by the BOOT button");
+    rtcShutdown = false;
+    fromSleep = false;
+  } else if (fromSleep) {
+    Serial.printf("woke by %s\n", cause == ESP_SLEEP_WAKEUP_EXT0 ? "touch" : "timer");
+  }
 
   mux = xSemaphoreCreateMutex();
   if (loadConfig()) applyOverlay();
@@ -3113,7 +3128,7 @@ void loop() {
           delay(600);
           clearDevice();
         } else {
-          drawHint("shutting down. touch to wake", C_WARN);
+          drawHint("shutting down. BOOT button turns it on", C_WARN);
           delay(600);
           goToSleep(0);  // no timer: a touch is the only way back
         }

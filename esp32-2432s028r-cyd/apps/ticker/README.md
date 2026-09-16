@@ -282,8 +282,9 @@ for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
 **SETTINGS, swipe right from the list.** One list of twelve rows, eight on
-screen, a drag scrolls it a row at a time. Shutdown first (deep sleep with
-nothing but a touch to wake it, since the board has no power switch), then
+screen, a drag scrolls it a row at a time. Shutdown first (deep sleep with the
+BOOT button on the back as the only way on -- a touch would make "off"
+mean "until brushed"; the night and market-closed sleeps do wake on touch), then
 tap to cycle: scroll speed (slow / normal / fast), backlight (auto / bright
 / dim), sound (off / taps / alerts / both), auto-return (15s / 60s / never;
 it applies to a stock's page, its headlines and the heatmap -- settings and
@@ -321,6 +322,10 @@ and LED rows in settings each say whether alerts get the chime and the
 blink. Checked every five
 seconds against whatever the last fetch brought, so an alert is at most one
 refresh interval late.
+
+**Shutdown** is the same deep sleep with the BOOT button (GPIO0, RTC-capable)
+as the only wake source, and a flag in RTC memory so that wake boots fresh,
+splash and all, instead of restoring the list.
 
 **Sleep is deep sleep.** When the condition holds and nobody has touched the
 panel for a minute: the watchlist's prices go into RTC slow memory (16
