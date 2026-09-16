@@ -1868,7 +1868,18 @@ static bool fetchChart(NetworkClientSecure &client, const char *id, const char *
   HTTPClient http;
   http.setConnectTimeout(6000);
   http.setTimeout(6000);
-  if (!http.begin(client, url)) return false;
+  // HTTP/1.0: the server then sends a plain body and closes, instead of
+  // chunks -- the client's getString() stopped part-way through a chunked
+  // 21KB FX response (8.5KB of it arrived, "IncompleteInput"), while the
+  // 8KB stock responses fit in the first chunk and never showed it. The
+  // body is read below by hand, waiting for bytes until the server closes:
+  // parsing straight off the TLS stream raced the network (a moment with
+  // nothing to read counts as the end) and failed most rows at random.
+  http.useHTTP10(true);
+  if (!http.begin(client, url)) {
+    Serial.printf("%s: http.begin refused the url\n", id);
+    return false;
+  }
   http.addHeader("User-Agent", UA);  // without this Yahoo answers 429
   int code = http.GET();
   if (code != 200) {
@@ -1876,19 +1887,39 @@ static bool fetchChart(NetworkClientSecure &client, const char *id, const char *
     http.end();
     return false;
   }
-  // ponytail: the body (8-15KB) is held as a String, then parsed through a
-  // filter so the document keeps only ~80 floats and a few meta fields.
-  // Parse straight from http.getStream() if the heap ever gets tight.
-  String body = http.getString();
-  http.end();
-
   JsonDocument filter;
   JsonObject fm = filter["chart"]["result"][0]["meta"].to<JsonObject>();
   for (const char *k : {"regularMarketPrice", "chartPreviousClose", "longName", "shortName", "regularMarketDayHigh",
                         "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "regularMarketTime", "currency"})
     fm[k] = true;
   filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
-  if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return false;
+  String body;
+  body.reserve(http.getSize() > 0 ? http.getSize() + 1 : 24 * 1024);
+  {
+    NetworkClient *st = http.getStreamPtr();
+    uint8_t buf[512];
+    uint32_t last = millis();
+    while (millis() - last < 6000) {
+      int n = st->available();
+      if (n > 0) {
+        n = st->read(buf, n > (int)sizeof buf ? sizeof buf : n);
+        if (n > 0) {
+          body.concat((const char *)buf, n);
+          last = millis();
+        }
+      } else if (!st->connected()) {
+        break;  // HTTP/1.0: the close is the end of the body
+      } else {
+        delay(5);
+      }
+    }
+  }
+  http.end();
+  DeserializationError je = deserializeJson(doc, body, DeserializationOption::Filter(filter));
+  if (je) {
+    Serial.printf("%s: json %s (body %u bytes, heap %u)\n", id, je.c_str(), (unsigned)body.length(), ESP.getFreeHeap());
+    return false;
+  }
   if (!doc["chart"]["result"][0]["meta"]["regularMarketPrice"].is<float>()) {
     Serial.printf("%s: no price in payload (bad symbol?)\n", id);
     return false;
@@ -1915,7 +1946,8 @@ static uint8_t pullCloses(JsonVariant res, float *out, uint8_t cap) {
 
 static bool fetchStock(NetworkClientSecure &client, Row &r) {
   JsonDocument doc;
-  if (!fetchChart(client, r.id, "1d&includePrePost=true", sparkInterval, doc)) return false;
+  // FX trades around the clock: a day at 5m is 21KB; 15m is a quarter of it.
+  if (!fetchChart(client, r.id, "1d&includePrePost=true", r.kind == K_FX ? "15m" : sparkInterval, doc)) return false;
   JsonVariant res = doc["chart"]["result"][0];
   JsonVariant m = res["meta"];
   r.price = m["regularMarketPrice"] | 0.0f;
