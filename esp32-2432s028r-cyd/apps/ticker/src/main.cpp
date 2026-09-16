@@ -81,7 +81,10 @@ static const char *const RET_NAMES[] = {"15s", "60s", "never"};
 static const uint32_t RET_MS[] = {15000, 60000, 0};
 static const char *const SLEEP_NAMES[] = {"never", "night", "closed"};
 static uint8_t sSpeed = 1, sBl = 0, sRet = 1, sSleep = 0;
-static bool sLed = true;  // the RGB LED glows with the watchlist's day
+// Sound and LED are each two bits: bit 0 the everyday use (tap clicks /
+// the day's glow), bit 1 the alerts (chime / white blinks).
+static const char *const TWO_NAMES[][4] = {{"off", "taps", "alerts", "both"}, {"off", "glow", "alerts", "both"}};
+static uint8_t sLed = 3;
 
 // ── alerts: a chime (and a white blink) when a price crosses a line ──────
 // alerts.movePct: any stock moving that far in a day, once, re-armed when
@@ -99,7 +102,7 @@ static float movePct = 5.0f;
 static uint32_t moveFired = 0;  // bit per row
 static uint8_t sleepFrom = 23, sleepTo = 7;  // the night window, config.json
 static uint32_t awakeUntil = 60000;          // no sleeping before this; a touch pushes it out a minute
-static bool sSound = true;
+static uint8_t sSound = 3;
 static Preferences prefs;
 static int blApplied = -1, ldrRaw = 0;  // brightnessTick's last reading and level, for the info page
 
@@ -762,6 +765,42 @@ static void drawHead(const struct tm *t, bool haveTime) {
   field(72, Y_HEAD, 18, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
 }
 
+// ── boot splash: drawn, not shipped ──────────────────────────────────────
+// A navy-to-black sky, nine candles on the way up with a gold average
+// through them, the wordmark, and one status line that follows the Wi-Fi
+// join. Primitives only, so there is no asset to generate or push.
+static const uint16_t C_GOLD = 0xFD40;
+static void splashStatus(const char *s) { fieldCentre(LCD_W / 2, 286, 36, 1, C_DIM, s); }
+static void drawSplash(const char *status) {
+  for (int16_t y = 0; y < LCD_H; y++) {  // (0,10,30) at the top fading to black
+    uint8_t g = 10 - (uint16_t)y * 10 / LCD_H, b = 30 - (uint16_t)y * 30 / LCD_H;
+    gfx->drawFastHLine(0, y, LCD_W, ((g & 0xFC) << 3) | (b >> 3));
+  }
+  struct Candle { int16_t o, c, l, h; };  // screen y: smaller is higher
+  static const Candle k[9] = {{206, 196, 211, 192}, {196, 202, 205, 190}, {202, 184, 204, 180},
+                              {184, 172, 188, 166}, {172, 178, 182, 168}, {178, 158, 180, 152},
+                              {158, 148, 162, 144}, {148, 154, 156, 142}, {154, 132, 156, 126}};
+  for (uint8_t i = 0; i < 9; i++) {
+    int16_t x = 30 + i * 22;
+    uint16_t col = k[i].c < k[i].o ? C_GOOD : C_BAD;
+    gfx->drawFastVLine(x + 5, k[i].h, k[i].l - k[i].h + 1, col);
+    gfx->fillRect(x, min(k[i].o, k[i].c), 11, abs(k[i].o - k[i].c) + 1, col);
+  }
+  for (uint8_t i = 1; i < 9; i++) {  // the average, a little under the bodies
+    int16_t x0 = 30 + (i - 1) * 22 + 5, x1 = x0 + 22;
+    int16_t y0 = (k[i - 1].o + k[i - 1].c) / 2 + 8, y1 = (k[i].o + k[i].c) / 2 + 8;
+    gfx->drawLine(x0, y0, x1, y1, C_GOLD);
+    gfx->drawLine(x0, y0 + 1, x1, y1 + 1, C_GOLD);
+  }
+  gfx->drawFastHLine(24, 218, 192, C_RULE);
+  const char *name = "TICKER";
+  textAt((LCD_W - textWidth(4, name)) / 2, 48, 4, C_FG, name);
+  gfx->fillRect(LCD_W / 2 - 24, 86, 48, 2, C_GOLD);
+  const char *tag = "STOCKS   CRYPTO   HEADLINES";
+  textAt((LCD_W - textWidth(1, tag)) / 2, 98, 1, C_MUTED, tag);
+  splashStatus(status);
+}
+
 static void drawPanel(const char *title, uint16_t tc, const char *const *lines, uint8_t n) {
   gfx->fillScreen(C_BG);
   field(8, 24, 12, 3, tc, title);
@@ -925,9 +964,9 @@ static void loadSettings() {
     sSpeed = prefs.getUChar("speed", sSpeed) % 3;
     sBl = prefs.getUChar("bl", sBl) % 3;
     sRet = prefs.getUChar("ret", sRet) % 3;
-    sSound = prefs.getBool("snd", sSound);
+    sSound = prefs.getUChar("snd2", sSound) & 3;  // snd2: the old snd was a plain on/off
     sSleep = prefs.getUChar("slp", sSleep) % 3;
-    sLed = prefs.getBool("led", sLed);
+    sLed = prefs.getUChar("led2", sLed) & 3;
   }
   if (prefs.isKey("tx0")) {
     touchCal.swap = prefs.getBool("tsw", false);
@@ -948,7 +987,7 @@ static void loadSettings() {
   }
   prefs.end();
   Serial.printf("settings from %s: speed %s, backlight %s, sound %s, return %s, sleep %s\n",
-                any ? "NVS (beats config.json)" : "config.json", SPEED_NAMES[sSpeed], BL_NAMES[sBl], sSound ? "on" : "off",
+                any ? "NVS (beats config.json)" : "config.json", SPEED_NAMES[sSpeed], BL_NAMES[sBl], TWO_NAMES[0][sSound],
                 RET_NAMES[sRet], SLEEP_NAMES[sSleep]);
 }
 static void saveSettings() {
@@ -956,17 +995,17 @@ static void saveSettings() {
   prefs.putUChar("speed", sSpeed);
   prefs.putUChar("bl", sBl);
   prefs.putUChar("ret", sRet);
-  prefs.putBool("snd", sSound);
+  prefs.putUChar("snd2", sSound);
   prefs.putUChar("slp", sSleep);
-  prefs.putBool("led", sLed);
+  prefs.putUChar("led2", sLed);
   prefs.end();
   applySettings();
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Sleep", "LED", "Touch", "Info"};
-  const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? (sSound ? "on" : "off")
-                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? (sLed ? "on" : "off")
+  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Touch", "Info"};
+  const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
+                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
                 : i == 6 ? "calibrate" : ">";
   int16_t y = S_Y0 + i * S_H;
   field(8, y + 6, 11, 2, C_MUTED, labels[i]);
@@ -984,10 +1023,10 @@ static uint8_t tapSetting(uint8_t i) {
   if (i == 6) return 2;
   if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
-  else if (i == 2) sSound = !sSound;
+  else if (i == 2) sSound = (sSound + 1) & 3;
   else if (i == 3) sRet = (sRet + 1) % 3;
   else if (i == 4) sSleep = (sSleep + 1) % 3;
-  else sLed = !sLed;
+  else sLed = (sLed + 1) & 3;
   saveSettings();
   drawSettingRow(i);
   return 0;
@@ -1611,7 +1650,7 @@ static void ledTick(Session ses) {
   static uint32_t last = 0;
   if (millis() - last < 1000) return;
   last = millis();
-  if (!sLed || ses == Session::Closed || blApplied < 0) {
+  if (!(sLed & 1) || ses == Session::Closed || blApplied < 0) {
     ledGlow(0, 0, 0);
     return;
   }
@@ -1637,8 +1676,8 @@ static void chime(const char *why) {
   Serial.printf("alert: %s\n", why);
   static const uint16_t notes[] = {880, 1109, 1319};
   for (uint8_t i = 0; i < 3; i++) {
-    if (sSound) tone(SPK, notes[i], 120);
-    ledGlow(i & 1 ? 0 : 255, i & 1 ? 0 : 255, i & 1 ? 0 : 255);
+    if (sSound & 2) tone(SPK, notes[i], 120);
+    if (sLed & 2) ledGlow(i & 1 ? 0 : 255, i & 1 ? 0 : 255, i & 1 ? 0 : 255);
     delay(150);
   }
   ledGlow(0, 0, 0);
@@ -1867,8 +1906,9 @@ void setup() {
     Serial.println("prices restored from RTC memory");
     listStart();
   } else {
-    const char *boot[] = {"connecting to wifi", WIFI_SSID};
-    drawPanel("STARTING", C_MUTED, boot, 2);
+    char st[40];
+    snprintf(st, sizeof st, "connecting to %.24s", WIFI_SSID);
+    drawSplash(st);
   }
   backlight(blMax);
   WiFi.mode(WIFI_STA);
@@ -1879,6 +1919,7 @@ void setup() {
   for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("wifi ok %s %ddBm\n", WiFi.SSID().c_str(), WiFi.RSSI());
+    if (!restored) splashStatus("connected, setting the clock");
     configTzTime(tzString, "pool.ntp.org", "time.nist.gov");
     struct tm t;
     for (int i = 0; i < 40 && !getLocalTime(&t, 250); i++) {}
@@ -2031,7 +2072,7 @@ void loop() {
       if (r >= 0) {
         hilite = slotOf(floordiv(pos + ty - Y_ROW0, ROW_H));
         gfx->fillRect(0, Y_ROW0 + hilite * ROW_H + 2, 3, ROW_H - 4, C_FG);
-        if (sSound) tone(SPK, 1200, 15);
+        if (sSound & 1) tone(SPK, 1200, 15);
       }
     }
     if (hilite >= 0 && (!touchHeld || g == Gesture::Drag)) {
@@ -2052,7 +2093,7 @@ void loop() {
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown));
-    if (acts && sSound) tone(SPK, 1200, 15);
+    if (acts && (sSound & 1)) tone(SPK, 1200, 15);
     if (view == View::List && g == Gesture::SwipeRight) {
       view = View::Settings;
       pageOpenedAt = millis();
@@ -2080,7 +2121,7 @@ void loop() {
   }
 
   if (tap && state == State::Running && view != View::List) {
-    if (sSound) tone(SPK, 1200, 15);
+    if (sSound & 1) tone(SPK, 1200, 15);
     if (view == View::Settings) {
       int8_t i = hitSetting(ty);
       pageOpenedAt = millis();

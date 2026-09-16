@@ -56,7 +56,7 @@
     "per symbol, re-armed when it comes back inside half of it. levels: a line",
     "per symbol, 'above' and/or 'below', once per crossing, re-armed 1% back:",
     "  \"levels\": [ { \"symbol\": \"NVDA\", \"above\": 250 }, { \"symbol\": \"TSLA\", \"below\": 300 } ]",
-    "The tap-sound setting silences the chime too; the blink stays."
+    "The Sound and LED rows on the SETTINGS page say whether alerts chime and blink."
   ],
   "alerts": { "movePct": 5, "levels": [] },
 

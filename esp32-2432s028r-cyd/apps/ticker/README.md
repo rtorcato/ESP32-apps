@@ -230,10 +230,10 @@ for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
 **SETTINGS, swipe right from the list.** Eight rows, tap to cycle: scroll
-speed (slow / normal / fast), backlight (auto / bright / dim), tap sound,
-auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
-the night window is `sleep.from` / `.to` in config.json), LED (on / off), Touch (the
-calibration above), and Info.
+speed (slow / normal / fast), backlight (auto / bright / dim), sound (off /
+taps / alerts / both), auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
+the night window is `sleep.from` / `.to` in config.json), LED (off / glow / alerts /
+both), Touch (the calibration above), and Info.
 
 **The LED glows with the day.** Green or red by the average move of the
 valid stocks, brighter for a bigger move (3% is full), scaled with the
@@ -243,8 +243,9 @@ a glance from across the room; the numbers are on the panel.
 **Alerts chime.** `alerts.movePct` (default 5): any stock moving that far in
 a day gets three rising notes and two white blinks, once, re-armed when it
 comes back inside half of it. `alerts.levels`: a price line per symbol,
-above or below, once per crossing, re-armed 1% back across it. The
-tap-sound setting silences the chime; the blink stays. Checked every five
+above or below, once per crossing, re-armed 1% back across it. The sound
+and LED rows in settings each say whether alerts get the chime and the
+blink. Checked every five
 seconds against whatever the last fetch brought, so an alert is at most one
 refresh interval late.
 
@@ -286,6 +287,11 @@ first contact and drop contact for a poll or two mid-stroke, so a release
 only counts after three polls without contact. Every stroke is traced on
 serial (`touch: 40,150 -> 130,148  210ms  axis h  swipe right`) -- read that
 first if a gesture "does nothing".
+
+**Boot splash**, drawn rather than shipped: a navy-to-black sky, nine
+candles on the way up with a gold average through them, the wordmark, and
+one status line that follows the Wi-Fi join. A wake from deep sleep skips it
+and goes straight to the restored list.
 
 **Type.** Four logical text sizes, each a Helvetica bitmap face (the X11
 Adobe set, via U8g2, extracted into `lib/fonts/helv.h` rather than pulling
