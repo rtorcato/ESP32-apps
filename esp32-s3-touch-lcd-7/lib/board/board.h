@@ -15,6 +15,9 @@
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
+#include <esp_heap_caps.h>
+#include <esp_lcd_panel_ops.h>
+#include <esp_lcd_panel_rgb.h>
 
 #define LCD_W 800
 #define LCD_H 480
@@ -101,23 +104,103 @@ inline bool boardBegin() {
 }
 
 // --- Display -----------------------------------------------------------------
-// The framebuffer (800*480*2 = 768KB) is allocated in PSRAM by
-// Arduino_RGB_Display::begin(); every draw call writes straight into it and
-// the panel DMA scans it out continuously. No bus, no init operations: a
-// bare RGB panel.
+// The framebuffer is OURS: an Arduino_Canvas whose 768KB buffer lives in
+// PSRAM, and an esp_lcd RGB panel created with no framebuffer of its own
+// (no_fb) that asks for every chunk of scan-out through on_bounce_empty.
+// That callback copies lines from our buffer into the driver's bounce
+// buffer in internal RAM -- exactly what the driver does itself when it
+// owns the framebuffer -- except that it maps the lines of one region
+// through a ring offset. That gives an app a hardware-style vertical
+// scroll over a band of the screen (the CYD's ILI9341 has one; a bare RGB
+// panel does not) for the price of writing one number: no memmove of
+// 700KB per pixel, which is what starved the scan-out into flicker.
+namespace boarddetail {
+inline uint16_t *fb = nullptr;
+inline esp_lcd_panel_handle_t panelHandle = nullptr;
+inline volatile int16_t scrollY0 = 0, scrollH = 0, scrollOff = 0;
+
+// Runs in the LCD DMA interrupt: one bounce buffer (LCD_BOUNCE_PX pixels,
+// whole lines) to fill from our framebuffer. static, not inline: an inline
+// IRAM_ATTR function in a header trips the Xtensa linker.
+static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_px, int len_bytes, void *) {
+  uint16_t *dst = (uint16_t *)buf;
+  int line = pos_px / LCD_W, n = len_bytes / (LCD_W * 2);
+  int16_t y0 = scrollY0, h = scrollH, off = scrollOff;
+  for (int i = 0; i < n; i++, line++) {
+    int src = line;
+    if (h > 0 && line >= y0 && line < y0 + h) {
+      src = line - y0 + off;
+      if (src >= h) src -= h;
+      src += y0;
+    }
+    memcpy(dst + (size_t)i * LCD_W, fb + (size_t)src * LCD_W, LCD_W * 2);
+  }
+  return false;
+}
+
+inline bool panelBegin() {
+  esp_lcd_rgb_panel_config_t cfg = {};
+  cfg.clk_src = LCD_CLK_SRC_DEFAULT;
+  cfg.timings.pclk_hz = LCD_PCLK_HZ;
+  cfg.timings.h_res = LCD_W;
+  cfg.timings.v_res = LCD_H;
+  cfg.timings.hsync_pulse_width = 4;
+  cfg.timings.hsync_back_porch = 8;
+  cfg.timings.hsync_front_porch = 8;
+  cfg.timings.vsync_pulse_width = 4;
+  cfg.timings.vsync_back_porch = 16;
+  cfg.timings.vsync_front_porch = 16;
+  cfg.timings.flags.hsync_idle_low = 1;
+  cfg.timings.flags.vsync_idle_low = 1;
+  cfg.timings.flags.de_idle_high = 0;
+  cfg.timings.flags.pclk_active_neg = LCD_PCLK_NEG;
+  cfg.timings.flags.pclk_idle_high = 0;
+  cfg.data_width = 16;
+  cfg.bits_per_pixel = 16;
+  cfg.num_fbs = 0;
+  cfg.bounce_buffer_size_px = LCD_BOUNCE_PX;
+  cfg.hsync_gpio_num = 46;
+  cfg.vsync_gpio_num = 3;
+  cfg.de_gpio_num = 5;
+  cfg.pclk_gpio_num = 7;
+  cfg.disp_gpio_num = GPIO_NUM_NC;
+  const int pins[16] = {14, 38, 18, 17, 10, 39, 0, 45, 48, 47, 21, 1, 2, 42, 41, 40};  // B0-4, G0-5, R0-4
+  for (int i = 0; i < 16; i++) cfg.data_gpio_nums[i] = pins[i];
+  cfg.flags.disp_active_low = 1;
+  cfg.flags.no_fb = 1;
+  if (esp_lcd_new_rgb_panel(&cfg, &panelHandle) != ESP_OK) return false;
+  esp_lcd_rgb_panel_event_callbacks_t cbs = {};
+  cbs.on_bounce_empty = onBounceEmpty;
+  esp_lcd_rgb_panel_register_event_callbacks(panelHandle, &cbs, nullptr);
+  if (esp_lcd_panel_reset(panelHandle) != ESP_OK) return false;
+  return esp_lcd_panel_init(panelHandle) == ESP_OK;
+}
+}  // namespace boarddetail
+
+// An Arduino_Canvas that puts its buffer in PSRAM and starts the panel
+// scanning it. Everything an app draws lands in the buffer directly.
+class PsramCanvas : public Arduino_Canvas {
+ public:
+  PsramCanvas() : Arduino_Canvas(LCD_W, LCD_H, nullptr) {}
+  bool begin(int32_t = GFX_NOT_DEFINED) override {
+    if (!_framebuffer) _framebuffer = (uint16_t *)heap_caps_aligned_alloc(64, (size_t)LCD_W * LCD_H * 2, MALLOC_CAP_SPIRAM);
+    if (!_framebuffer) return false;
+    memset(_framebuffer, 0, (size_t)LCD_W * LCD_H * 2);
+    boarddetail::fb = _framebuffer;
+    return boarddetail::panelBegin();
+  }
+};
 inline Arduino_GFX *boardDisplay() {
-  static Arduino_ESP32RGBPanel panel(
-      5 /* DE */, 3 /* VSYNC */, 46 /* HSYNC */, 7 /* PCLK */,
-      1 /* R0 */, 2 /* R1 */, 42 /* R2 */, 41 /* R3 */, 40 /* R4 */,
-      39 /* G0 */, 0 /* G1 */, 45 /* G2 */, 48 /* G3 */, 47 /* G4 */, 21 /* G5 */,
-      14 /* B0 */, 38 /* B1 */, 18 /* B2 */, 17 /* B3 */, 10 /* B4 */,
-      0 /* hsync_polarity */, 8 /* hsync_front_porch */, 4 /* hsync_pulse_width */, 8 /* hsync_back_porch */,
-      0 /* vsync_polarity */, 16 /* vsync_front_porch */, 4 /* vsync_pulse_width */, 16 /* vsync_back_porch */,
-      LCD_PCLK_NEG, LCD_PCLK_HZ, false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
-      LCD_BOUNCE_PX);
-  static Arduino_RGB_Display gfx(LCD_W, LCD_H, &panel, 0 /* rotation */, true /* auto_flush */);
+  static PsramCanvas gfx;
   return &gfx;
 }
+inline uint16_t *boardFramebuffer() { return boarddetail::fb; }
+// The scroll band: screen lines y0..y0+h show buffer lines rotated by off.
+inline void boardScrollArea(int16_t y0, int16_t h) {
+  boarddetail::scrollY0 = y0;
+  boarddetail::scrollH = h;
+}
+inline void boardScroll(int16_t off) { boarddetail::scrollOff = off; }
 
 // --- Touch (GT911, raw I2C) --------------------------------------------------
 // 0x814E: bit 7 says a report is ready, low nibble is the finger count; the

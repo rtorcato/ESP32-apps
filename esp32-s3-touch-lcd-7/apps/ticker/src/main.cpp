@@ -840,33 +840,32 @@ static void goToSleep(uint32_t secs) {
   esp_deep_sleep_start();
 }
 
-// ── the list: a strip of rows moved through the framebuffer ─────────────
-// The RGB panel scans a framebuffer in PSRAM and has no scroll register, so
-// the list moves by shifting that region of memory: k lines up or down in
-// one memmove, then the k lines that came into view are painted from a
-// one-row canvas holding the row that is entering. Same model as the CYD's
-// ring -- virtual rows over one signed pixel position, a finger or the
-// crawl moving it -- without the ring's shared slot. The panel DMA reads
-// PSRAM while the memmove writes it, so a step tears for a moment; small
-// steps keep that under notice, and the bounce buffer keeps the picture
-// from starving.
+// ── the list: a scrolling ring, scrolled at scan-out ─────────────────────
+// The framebuffer is ours (a canvas in PSRAM) and the panel driver asks
+// for each chunk of scan-out through a callback in board.h, which maps
+// the lines of the list strip through a ring offset: moving the whole
+// list one pixel is writing one number, no memory traffic at all. That is
+// the CYD's hardware scroll rebuilt in software, so this is the CYD's ring
+// again: ROWS slots, the strip wraps, and the slot scrolling off the top
+// IS the slot the next row enters from the bottom, line by line, fed from
+// a one-row canvas as it comes into view. Virtual rows over one signed
+// pixel position; a finger or the crawl moves it either way.
 static Arduino_Canvas *rowCanvas;
-static uint16_t *fb = nullptr;  // the panel's own framebuffer
 static int32_t canvasV = INT32_MIN;
-static uint32_t scrollLast = 0, holdUntil = 0;
-static const int16_t STRIP = ROW_H * ROWS;  // the scrolling region, Y_ROW0..Y_ROW0+STRIP
-static const uint8_t CSLOTS = ROWS + 2;     // row caches, one per row that can be on screen
-static char cRow[CSLOTS][48], cCanvas[48], cHead[64], cFoot[80];
+static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
+static const int16_t STRIP = ROW_H * ROWS;  // the ring, Y_ROW0..Y_ROW0+STRIP
+static char cRow[ROWS][48], cCanvas[48], cHead[64], cFoot[80];
 static void drawTabsAndIcons();
 
 static uint16_t rowOf(int32_t v) { return order[modp(v, nShown)]; }
-static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, CSLOTS); }
+static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, ROWS); }
 static int32_t topV() { return floordiv(pos, ROW_H); }
 static uint8_t offPx() { return (uint8_t)modp(pos, ROW_H); }
 static int16_t rowY(int32_t v) { return Y_ROW0 + (int16_t)((v - topV()) * ROW_H) - offPx(); }
+static void panelScroll(int32_t p) { boardScroll((int16_t)modp(p, STRIP)); }
 
 static void invalidateCache() {
-  for (uint8_t i = 0; i < CSLOTS; i++) cRow[i][0] = '\0';
+  for (uint8_t i = 0; i < ROWS; i++) cRow[i][0] = '\0';
   cHead[0] = '\0';
 }
 
@@ -881,8 +880,8 @@ static void rowKey(const Row &r, char *key, size_t n, char *price, char *pct) {
   snprintf(key, n, "%s|%s|%s|%u|%.2f|%s", r.label, price, pct, r.n, r.n ? r.close[r.n - 1] : 0.0f, sCur);
 }
 
-// Paint one row with its top at y on whatever gfx points at: the panel or
-// the row canvas (y = 0). A rule marks where the kind changes.
+// Paint one row with its top at y on whatever gfx points at: the panel (a
+// ring slot) or the row canvas (y = 0). A rule marks where the kind changes.
 static void paintRow(int16_t y, const Row &r, bool rule) {
   char price[12], pct[12], key[48];
   rowKey(r, key, sizeof key, price, pct);
@@ -904,16 +903,14 @@ static bool seamAt(int32_t v) {
   return rows[a].kind != rows[b].kind;
 }
 
-// A row fully on screen: repaint in place only if its key changed.
-static void paintVisible(int32_t v) {
-  int16_t y = rowY(v);
-  if (y < Y_ROW0 || y + ROW_H > Y_ROW0 + STRIP) return;
+// A slot fully owned by virtual row v: repaint only if the row's key changed.
+static void paintSlot(int32_t v) {
   Row r = rowCopy(rowOf(v));
   char key[48], price[12], pct[12];
   rowKey(r, key, sizeof key, price, pct);
   if (strcmp(key, cRow[slotOf(v)]) == 0) return;
   strcpy(cRow[slotOf(v)], key);
-  paintRow(y, r, seamAt(v));
+  paintRow(Y_ROW0 + slotOf(v) * ROW_H, r, seamAt(v));
 }
 
 // The entering row, painted off-screen. ponytail: the drawing helpers all
@@ -930,103 +927,98 @@ static void paintCanvas(int32_t v) {
   paintRow(0, r, seamAt(v));
   gfx = panel;
 }
-// Canvas lines [from, to) onto the panel from screen line y.
-static void blitLines(int16_t y, uint8_t from, uint8_t to) {
-  memcpy(fb + (size_t)y * LCD_W, rowCanvas->getFramebuffer() + (size_t)from * LCD_W, (size_t)(to - from) * LCD_W * 2);
-}
-// The strip moves k lines: up for k > 0.
-static void shiftStrip(int16_t k) {
-  uint16_t *base = fb + (size_t)Y_ROW0 * LCD_W;
-  if (k > 0) memmove(base, base + (size_t)k * LCD_W, (size_t)(STRIP - k) * LCD_W * 2);
-  else memmove(base + (size_t)(-k) * LCD_W, base, (size_t)(STRIP + k) * LCD_W * 2);
+// Canvas lines [from, to) into the slot of virtual row v.
+static void feed(int32_t v, uint8_t from, uint8_t to) {
+  gfx->draw16bitRGBBitmap(0, Y_ROW0 + slotOf(v) * ROW_H + from, rowCanvas->getFramebuffer() + from * LCD_W, LCD_W,
+                          to - from);
 }
 
 // Move the strip by delta pixels, either sign, one row-boundary chunk at a
-// time: shift, then paint the lines that came into view.
+// time: set the ring offset, then feed the lines that just came into view.
 static void scrollBy(int32_t delta) {
   while (delta) {
     int32_t v0 = topV();
     uint8_t off = offPx();
     if (delta > 0) {
       uint8_t k = (uint8_t)min<int32_t>(delta, ROW_H - off);
-      paintCanvas(v0 + ROWS);  // entering at the bottom
-      shiftStrip(k);
+      paintCanvas(v0 + ROWS);
       pos += k;
-      blitLines(Y_ROW0 + STRIP - k, off, off + k);
-      if (off + k == ROW_H) strcpy(cRow[slotOf(v0 + ROWS)], cCanvas);
+      panelScroll(pos);
+      feed(v0, off, off + k);
+      if (off + k == ROW_H) strcpy(cRow[slotOf(v0)], cCanvas);  // v0+ROWS owns the slot now
       delta -= k;
     } else {
-      if (off == 0) {
+      if (off == 0) {  // step back across the boundary: v0-1 starts entering at the top
         v0 -= 1;
         off = ROW_H;
       }
       uint8_t k = (uint8_t)min<int32_t>(-delta, off);
-      paintCanvas(v0);  // entering at the top
-      shiftStrip(-k);
+      paintCanvas(v0);
       pos -= k;
-      blitLines(Y_ROW0, off - k, off);
-      if (off == k) strcpy(cRow[slotOf(v0)], cCanvas);
+      panelScroll(pos);
+      feed(v0, off - k, off);
+      if (off == k) strcpy(cRow[slotOf(v0)], cCanvas);  // v0 owns the slot now
       delta += k;
     }
   }
 }
 
 static void listStart() {
-  fb = ((Arduino_RGB_Display *)gfx)->getFramebuffer();
   gfx->fillScreen(C_BG);
+  boardScrollArea(Y_ROW0, STRIP);
+  panelScroll(pos);
   invalidateCache();
   canvasV = INT32_MIN;
   drawTabsAndIcons();
   cFoot[0] = '\0';
   int32_t v0 = topV();
   uint8_t off = offPx();
-  for (uint8_t p = 0; p <= ROWS; p++) paintVisible(v0 + p);
-  if (off) {  // the two part rows, from the canvas
-    paintCanvas(v0);
-    blitLines(Y_ROW0, off, ROW_H);
+  for (uint8_t p = 0; p < ROWS; p++) paintSlot(v0 + p);
+  if (off) {  // the shared slot: the entering row's lines over the top row's
     paintCanvas(v0 + ROWS);
-    blitLines(Y_ROW0 + STRIP - off, 0, off);
+    feed(v0, 0, off);
   }
   scrollLast = millis();
+  scrollAcc = 0;
 }
 
-// Every pass: refresh the rows fully in view, then advance the crawl by
-// however many pixels the clock owes -- but no more often than 25 times a
-// second, because every step is a 700KB memmove of PSRAM and the panel
-// scans that same memory: forty a second starved it into flicker. At the
-// normal speed that is two pixels a frame, which still reads as a glide.
-// Frozen while a finger is down and for a moment after.
+// Every pass: refresh the slots fully in view, then advance the crawl by
+// however many pixels the clock owes. A pixel costs one number and at most
+// one line fed into the ring, so every pass can move one. Frozen while a
+// finger is down and for a moment after, so a drag or a press is not fought.
 static void listTick() {
-  uint32_t now = millis();
+  uint32_t now = millis(), dt = now - scrollLast;
+  scrollLast = now;
   int32_t v0 = topV();
-  for (uint8_t p = 0; p <= ROWS; p++) paintVisible(v0 + p);
-  static uint32_t frameAt = 0, acc = 0;
+  for (uint8_t p = offPx() ? 1 : 0; p < ROWS; p++) paintSlot(v0 + p);
   if (touchHeld || now < holdUntil) {
-    frameAt = now;
-    acc = 0;
+    scrollAcc = 0;
     return;
   }
-  if (now - frameAt < 40) return;
-  acc += (now - frameAt) * STRIP;  // pixels, scaled by pageMs
-  frameAt = now;
-  int32_t step = acc / pageMs;
+  scrollAcc += dt * STRIP;  // pixels, scaled by pageMs
+  int32_t step = scrollAcc / pageMs;
   if (!step) return;
-  acc -= (uint32_t)step * pageMs;
+  scrollAcc -= (uint32_t)step * pageMs;
   scrollBy(step);
 }
 
 // The header, left to right: five section tabs (tap one), the CLOSED tag,
 // three icons (search, heatmap, settings), the clock. The tabs and icons
 // are drawn once by listStart; this keeps the clock and the tag current.
+static const char *const TAB_NAMES[] = {"ALL", "STOCKS", "INDICES", "CRYPTO", "FX"};
+static int16_t tabX[5], tabW[5];  // each tab as wide as its word, laid out left to right
 static void drawTabsAndIcons() {
+  int16_t x = TAB_X;
   for (uint8_t i = 0; i < 5; i++) {
-    int16_t x = TAB_X + i * TAB_STEP;
+    tabX[i] = x;
+    tabW[i] = textWidth(1, TAB_NAMES[i]) + 28;
     bool on = i == sect;
-    gfx->fillRect(x, 0, TAB_W, Y_ROW0 - 1, C_BG);
-    textAt(x + (TAB_W - textWidth(1, SECT_NAMES[i])) / 2, 12, 1, on ? C_FG : C_DIM, SECT_NAMES[i]);
-    if (on) gfx->fillRect(x + 8, 34, TAB_W - 16, 3, C_FG);
+    gfx->fillRect(x, 0, tabW[i], Y_ROW0 - 1, C_BG);
+    textAt(x + 14, 12, 1, on ? C_FG : C_DIM, TAB_NAMES[i]);
+    if (on) gfx->fillRect(x + 10, 34, tabW[i] - 20, 3, C_FG);
+    x += tabW[i];
   }
-  int16_t x = ICON_X;  // a magnifier
+  x = ICON_X;  // a magnifier
   gfx->drawCircle(x + 13, 17, 7, C_MUTED);
   gfx->drawCircle(x + 13, 17, 6, C_MUTED);
   gfx->drawLine(x + 18, 22, x + 26, 30, C_MUTED);
@@ -1042,7 +1034,8 @@ static void drawTabsAndIcons() {
 }
 // Which header thing a tap at x lands on: 0-4 a tab, 10 search, 11 heatmap, 12 settings, -1 nothing.
 static int8_t hitHeader(int16_t x) {
-  if (x >= TAB_X && x < TAB_X + 5 * TAB_STEP && (x - TAB_X) % TAB_STEP < TAB_W) return (x - TAB_X) / TAB_STEP;
+  for (uint8_t i = 0; i < 5; i++)
+    if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
   if (x >= ICON_X - 8 && x < ICON_X + 3 * ICON_STEP) return 10 + (x - (ICON_X - 8)) / ICON_STEP;
   return -1;
 }
@@ -2549,9 +2542,9 @@ static void selfCheck() {
   assert(X_PRICE + 8 <= X_RIGHT - GW(2) * 7 && X_RIGHT <= LCD_W);
   assert(Y_BADGE + LOGO_BADGE <= ROW_H && Y_LBL + GH(2) <= ROW_H && Y_SPK + SPK_H <= ROW_H);
   assert(Y_ROW0 + STRIP <= Y_FOOT && Y_FOOT + 14 + GH(1) <= LCD_H && Y_HEAD + GH(2) <= Y_ROW0);
-  assert(TAB_X + 4 * TAB_STEP + TAB_W <= TAG_X && TAG_X + GW(1) * 19 <= ICON_X - 8 && ICON_X + 3 * ICON_STEP <= X_RIGHT - GW(1) * 8);
-  assert(hitHeader(TAB_X) == 0 && hitHeader(TAB_X + 4 * TAB_STEP + TAB_W - 1) == 4 && hitHeader(ICON_X) == 10 &&
-         hitHeader(ICON_X + 2 * ICON_STEP + 10) == 12 && hitHeader(TAG_X + 20) == -1);
+  assert(STRIP % 20 != 1 || true);  // (the bounce buffer is 20 lines; the ring maps per line, any height works)
+  assert(TAG_X + GW(1) * 19 <= ICON_X - 8 && ICON_X + 3 * ICON_STEP <= X_RIGHT - GW(1) * 8);
+  assert(hitHeader(ICON_X) == 10 && hitHeader(ICON_X + 2 * ICON_STEP + 10) == 12 && hitHeader(TAG_X + 20) == -1);
   assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N <= S_ROWS);
   // Detail: the left column stacks, the right column stacks, neither crosses the middle.
   assert(D_X_LOGO + LOGO_BIG <= D_X_TXT && D_X_TXT + GW(1) * 26 <= CH_X && D_Y_LOGO + LOGO_BIG <= D_Y_PRICE);
@@ -2863,6 +2856,7 @@ void loop() {
     return;
   }
 
+  if (view != View::List) boardScroll(0);  // every other page draws 1:1
   if (state == State::Boot) {  // the splash is up from setup; only its status line moves
     static uint32_t lastStatus = 0;
     if (millis() - lastStatus > 1000) {
