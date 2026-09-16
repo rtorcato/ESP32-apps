@@ -89,6 +89,10 @@ static void fmtClock(const struct tm &t, char *out, size_t n) {
   else snprintf(out, n, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min, t.tm_hour < 12 ? "AM" : "PM");
 }
 static uint8_t sSpeed = 1, sRet = 1, sSleep = 0;
+// The columns a list row shows, a bit each; the Columns page toggles them.
+enum : uint8_t { COL_CHART = 1, COL_PRICE = 2, COL_PCT = 4, COL_CHG = 8, COL_VOL = 16, COL_DAY = 32 };
+static const char *const COL_NAMES[] = {"Chart", "Price", "Change %", "Change $", "Volume", "Day range"};
+static uint8_t sCols = COL_CHART | COL_PRICE | COL_PCT;
 // Prices show in this currency, converted through the CURRENCIES rows
 // (how many of X one USD buys). USD, or any code the config lists. A row
 // whose rate is missing shows its own currency, and the page says which.
@@ -138,6 +142,7 @@ struct Row {
   char cur[4];   // the quote's own currency, from Yahoo's meta; coins are USD
   float price, pct, prev, dayLo, dayHi, wkLo, wkHi;
   float last;     // the newest bar, extended hours included; == price in the regular session
+  float volume;   // the day's (coins: 24h) volume
   time_t traded;  // Yahoo's regularMarketTime: the last regular-session trade
   uint8_t n;
   float close[SPARK_N];
@@ -429,16 +434,16 @@ static const int16_t Y_HEAD = 10, Y_ROW0 = 40, ROW_H = 44, X_SYM = 12, Y_BADGE =
                      Y_FOOT = 436, TAB_X = 12, TAB_W = 80, TAB_STEP = 84, TAG_X = 440, ICON_X = 600, ICON_STEP = 40;
 // Settings: title, five 40px rows, the LIST button.
 // Settings: eight 48px rows, all on screen. Heatmap: 6 x 4 tiles.
-static const int16_t S_Y0 = 80, S_H = 40, S_N = 9, S_ROWS = 9;
+static const int16_t S_Y0 = 100, S_H = 34, S_N = 10, S_ROWS = 10;
 // Detail, landscape: a left column (logo, symbol, name, the big price,
 // change, the two range bars) and a right column (chart with high and low
 // inside it, five range chips, three headlines). One gesture hint at the
 // foot. No buttons: swipe left/right for the next/previous stock, up for
 // headlines, down for the list.
-static const int16_t D_X_LOGO = 20, D_Y_LOGO = 20, D_X_TXT = 168, D_Y_SYM = 20, D_Y_NAME = 58, D_Y_TAG = 82,
-                     D_X_PRICE = 20, D_Y_PRICE = 168, D_Y_CHG = 236, D_X_PCT = 200, D_Y_DAY = 300, D_Y_WK = 356,
-                     BAR_X = 20, BAR_W = 340, BAR_H = 8, CH_X = 400, CH_Y = 24, CH_W = 388, CH_H = 236, R_Y = 276,
-                     R_W = 72, R_STEP = 79, R_H = 40, D_Y_NEWS = 332, Y_HINT = 452, D_Y_PCT = D_Y_CHG;
+static const int16_t D_X_LOGO = 20, D_Y_LOGO = 52, D_X_TXT = 168, D_Y_SYM = 52, D_Y_NAME = 90, D_Y_TAG = 114,
+                     D_X_PRICE = 20, D_Y_PRICE = 196, D_Y_CHG = 264, D_X_PCT = 200, D_Y_DAY = 316, D_Y_WK = 368,
+                     BAR_X = 20, BAR_W = 340, BAR_H = 8, CH_X = 400, CH_Y = 52, CH_W = 388, CH_H = 200, R_Y = 262,
+                     R_W = 72, R_STEP = 79, R_H = 40, D_Y_NEWS = 312, Y_HINT = 452, D_Y_PCT = D_Y_CHG;
 
 // ── the detail chart's range ─────────────────────────────────────────────
 // 1D is the row's own sparkline series. The other four are fetched the
@@ -856,6 +861,7 @@ static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
 static const int16_t STRIP = ROW_H * ROWS;  // the ring, Y_ROW0..Y_ROW0+STRIP
 static char cRow[ROWS][48], cCanvas[48], cHead[64], cFoot[80];
 static void drawTabsAndIcons();
+static void drawHeader(uint8_t lit);
 
 static uint16_t rowOf(int32_t v) { return order[modp(v, nShown)]; }
 static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, ROWS); }
@@ -877,26 +883,66 @@ static void rowKey(const Row &r, char *key, size_t n, char *price, char *pct) {
     snprintf(price, 12, "--");
     pct[0] = '\0';
   }
-  snprintf(key, n, "%s|%s|%s|%u|%.2f|%s", r.label, price, pct, r.n, r.n ? r.close[r.n - 1] : 0.0f, sCur);
+  snprintf(key, n, "%s|%s|%s|%u|%.2f|%s|%u|%.0f", r.label, price, pct, r.n, r.n ? r.close[r.n - 1] : 0.0f, sCur, sCols,
+           r.volume);
+}
+static void fmtVolume(float v, char *out, size_t n) {
+  if (v >= 1e9f) snprintf(out, n, "%.1fB", v / 1e9f);
+  else if (v >= 1e6f) snprintf(out, n, "%.1fM", v / 1e6f);
+  else if (v >= 1e3f) snprintf(out, n, "%.0fK", v / 1e3f);
+  else snprintf(out, n, "%.0f", v);
 }
 
 // Paint one row with its top at y on whatever gfx points at: the panel (a
-// ring slot) or the row canvas (y = 0). A rule marks where the kind changes.
+// ring slot) or the row canvas (y = 0). A rule marks where the kind
+// changes. The numeric columns the Columns page turned on are packed from
+// the right edge; the chart takes whatever is left after the symbol.
 static void paintRow(int16_t y, const Row &r, bool rule) {
-  char price[12], pct[12], key[48];
+  char price[12], pct[12], key[48], b[16];
   rowKey(r, key, sizeof key, price, pct);
   uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
-  gfx->drawFastHLine(0, y, LCD_W, rule ? C_RULE : C_BG);
+  gfx->fillRect(0, y, LCD_W, ROW_H, C_BG);  // the columns move; nothing may outlive a change
+  if (rule) gfx->drawFastHLine(0, y, LCD_W, C_RULE);
   if (!blitLogo(X_SYM, y + Y_BADGE, LOGO_BADGE, r.label)) {  // no file: a tile with the initial
-    gfx->fillRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, C_BG);
     gfx->fillRoundRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, 6, C_RULE);
     char c[2] = {r.label[0], 0};
     textAt(X_SYM + (LOGO_BADGE - textWidth(2, c)) / 2, y + Y_BADGE + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
   }
-  field(X_LBL, y + Y_LBL, MAX_LABEL + 2, 2, C_FG, r.label);
-  drawSpark(X_SPK, y + Y_SPK, SPK_W, SPK_H, r);
-  fieldRight(X_PRICE, y + Y_LBL, 8, 2, fg, price);
-  fieldRight(X_RIGHT, y + Y_LBL, 7, 2, fg, pct);
+  textAt(X_LBL, y + Y_LBL, 2, C_FG, r.label);
+  int16_t right = X_RIGHT;
+  if (sCols & COL_PCT) {
+    textAt(right - textWidth(2, pct), y + Y_LBL, 2, fg, pct);
+    right -= 96;
+  }
+  if (sCols & COL_PRICE) {
+    textAt(right - textWidth(2, price), y + Y_LBL, 2, fg, price);
+    right -= 116;
+  }
+  if (sCols & COL_CHG) {
+    if (r.valid && r.prev > 0) snprintf(b, sizeof b, "%+.2f", disp(r, r.price) - disp(r, r.prev));
+    else strcpy(b, "");
+    textAt(right - textWidth(2, b), y + Y_LBL, 2, fg, b);
+    right -= 106;
+  }
+  if (sCols & COL_VOL) {
+    if (r.valid && r.volume > 0) fmtVolume(r.volume, b, sizeof b);
+    else strcpy(b, "");
+    textAt(right - textWidth(1, b), y + Y_LBL + 3, 1, C_MUTED, b);
+    right -= 100;
+  }
+  if (sCols & COL_DAY) {
+    int16_t bx = right - 150;
+    gfx->fillRoundRect(bx, y + 18, 150, 8, 4, C_RULE);
+    if (r.valid && r.dayHi > r.dayLo) {
+      float f = constrain((r.price - r.dayLo) / (r.dayHi - r.dayLo), 0.0f, 1.0f);
+      gfx->fillRoundRect(bx + (int16_t)(f * 144), y + 16, 6, 12, 3, fg);
+    }
+    right -= 166;
+  }
+  if (sCols & COL_CHART) {
+    int16_t w = right - 16 - X_SPK;
+    if (w > 40) drawSpark(X_SPK, y + Y_SPK, w, SPK_H, r);
+  }
 }
 static bool seamAt(int32_t v) {
   uint16_t a = rowOf(v), b = rowOf(v - 1);
@@ -969,7 +1015,7 @@ static void listStart() {
   panelScroll(pos);
   invalidateCache();
   canvasV = INT32_MIN;
-  drawTabsAndIcons();
+  drawHeader(0);
   cFoot[0] = '\0';
   int32_t v0 = topV();
   uint8_t off = offPx();
@@ -1007,6 +1053,7 @@ static void listTick() {
 // are drawn once by listStart; this keeps the clock and the tag current.
 static const char *const TAB_NAMES[] = {"ALL", "STOCKS", "INDICES", "CRYPTO", "FX"};
 static int16_t tabX[5], tabW[5];  // each tab as wide as its word, laid out left to right
+static uint8_t litIcon = 0;       // 1 search, 2 heatmap, 3 settings: the page that is open
 static void drawTabsAndIcons() {
   int16_t x = TAB_X;
   for (uint8_t i = 0; i < 5; i++) {
@@ -1019,18 +1066,27 @@ static void drawTabsAndIcons() {
     x += tabW[i];
   }
   x = ICON_X;  // a magnifier
-  gfx->drawCircle(x + 13, 17, 7, C_MUTED);
-  gfx->drawCircle(x + 13, 17, 6, C_MUTED);
-  gfx->drawLine(x + 18, 22, x + 26, 30, C_MUTED);
-  gfx->drawLine(x + 19, 21, x + 27, 29, C_MUTED);
+  uint16_t c1 = litIcon == 1 ? C_FG : C_MUTED, c2 = litIcon == 2 ? C_FG : C_MUTED, c3 = litIcon == 3 ? C_FG : C_MUTED;
+  gfx->fillRect(x - 8, 0, 3 * ICON_STEP, Y_ROW0 - 1, C_BG);
+  gfx->drawCircle(x + 13, 17, 7, c1);
+  gfx->drawCircle(x + 13, 17, 6, c1);
+  gfx->drawLine(x + 18, 22, x + 26, 30, c1);
+  gfx->drawLine(x + 19, 21, x + 27, 29, c1);
   x += ICON_STEP;  // a grid
   for (uint8_t r = 0; r < 2; r++)
-    for (uint8_t c = 0; c < 2; c++) gfx->fillRoundRect(x + 6 + c * 12, 9 + r * 12, 9, 9, 2, C_MUTED);
+    for (uint8_t c = 0; c < 2; c++) gfx->fillRoundRect(x + 6 + c * 12, 9 + r * 12, 9, 9, 2, c2);
   x += ICON_STEP;  // three sliders
   for (uint8_t r = 0; r < 3; r++) {
-    gfx->drawFastHLine(x + 5, 12 + r * 8, 22, C_MUTED);
-    gfx->fillCircle(x + 9 + (r == 1 ? 12 : r == 2 ? 6 : 0), 12 + r * 8, 3, C_MUTED);
+    gfx->drawFastHLine(x + 5, 12 + r * 8, 22, c3);
+    gfx->fillCircle(x + 9 + (r == 1 ? 12 : r == 2 ? 6 : 0), 12 + r * 8, 3, c3);
   }
+  gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
+}
+// The header is on every page: a page draws it right after its fillScreen.
+static void drawHeader(uint8_t lit) {
+  litIcon = lit;
+  drawTabsAndIcons();
+  cHead[0] = '\0';
 }
 // Which header thing a tap at x lands on: 0-4 a tab, 10 search, 11 heatmap, 12 settings, -1 nothing.
 static int8_t hitHeader(int16_t x) {
@@ -1116,11 +1172,12 @@ static void drawSplash(const char *status) {
   splashStatus(status);
 }
 
-static void drawPanel(const char *title, uint16_t tc, const char *const *lines, uint8_t n) {
+static void drawPanel(const char *title, uint16_t tc, const char *const *lines, uint8_t n, bool header = true) {
   gfx->fillScreen(C_BG);
-  field(20, 20, 24, 3, tc, title);
-  gfx->drawFastHLine(20, 64, LCD_W - 40, C_RULE);
-  for (uint8_t i = 0; i < n && i < 16; i++) field(20, 80 + i * 22, 90, 1, C_MUTED, lines[i]);
+  if (header) drawHeader(3);
+  field(20, 52, 24, 3, tc, title);
+  gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
+  for (uint8_t i = 0; i < n && i < 15; i++) field(20, 110 + i * 22, 90, 1, C_MUTED, lines[i]);
 }
 
 // ── detail page ──────────────────────────────────────────────────────────
@@ -1188,6 +1245,7 @@ static void drawDetail(bool full) {
   Row r = rowCopy(detailIdx);
   if (full) {
     gfx->fillScreen(C_BG);
+    drawHeader(0);
     cDetail[0] = '\0';
     if (!blitLogo(D_X_LOGO, D_Y_LOGO, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
       gfx->fillRoundRect(D_X_LOGO, D_Y_LOGO, LOGO_BIG, LOGO_BIG, 20, C_RULE);
@@ -1442,6 +1500,7 @@ static void loadSettings() {
     sRet = prefs.getUChar("ret", sRet) % 3;
     sSleep = prefs.getUChar("slp", sSleep) % 3;
     sClock = prefs.getUChar("clk", sClock) % 2;
+    sCols = prefs.getUChar("cols", sCols) & 63;
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1467,6 +1526,7 @@ static void saveSettings() {
   prefs.putUChar("ret", sRet);
   prefs.putUChar("slp", sSleep);
   prefs.putUChar("clk", sClock);
+  prefs.putUChar("cols", sCols);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -1476,16 +1536,16 @@ static void saveSettings() {
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
-  static const char *const labels[] = {"Shutdown", "Scroll", "Clock", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
+  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Clock", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
   char ssid[24];
   snprintf(ssid, sizeof ssid, "%.20s", wifiSsid[0] ? wifiSsid : "not set");
-  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? CLOCK_NAMES[sClock] : i == 3 ? RET_NAMES[sRet]
-                : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? sCur : i == 6 ? ">" : i == 7 ? ssid : ">";
+  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? CLOCK_NAMES[sClock]
+                : i == 4 ? RET_NAMES[sRet] : i == 5 ? SLEEP_NAMES[sSleep] : i == 6 ? sCur : i == 7 ? ">" : i == 8 ? ssid : ">";
   if (i < setTop || i >= setTop + S_N) return;
   int16_t y = S_Y0 + (i - setTop) * S_H;
-  gfx->fillRect(20, y + 6, LCD_W - 20, GH(2) + 4, C_BG);
-  textAt(20, y + 8, 2, i == 8 ? C_BAD : C_MUTED, labels[i]);
-  textAt(LCD_W - 20 - textWidth(2, v), y + 8, 2, C_FG, v);
+  gfx->fillRect(20, y + 3, LCD_W - 20, GH(2) + 4, C_BG);
+  textAt(20, y + 5, 2, i == 9 ? C_BAD : C_MUTED, labels[i]);
+  textAt(LCD_W - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
   gfx->drawFastHLine(20, y + S_H - 1, LCD_W - 40, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
@@ -1501,6 +1561,20 @@ static void nextCurrency() {
   }
   strcpy(sCur, "USD");  // past the last code, or no codes at all
 }
+// The Columns page: six toggles for what a list row shows.
+static void drawColumnRow(uint8_t i) {
+  int16_t y = S_Y0 + i * S_H;
+  gfx->fillRect(20, y + 3, LCD_W - 20, GH(2) + 4, C_BG);
+  bool on = sCols & (1 << i);
+  textAt(20, y + 5, 2, C_MUTED, COL_NAMES[i]);
+  textAt(LCD_W - 20 - textWidth(2, on ? "on" : "off"), y + 5, 2, on ? C_GOOD : C_DIM, on ? "on" : "off");
+  gfx->drawFastHLine(20, y + S_H - 1, LCD_W - 40, C_RULE);
+}
+static void drawColumns() {
+  drawPanel("COLUMNS", C_MUTED, nullptr, 0);
+  for (uint8_t i = 0; i < 6; i++) drawColumnRow(i);
+  drawHint("tap a row to turn it on or off        < settings");
+}
 // A scroll step redraws the rows in place -- each field clears its own box,
 // so there is no blanket clear and nothing to flicker -- and the hint only
 // when it changes.
@@ -1515,7 +1589,7 @@ static void drawSettings() {
 // The confirm screen for the two rows that cannot be undone: an action
 // sheet, the way a phone asks. A glyph, a title, one quiet line, a pill
 // to act -- red text for the one that wipes -- and Cancel under it.
-static const int16_t CF_Y = 300, CF_H = 56, CF_CANCEL_Y = 372, CF_X = 240, CF_W = 320;
+static const int16_t CF_Y = 330, CF_H = 56, CF_CANCEL_Y = 402, CF_X = 240, CF_W = 320;
 static void powerGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
   for (float a = 35; a <= 325; a += 0.5f) {  // an open ring, gap at the top, five px thick
     float rad = (a - 90) * 3.14159265f / 180;
@@ -1525,22 +1599,23 @@ static void powerGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
 }
 static void drawConfirm() {
   gfx->fillScreen(C_BG);
+  drawHeader(3);
   bool clear = confirmWhat == 2;
   if (clear) {  // a ring with a cross
-    for (int16_t k = 0; k < 4; k++) gfx->drawCircle(LCD_W / 2, 120, 40 - k, C_BAD);
+    for (int16_t k = 0; k < 4; k++) gfx->drawCircle(LCD_W / 2, 150, 40 - k, C_BAD);
     for (int16_t k = -2; k <= 2; k++) {
-      gfx->drawLine(LCD_W / 2 - 16 + k, 104, LCD_W / 2 + 16 + k, 136, C_BAD);
-      gfx->drawLine(LCD_W / 2 + 16 + k, 104, LCD_W / 2 - 16 + k, 136, C_BAD);
+      gfx->drawLine(LCD_W / 2 - 16 + k, 134, LCD_W / 2 + 16 + k, 166, C_BAD);
+      gfx->drawLine(LCD_W / 2 + 16 + k, 134, LCD_W / 2 - 16 + k, 166, C_BAD);
     }
   } else {
-    powerGlyph(LCD_W / 2, 120, 40, C_FG);
+    powerGlyph(LCD_W / 2, 150, 40, C_FG);
   }
   const char *title = clear ? "Clear Device" : "Shut Down";
-  textAt((LCD_W - textWidth(3, title)) / 2, 180, 3, C_FG, title);
+  textAt((LCD_W - textWidth(3, title)) / 2, 210, 3, C_FG, title);
   const char *l1 = clear ? "Wipes the network, settings, edits and calibration." : "Everything goes dark and stays dark.";
   const char *l2 = clear ? "Restarts into setup, ready for someone else." : "The BOOT button on the back turns it on.";
-  textAt((LCD_W - textWidth(2, l1)) / 2, 224, 2, C_MUTED, l1);
-  textAt((LCD_W - textWidth(2, l2)) / 2, 254, 2, C_MUTED, l2);
+  textAt((LCD_W - textWidth(2, l1)) / 2, 254, 2, C_MUTED, l1);
+  textAt((LCD_W - textWidth(2, l2)) / 2, 284, 2, C_MUTED, l2);
   gfx->fillRoundRect(CF_X, CF_Y, CF_W, CF_H, CF_H / 2, rgb(44, 48, 54));
   textAt((LCD_W - textWidth(2, title)) / 2, CF_Y + (CF_H - FACES[1].cap) / 2, 2, clear ? C_BAD : C_FG, title);
   gfx->drawRoundRect(CF_X, CF_CANCEL_Y, CF_W, 48, 24, C_RULE);
@@ -1552,14 +1627,15 @@ static bool hitConfirm(int16_t x, int16_t y) { return y >= CF_Y && y < CF_Y + CF
 // clearing the device).
 static uint8_t tapSetting(uint8_t i) {
   if (i == 0) return 3;
-  if (i == 6) return 1;
-  if (i == 7) return 4;
-  if (i == 8) return 5;
-  if (i == 5) nextCurrency();
+  if (i == 2) return 7;
+  if (i == 7) return 1;
+  if (i == 8) return 4;
+  if (i == 9) return 5;
+  if (i == 6) nextCurrency();
   else if (i == 1) sSpeed = (sSpeed + 1) % 3;
-  else if (i == 2) sClock = !sClock;
-  else if (i == 3) sRet = (sRet + 1) % 3;
-  else if (i == 4) sSleep = (sSleep + 1) % 3;
+  else if (i == 3) sClock = !sClock;
+  else if (i == 4) sRet = (sRet + 1) % 3;
+  else if (i == 5) sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
   return 0;
@@ -1603,7 +1679,7 @@ static void drawInfo(bool full) {
   snprintf(l[n++], 40, "built " __DATE__ " " __TIME__);
   l[n++][0] = '\0';
   snprintf(l[n++], 40, "tap anywhere for the splash screen");
-  for (uint8_t i = 0; i < n; i++) field(20, 80 + i * 22, 90, 1, i == 0 ? C_FG : C_MUTED, l[i]);
+  for (uint8_t i = 0; i < n; i++) field(20, 110 + i * 22, 90, 1, i == 0 ? C_FG : C_MUTED, l[i]);
 }
 
 // ── heatmap: swipe left from the list ────────────────────────────────────
@@ -1611,7 +1687,7 @@ static void drawInfo(bool full) {
 // not just its sign: a 0.2% drift and a 7% drop must not look the same.
 // The signed percent is printed on every tile, because colour is never
 // the only cue. Pages of twelve; swipe up and down between them.
-static const int16_t H_Y0 = 40, H_W = 130, H_H = 104, H_COLS = 6, H_ROWS = 4, H_PER = H_COLS * H_ROWS;
+static const int16_t H_Y0 = 44, H_W = 130, H_H = 98, H_COLS = 6, H_ROWS = 4, H_PER = H_COLS * H_ROWS;
 static uint8_t heatPage = 0;
 static char cHeat[160];
 static uint16_t heatColour(float pct, bool valid) {
@@ -1634,14 +1710,11 @@ static int8_t hitTile(int16_t x, int16_t y) {
 static void drawHeat(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
-    char h[24];
-    snprintf(h, sizeof h, "HEATMAP  %s", SECT_NAMES[sect]);
-    field(X_SYM, Y_HEAD, 24, 2, C_MUTED, h);
-    if (heatPages() > 1) {
-      snprintf(h, sizeof h, "%u/%u", heatPage + 1, heatPages());
-      fieldRight(X_RIGHT, Y_HEAD, 5, 2, C_DIM, h);
-    }
-    drawHint("^ v pages    < search    list >");
+    drawHeader(2);
+    char h[48];
+    if (heatPages() > 1) snprintf(h, sizeof h, "^ v  page %u of %u        < search        list >", heatPage + 1, heatPages());
+    else snprintf(h, sizeof h, "< search        list >");
+    drawHint(h);
     cHeat[0] = '\0';
   }
   char key[160] = "";
@@ -1677,7 +1750,7 @@ static void drawHeat(bool full) {
 // Symbols are short and upper-case, so the keyboard is a 6x5 grid of 40px
 // keys, finger-sized on a resistive panel: A-X, then Y Z . - backspace GO.
 static const char *const KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-";  // + backspace + GO
-static const int16_t K_Y0 = 220, K_W = 80, K_H = 76, Q_Y = 80, RES_Y0 = 80, RES_H = 60;  // ten keys across, three rows
+static const int16_t K_Y0 = 200, K_W = 80, K_H = 76, Q_Y = 60, RES_Y0 = 100, RES_H = 56;  // ten keys across, three rows
 static int8_t hitKey(int16_t x, int16_t y) {
   if (y < K_Y0 || y >= K_Y0 + 3 * K_H) return -1;
   int8_t i = (y - K_Y0) / K_H * 10 + x / K_W;
@@ -1729,10 +1802,9 @@ static void drawSearch(bool full) {
       return;
     }
     gfx->fillScreen(C_BG);
-    textAt(20, 16, 2, C_MUTED, "SEARCH");
-    textAt(LCD_W - 20 - textWidth(1, "v list"), 20, 1, C_DIM, "v list");
+    drawHeader(1);
     drawQuery();
-    textAt(20, 160, 1, C_DIM, "type a few letters of a symbol or a company name, then tap GO");
+    textAt(20, 134, 1, C_DIM, "type a few letters of a symbol or a company name, then tap GO");
     drawKeyboard();
     return;
   }
@@ -1747,9 +1819,10 @@ static void drawSearch(bool full) {
   xSemaphoreGive(mux);
   if (full) {
     gfx->fillScreen(C_BG);
-    textAt(20, 16, 3, C_MUTED, searchQ);
-    textAt(LCD_W - 20 - textWidth(1, "v back"), 20, 1, C_DIM, "v back");
-    gfx->drawFastHLine(20, 66, LCD_W - 40, C_RULE);
+    drawHeader(1);
+    textAt(20, 52, 3, C_MUTED, searchQ);
+    textAt(LCD_W - 20 - textWidth(1, "v back to the keyboard"), 62, 1, C_DIM, "v back to the keyboard");
+    gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
     cSearch[0] = '\0';
   }
   char key[16];
@@ -1807,9 +1880,10 @@ static void drawNews(bool full) {
   Row r = rowCopy(detailIdx);
   if (full) {
     gfx->fillScreen(C_BG);
-    field(20, 16, 6, 3, C_FG, r.label);
-    textAt(20 + textWidth(3, r.label) + 16, 26, 1, C_MUTED, "headlines");
-    gfx->drawFastHLine(20, 60, LCD_W - 40, C_RULE);
+    drawHeader(0);
+    field(20, 52, 6, 3, C_FG, r.label);
+    textAt(20 + textWidth(3, r.label) + 16, 62, 1, C_MUTED, "headlines");
+    gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
     drawHint("< next        v stock        prev >");
     cNews[0] = '\0';
   }
@@ -1826,16 +1900,16 @@ static void drawNews(bool full) {
   snprintf(key, sizeof key, "%u|%u|%d|%lu", detailIdx, n, failed, (unsigned long)newsAt);
   if (strcmp(key, cNews) == 0) return;
   strcpy(cNews, key);
-  gfx->fillRect(0, 64, LCD_W, Y_HINT - 68, C_BG);
+  gfx->fillRect(0, 100, LCD_W, Y_HINT - 104, C_BG);
   if (!mine || (!n && !failed)) {
-    field(20, 200, 30, 1, C_DIM, "loading headlines...");
+    field(20, 220, 30, 1, C_DIM, "loading headlines...");
     return;
   }
   if (!n) {
-    field(20, 200, 30, 1, C_DIM, "no headlines");
+    field(20, 220, 30, 1, C_DIM, "no headlines");
     return;
   }
-  int16_t y = 76;
+  int16_t y = 110;
   for (uint8_t i = 0; i < n && y + 40 <= Y_HINT - 8; i++) {
     char lines[2][64];
     uint8_t k = wrapText(items[i].title, LCD_W - 40 - 70, lines, 2);
@@ -1880,7 +1954,8 @@ static bool fetchChart(NetworkClientSecure &client, const char *id, const char *
   JsonDocument filter;
   JsonObject fm = filter["chart"]["result"][0]["meta"].to<JsonObject>();
   for (const char *k : {"regularMarketPrice", "chartPreviousClose", "longName", "shortName", "regularMarketDayHigh",
-                        "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "regularMarketTime", "currency"})
+                        "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "regularMarketTime", "currency",
+                        "regularMarketVolume"})
     fm[k] = true;
   filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
   String body;
@@ -1942,6 +2017,7 @@ static bool fetchStock(NetworkClientSecure &client, Row &r) {
   JsonVariant m = res["meta"];
   r.price = m["regularMarketPrice"] | 0.0f;
   r.traded = (time_t)(m["regularMarketTime"] | 0L);
+  r.volume = m["regularMarketVolume"] | 0.0f;
   r.prev = m["chartPreviousClose"] | 0.0f;
   r.pct = r.prev > 0 ? (r.price - r.prev) / r.prev * 100.0f : 0.0f;
   r.dayLo = m["regularMarketDayLow"] | 0.0f;
@@ -2145,7 +2221,7 @@ static bool fetchCoins(NetworkClientSecure &client) {
   if (!coinIds[0]) return false;
   char url[sizeof coinIds + 128];
   snprintf(url, sizeof url,
-           "https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd&include_24hr_change=true",
+           "https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true",
            coinIds);
   HTTPClient http;
   http.setConnectTimeout(6000);
@@ -2173,6 +2249,7 @@ static bool fetchCoins(NetworkClientSecure &client) {
     Row r = rowCopy(i);
     r.price = v["usd"] | 0.0f;
     r.pct = v["usd_24h_change"] | 0.0f;
+    r.volume = v["usd_24h_vol"] | 0.0f;
     r.valid = true;
     rowStore(i, r);
     any = true;
@@ -2538,7 +2615,7 @@ static void selfCheck() {
   // Geometry, 800x480: a row's badge, symbol, name, sparkline, price and
   // percent never overlap; the strip fills the panel under the header.
   assert(X_SYM + LOGO_BADGE <= X_LBL && X_LBL + GW(2) * (MAX_LABEL + 2) <= X_SPK);
-  assert(X_SPK + SPK_W <= X_PRICE - GW(2) * 8);
+  assert(X_LBL + GW(2) * (MAX_LABEL + 2) + 96 + 116 + 106 + 100 + 166 <= X_RIGHT);  // every numeric column on still clears the symbol; the chart yields
   assert(X_PRICE + 8 <= X_RIGHT - GW(2) * 7 && X_RIGHT <= LCD_W);
   assert(Y_BADGE + LOGO_BADGE <= ROW_H && Y_LBL + GH(2) <= ROW_H && Y_SPK + SPK_H <= ROW_H);
   assert(Y_ROW0 + STRIP <= Y_FOOT && Y_FOOT + 14 + GH(1) <= LCD_H && Y_HEAD + GH(2) <= Y_ROW0);
@@ -2564,7 +2641,7 @@ static void selfCheck() {
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
-enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm };
+enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -2681,18 +2758,18 @@ static void drawFailPanel() {
   strcpy(key, k);
   if (state == State::NoConfig) {
     const char *l[] = {cfgErr, "", "upload the watchlist:", "  ./push-config ticker", "", "or swipe left to search"};
-    drawPanel("NO LIST", C_WARN, l, 6);
+    drawPanel("NO LIST", C_WARN, l, 6, false);
   } else if (state == State::NoWifi) {
     static char ssid[40];
     snprintf(ssid, sizeof ssid, "SSID %s", wifiSsid);
     const char *l[] = {ssid, "", "not associated. 2.4GHz only.", "", "retrying...", "", "tap anywhere to set up Wi-Fi again"};
-    drawPanel("NO WIFI", C_BAD, l, 7);
+    drawPanel("NO WIFI", C_BAD, l, 7, false);
   } else {
     static char f[34];
     snprintf(f, sizeof f, "%u failed fetches", failures);
     const char *l[] = {"no quotes yet", f, "", "check the serial log for the", "http code -- yahoo rate-limits.",
                        "", "retrying..."};
-    drawPanel("NO DATA", C_WARN, l, 7);
+    drawPanel("NO DATA", C_WARN, l, 7, false);
   }
 }
 
@@ -2720,6 +2797,37 @@ static void openHeat() {
   pageOpenedAt = millis();
   if (heatPage >= heatPages()) heatPage = 0;
   drawHeat(true);
+}
+static void openSearch();
+static void openHeat();
+static void headerTap(int16_t x) {
+  int8_t h = hitHeader(x);
+  if (h >= 0 && h < 5) {
+    if (h != sect) {
+      uint8_t was = sect;
+      sect = (uint8_t)h;
+      buildOrder();
+      if (sect != h) sect = was;  // an empty section falls back; stay put
+      else {
+        saveSettings();
+        pos = 0;
+      }
+    }
+    backToList();
+  } else if (h == 10) {
+    if (view == View::Search) backToList();
+    else openSearch();
+  } else if (h == 11) {
+    if (view == View::Heat) backToList();
+    else openHeat();
+  } else if (h == 12) {
+    if (view == View::Settings) backToList();
+    else {
+      view = View::Settings;
+      pageOpenedAt = millis();
+      drawSettings();
+    }
+  }
 }
 // Headlines for symbol idx; the fetch is skipped if they are under 10 min old.
 static void openNews(uint8_t idx) {
@@ -2841,6 +2949,7 @@ void loop() {
       else if (view == View::Splash) drawSplash("tap to return");
       else if (view == View::Heat) drawHeat(true);
       else if (view == View::Confirm) drawConfirm();
+      else if (view == View::Columns) drawColumns();
       else drawDetail(true);
     }
   }
@@ -2857,6 +2966,7 @@ void loop() {
   }
 
   if (view != View::List) boardScroll(0);  // every other page draws 1:1
+  if (state == State::Running && view != View::Splash) drawHead(&t, haveTime);  // the clock and the tag, on every page
   if (state == State::Boot) {  // the splash is up from setup; only its status line moves
     static uint32_t lastStatus = 0;
     if (millis() - lastStatus > 1000) {
@@ -2879,7 +2989,6 @@ void loop() {
       startSetup();
     }
   } else if (view == View::List) {
-    drawHead(&t, haveTime);
     listTick();
     drawFoot(&t, haveTime);
   } else if (view == View::Info) {
@@ -2918,26 +3027,7 @@ void loop() {
     if (g == Gesture::TapUp) {
       int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) openDetail(order[r]);
-      else if (ty < Y_ROW0) {  // the header: a tab, or an icon
-        int8_t h = hitHeader(tx);
-        if (h >= 0 && h < 5 && h != sect) {
-          uint8_t was = sect;
-          sect = (uint8_t)h;
-          buildOrder();
-          if (sect != h) sect = was;  // an empty section falls back; stay put
-          else {
-            saveSettings();
-            pos = 0;
-          }
-          listStart();
-        } else if (h == 10) openSearch();
-        else if (h == 11) openHeat();
-        else if (h == 12) {
-          view = View::Settings;
-          pageOpenedAt = millis();
-          drawSettings();
-        }
-      }
+      else if (ty < Y_ROW0) headerTap(tx);
     }
   }
   // Swipes are the navigation, phone style. List: right opens settings.
@@ -2948,6 +3038,7 @@ void loop() {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && g == Gesture::SwipeDown) ||
+                (view == View::Columns && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -2980,6 +3071,9 @@ void loop() {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
+    } else if (view == View::Columns && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+      view = View::Settings;
+      drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
     } else if (view == View::Confirm && g == Gesture::SwipeDown) {
@@ -3034,6 +3128,12 @@ void loop() {
     tap = false;
   }
 
+  // The header is on every page: a tab picks a section and returns to the
+  // list; an icon opens its page, or closes it if it is the one open.
+  if (tap && state == State::Running && view != View::List && view != View::Splash && ty < Y_ROW0) {
+    headerTap(tx);
+    tap = false;
+  }
   if (tap && state == State::Running && view != View::List) {
     if (view == View::Heat) {
       int8_t t = hitTile(tx, ty);
@@ -3061,6 +3161,9 @@ void loop() {
       } else if (r == 4) {
         WiFi.disconnect(true);
         startSetup();
+      } else if (r == 7) {
+        view = View::Columns;
+        drawColumns();
       }
     } else if (view == View::Confirm) {
       if (hitConfirm(tx, ty)) {
@@ -3076,6 +3179,13 @@ void loop() {
       } else {
         view = View::Settings;
         drawSettings();
+      }
+    } else if (view == View::Columns) {
+      int8_t i = hitSetting(ty);
+      if (i >= 0 && i < 6) {
+        sCols ^= 1 << i;
+        saveSettings();
+        drawColumnRow((uint8_t)i);
       }
     } else if (view == View::Info) {  // a tap shows the splash, as the last line says
       view = View::Splash;
