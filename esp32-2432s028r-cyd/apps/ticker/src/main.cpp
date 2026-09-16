@@ -810,6 +810,13 @@ static void goToSleep(uint32_t secs) {  // secs == 0: no timer, a touch alone wa
   }
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+  // The finger that tapped "shut down" is still on the panel, and a finger
+  // on the panel is the wake signal: wait for it to lift and the pen line
+  // to settle, or the chip wakes before it has slept.
+  uint32_t t0 = millis();
+  while (digitalRead(TP_IRQ) == LOW && millis() - t0 < 10000) delay(20);
+  delay(300);
+  while (digitalRead(TP_IRQ) == LOW && millis() - t0 < 10000) delay(20);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);  // TP_IRQ: low while a finger is down
   if (secs) esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
   Serial.flush();
