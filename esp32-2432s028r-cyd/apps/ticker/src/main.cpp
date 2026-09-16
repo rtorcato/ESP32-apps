@@ -1380,18 +1380,20 @@ static void saveSettings() {
 
 static void drawSettingRow(uint8_t i) {
   // One list, twelve rows, eight on screen; a drag scrolls it a row at a
-  // time. The everyday rows first, Shutdown among them, the device rows last.
-  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Shutdown",
-                                       "Touch", "Wi-Fi", "Info", "Clear device"};
-  const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
-                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
-                : i == 6 ? sCur : i == 7 ? ">" : i == 8 ? "calibrate" : i == 9 ? (wifiSsid[0] ? wifiSsid : "not set")
-                : i == 10 ? ">" : ">";
+  // time. Shutdown first (the thing you reach for), the everyday rows, then
+  // the advanced ones, and the one that cannot be undone last, in red.
+  static const char *const labels[] = {"Shutdown", "Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency",
+                                       "Info", "Wi-Fi", "Touch", "Clear device"};
+  char ssid[12];
+  snprintf(ssid, sizeof ssid, "%.10s", wifiSsid[0] ? wifiSsid : "not set");  // what fits in the value box
+  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? BL_NAMES[sBl] : i == 3 ? TWO_NAMES[0][sSound]
+                : i == 4 ? RET_NAMES[sRet] : i == 5 ? SLEEP_NAMES[sSleep] : i == 6 ? TWO_NAMES[1][sLed]
+                : i == 7 ? sCur : i == 8 ? ">" : i == 9 ? ssid : i == 10 ? "calibrate" : ">";
   if (i < setTop || i >= setTop + S_N) return;
   int16_t y = S_Y0 + (i - setTop) * S_H;
-  bool danger = i == 7 || i == 11;
-  field(8, y + 6, 11, 2, danger ? C_BAD : C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 6, 9, 2, C_FG, v);
+  gfx->fillRect(8, y + 4, 224, GH(2) + 4, C_BG);  // the whole strip: a long value must not outlive its row
+  textAt(8, y + 6, 2, i == 11 ? C_BAD : C_MUTED, labels[i]);
+  textAt(X_RIGHT - textWidth(2, v), y + 6, 2, C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
@@ -1453,17 +1455,17 @@ static bool hitConfirm(int16_t x, int16_t y) { return y >= 200 && y < 260 && x >
 // 2 (touch calibration), 3 (confirm a shutdown), 4 (Wi-Fi setup), 5 (confirm
 // clearing the device).
 static uint8_t tapSetting(uint8_t i) {
-  if (i == 10) return 1;
-  if (i == 8) return 2;
+  if (i == 0) return 3;
+  if (i == 8) return 1;
   if (i == 9) return 4;
-  if (i == 7) return 3;
+  if (i == 10) return 2;
   if (i == 11) return 5;
-  if (i == 6) nextCurrency();
-  else if (i == 0) sSpeed = (sSpeed + 1) % 3;
-  else if (i == 1) sBl = (sBl + 1) % 3;
-  else if (i == 2) sSound = (sSound + 1) & 3;
-  else if (i == 3) sRet = (sRet + 1) % 3;
-  else if (i == 4) sSleep = (sSleep + 1) % 3;
+  if (i == 7) nextCurrency();
+  else if (i == 1) sSpeed = (sSpeed + 1) % 3;
+  else if (i == 2) sBl = (sBl + 1) % 3;
+  else if (i == 3) sSound = (sSound + 1) & 3;
+  else if (i == 4) sRet = (sRet + 1) % 3;
+  else if (i == 5) sSleep = (sSleep + 1) % 3;
   else sLed = (sLed + 1) & 3;
   saveSettings();
   drawSettingRow(i);
@@ -3099,9 +3101,10 @@ void loop() {
 
   if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
     backToList();
-  if ((view == View::Info || view == View::Settings || view == View::Search || view == View::Splash || view == View::Heat ||
-       view == View::Confirm) &&
-      returnMs && !touchHeld &&
+  // Only the pages the crawl is interrupted for come back on their own: a
+  // stock, its headlines, the heatmap. Settings, search and the rest were
+  // gone to on purpose and stay until left.
+  if (view == View::Heat && returnMs && !touchHeld &&
       millis() - pageOpenedAt > returnMs)
     backToList();
 

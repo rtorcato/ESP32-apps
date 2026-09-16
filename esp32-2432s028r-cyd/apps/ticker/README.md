@@ -280,15 +280,17 @@ for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
 **SETTINGS, swipe right from the list.** One list of twelve rows, eight on
-screen, a drag scrolls it a row at a time. Tap to cycle: scroll speed
-(slow / normal / fast), backlight (auto / bright / dim), sound (off / taps /
-alerts / both), auto-return (15s / 60s / never), sleep (never / night /
-closed -- see below; the night window is `sleep.from` / `.to` in
-config.json), LED (off / glow / alerts / both), Currency, Shutdown (deep
-sleep with nothing but a touch to wake it, since the board has no power
-switch), then the device rows: Touch (the calibration above), Wi-Fi (the
-setup below, again), Info, and Clear device (wipes everything the device
-holds -- network, settings, edits, calibration -- and restarts into setup).
+screen, a drag scrolls it a row at a time. Shutdown first (deep sleep with
+nothing but a touch to wake it, since the board has no power switch), then
+tap to cycle: scroll speed (slow / normal / fast), backlight (auto / bright
+/ dim), sound (off / taps / alerts / both), auto-return (15s / 60s / never;
+it applies to a stock's page, its headlines and the heatmap -- settings and
+search stay until left), sleep (never / night / closed -- see below; the
+night window is `sleep.from` / `.to` in config.json), LED (off / glow /
+alerts / both), Currency; then the advanced rows, Info, Wi-Fi (the setup
+below, again), Touch (the calibration above), and last, in red, Clear device
+(wipes everything the device holds -- network, settings, edits, calibration
+-- and restarts into setup).
 Shutdown and Clear device open a **confirm screen** that says what will
 happen, with one red tile to tap; a swipe down or a tap anywhere else
 cancels.
