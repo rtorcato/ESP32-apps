@@ -2167,6 +2167,7 @@ static void doCoins() {
 }
 
 // Sequential, one request at a time, with a tapped symbol jumping the queue.
+static TaskHandle_t fetchHandle = nullptr;
 static void fetchTask(void *) {
   bool sweeping = false;
   uint8_t sweepIdx = 0;
@@ -2667,7 +2668,10 @@ void setup() {
   netTune();
   netJoinStart();
   joinStarted = millis();
-  xTaskCreatePinnedToCore(fetchTask, "fetch", 12288, nullptr, 1, nullptr, 0);
+  // 16KB: a TLS handshake plus two Row copies (200 closes each) on this
+  // stack overflowed 12KB once, into lwIP, at the first fetch after boot.
+  // The minute log prints the headroom so the margin stays visible.
+  xTaskCreatePinnedToCore(fetchTask, "fetch", 16384, nullptr, 1, &fetchHandle, 0);
 }
 
 // The non-blocking join: the scan's begin(), then NTP once the link is up.
@@ -3138,7 +3142,8 @@ void loop() {
   static uint32_t lastLog = 0;
   if (millis() - lastLog > LOG_MS) {
     lastLog = millis();
-    Serial.printf("heap %u  wifi %s %ddBm  ldr %d  rows", ESP.getFreeHeap(),
+    Serial.printf("heap %u  fetch stack free %u  wifi %s %ddBm  ldr %d  rows", ESP.getFreeHeap(),
+                  fetchHandle ? (unsigned)uxTaskGetStackHighWaterMark(fetchHandle) : 0,
                   WiFi.status() == WL_CONNECTED ? "up" : "DOWN", WiFi.RSSI(), analogRead(LDR));
     for (uint8_t i = 0; i < nRows; i++) Serial.printf(" %s=%s", rows[i].label, rows[i].valid ? "ok" : "-");
     Serial.println();
