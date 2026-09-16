@@ -46,7 +46,7 @@ static uint32_t stockOpenMs = 5UL * 60 * 1000, stockExtMs = 15UL * 60 * 1000, co
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000, LOG_MS = 60UL * 1000;
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
 
-static const uint8_t ROWS = 9, MAX_SYMBOLS = 40, MAX_LABEL = 5, SPARK_N = 200;  // 04:00-20:00 at 5m is 192
+static const uint8_t ROWS_MAX = 16, MAX_SYMBOLS = 40, MAX_LABEL = 5, SPARK_N = 200;  // 04:00-20:00 at 5m is 192
 // Two logo sizes, both pre-converted on the Mac (tools/make-logos.py --size N
 // --out data/logo/N) and read raw from /logo/<N>/<LABEL>.565. Must match.
 // 32px badges and 128px on the page: the 3.4MB data partition has the room.
@@ -67,6 +67,49 @@ static const Face FACES[] = {{u8g2_font_helvR14_tr, 14, 4},
 static const uint8_t GWS[] = {8, 11, 14, 28};  // width reserved per character, per size
 #define GW(s) (GWS[(s) - 1])
 #define GH(s) (FACES[(s) - 1].cap + FACES[(s) - 1].desc)
+
+// ── the layout, twice: landscape 800x480 and portrait 480x800 ──────────
+// Every position a page draws at comes from here, so the Orientation
+// setting is a pointer swap (and a restart, which is cheaper than
+// re-allocating every buffer). Names keep their old spelling as fields.
+struct Layout {
+  int16_t w, h, rows, strip, yHead, yRow0, yFoot, yHint;
+  int16_t xSym, yBadge, xLbl, yLbl, xSpk, ySpk, spkW, spkH, xPrice, xRight;
+  int16_t tabX, tagX, iconX, iconStep;  // tagX < 0: the CLOSED tag and the clock go to the footer
+  int16_t dXLogo, dYLogo, dXTxt, dYSym, dYName, dYTag, dXPrice, dYPrice, dYChg, dXPct, dYDay, dYWk, barX, barW, barH;
+  int16_t chX, chY, chW, chH, rY, rW, rStep, rH, dYNews, newsStep;
+  int16_t sY0, sH, sN, sRows;
+  int16_t hY0, hW, hH, hCols, hRows, hPer;
+  int16_t kY0, kW, kH, kCols, qY, resY0, resH;
+  int16_t cfX, cfW, cfY, cfH, cfCancelY, cfGlyphY, cfTitleY, cfL1Y, cfL2Y;
+  int16_t candleX0, candleStep, candleW, candleY, wordY, ruleY, tagY, creditY;
+};
+static const int16_t ROW_H = 44;
+static const Layout LAYOUTS[2] = {
+    {800, 480, 9, 9 * ROW_H, 10, 40, 436, 452,
+     12, 6, 56, 12, 200, 6, 320, 32, 640, 788,
+     12, 420, 564, 40,
+     20, 52, 168, 52, 90, 114, 20, 196, 264, 200, 316, 368, 20, 340, 8,
+     400, 52, 388, 200, 262, 72, 79, 40, 312, 38,
+     56, 35, 11, 11,
+     44, 130, 98, 6, 4, 24,
+     200, 80, 76, 10, 60, 100, 56,
+     240, 320, 330, 56, 402, 150, 210, 254, 284,
+     120, 66, 40, 190, 60, 416, 146, 424},
+    {480, 800, 16, 16 * ROW_H, 10, 40, 744, 772,
+     12, 6, 56, 12, 150, 6, 200, 32, 320, 468,
+     12, -1, 320, 36,
+     20, 52, 168, 52, 90, 114, 20, 196, 264, 200, 544, 596, 20, 440, 8,
+     20, 296, 440, 190, 494, 80, 88, 40, 660, 28,
+     56, 35, 11, 11,
+     44, 118, 96, 4, 7, 28,
+     440, 80, 66, 6, 60, 100, 56,
+     80, 320, 400, 56, 472, 200, 260, 304, 334,
+     82, 35, 22, 330, 180, 556, 266, 744}};
+static const Layout *Lp = &LAYOUTS[0];
+#define L (*Lp)
+static const char *const ROT_NAMES[] = {"landscape", "portrait", "landscape, flipped", "portrait, flipped"};
+static uint8_t sRot = 0;
 
 static Arduino_GFX *gfx;
 static bool touchHeld = false;  // set by pollGesture; the list freezes while a finger is down
@@ -105,7 +148,7 @@ static char wifiSsid[33] = "", wifiPass[65] = "";
 // Shutdown is deep sleep with nothing but a touch to wake it: this board has
 // no power switch, and the panel, radio and chip all go dark. Two taps
 // within three seconds, so a stray finger cannot turn it off.
-static uint8_t setTop = 0;      // the first settings row on screen, 0..S_ROWS-S_N
+static uint8_t setTop = 0;      // the first settings row on screen, 0..S_ROWS-L.sN
 static uint8_t confirmWhat = 0;  // the confirm screen: 1 shut down, 2 clear the device
 // Sound and LED are each two bits: bit 0 the everyday use (tap clicks /
 // the day's glow), bit 1 the alerts (chime / white blinks).
@@ -429,21 +472,17 @@ static bool loadConfig() {
 // three icons, the clock) and a 44px footer for messages: badge | symbol |
 // a wide sparkline | price | percent, everything centred on y+22. No
 // company name: the symbol is the identity, and the name ran into it.
-static const int16_t Y_HEAD = 10, Y_ROW0 = 40, ROW_H = 44, X_SYM = 12, Y_BADGE = 6, X_LBL = 56, Y_LBL = 12,
-                     X_SPK = 200, Y_SPK = 6, SPK_W = 320, SPK_H = 32, X_PRICE = 640, X_RIGHT = 788,
-                     Y_FOOT = 436, TAB_X = 12, TAB_W = 80, TAB_STEP = 84, TAG_X = 420, ICON_X = 564, ICON_STEP = 40;
+// (row and header positions: see Layout)
 // Settings: title, five 40px rows, the LIST button.
 // Settings: eight 48px rows, all on screen. Heatmap: 6 x 4 tiles.
-static const int16_t S_Y0 = 56, S_H = 38, S_N = 10, S_ROWS = 10;
+// (settings rows: see Layout)
 // Detail, landscape: a left column (logo, symbol, name, the big price,
 // change, the two range bars) and a right column (chart with high and low
 // inside it, five range chips, three headlines). One gesture hint at the
 // foot. No buttons: swipe left/right for the next/previous stock, up for
 // headlines, down for the list.
-static const int16_t D_X_LOGO = 20, D_Y_LOGO = 52, D_X_TXT = 168, D_Y_SYM = 52, D_Y_NAME = 90, D_Y_TAG = 114,
-                     D_X_PRICE = 20, D_Y_PRICE = 196, D_Y_CHG = 264, D_X_PCT = 200, D_Y_DAY = 316, D_Y_WK = 368,
-                     BAR_X = 20, BAR_W = 340, BAR_H = 8, CH_X = 400, CH_Y = 52, CH_W = 388, CH_H = 200, R_Y = 262,
-                     R_W = 72, R_STEP = 79, R_H = 40, D_Y_NEWS = 312, Y_HINT = 452, D_Y_PCT = D_Y_CHG;
+// (detail page positions: see Layout)
+//
 
 // ── the detail chart's range ─────────────────────────────────────────────
 // 1D is the row's own sparkline series. The other four are fetched the
@@ -581,30 +620,29 @@ static void nextOpen(const struct tm &t, char *out, size_t n) {
   else snprintf(out, n, "%s %02u:%02u", days[wday], mktOpenMin / 60, mktOpenMin % 60);
 }
 // The list is an endless strip of "virtual rows" v (any integer): v maps to
-// watchlist row v mod n and to ring slot v mod ROWS, and the strip is
+// watchlist row v mod n and to ring slot v mod L.rows, and the strip is
 // scrolled by pos pixels, either sign. Floor-mod so a drag back past the
 // start behaves. Which row is under screen y, or -1. Pure, so selfCheck
 // can drive it.
-static const int16_t RING = ROW_H * ROWS;
 static int32_t modp(int32_t a, int32_t m) {
   int32_t r = a % m;
   return r < 0 ? r + m : r;
 }
 static int32_t floordiv(int32_t a, int32_t m) { return (a - modp(a, m)) / m; }
 static int16_t hitRow(int16_t y, int32_t pos, uint8_t n) {
-  if (n == 0 || y < Y_ROW0 || y >= Y_ROW0 + RING) return -1;
-  return (int16_t)modp(floordiv(pos + y - Y_ROW0, ROW_H), n);
+  if (n == 0 || y < L.yRow0 || y >= L.yRow0 + L.strip) return -1;
+  return (int16_t)modp(floordiv(pos + y - L.yRow0, ROW_H), n);
 }
 // Which settings row, or -1.
 static int8_t hitSetting(int16_t y) {
-  if (y < S_Y0 || y >= S_Y0 + S_H * S_N) return -1;
-  return (y - S_Y0) / S_H;
+  if (y < L.sY0 || y >= L.sY0 + L.sH * L.sN) return -1;
+  return (y - L.sY0) / L.sH;
 }
 // Which range chip, or -1. The zone is the whole strip between the chart
 // and the day bar, taller than the drawn chip, because the chip is small.
 static int8_t hitRange(int16_t x, int16_t y) {
-  if (y < CH_Y + CH_H || y >= D_Y_NEWS || x < CH_X) return -1;
-  int8_t i = (x - CH_X) / R_STEP;
+  if (y < L.chY + L.chH || y >= L.dYNews || x < L.chX) return -1;
+  int8_t i = (x - L.chX) / L.rStep;
   return i >= N_RANGES ? -1 : i;
 }
 // Value to pixel row inside a box; a flat series sits mid-box, not on the floor.
@@ -649,7 +687,7 @@ static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size, ui
   // is the ink, not the advance), so the clear runs to the panel edge or
   // those pixels outlive the text -- the dots after every settings value.
   int16_t w = GW(size) * chars;
-  gfx->fillRect(right - w, y, min<int16_t>(w + 6, LCD_W - (right - w)), GH(size), C_BG);
+  gfx->fillRect(right - w, y, min<int16_t>(w + 6, L.w - (right - w)), GH(size), C_BG);
   textAt(right - textWidth(size, s), y, size, fg, s);
 }
 static void fieldCentre(int16_t cx, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
@@ -852,27 +890,26 @@ static void goToSleep(uint32_t secs) {
 // the lines of the list strip through a ring offset: moving the whole
 // list one pixel is writing one number, no memory traffic at all. That is
 // the CYD's hardware scroll rebuilt in software, so this is the CYD's ring
-// again: ROWS slots, the strip wraps, and the slot scrolling off the top
+// again: L.rows slots, the strip wraps, and the slot scrolling off the top
 // IS the slot the next row enters from the bottom, line by line, fed from
 // a one-row canvas as it comes into view. Virtual rows over one signed
 // pixel position; a finger or the crawl moves it either way.
 static Arduino_Canvas *rowCanvas;
 static int32_t canvasV = INT32_MIN;
 static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
-static const int16_t STRIP = ROW_H * ROWS;  // the ring, Y_ROW0..Y_ROW0+STRIP
-static char cRow[ROWS][48], cCanvas[48], cHead[64], cFoot[80];
+static char cRow[ROWS_MAX][48], cCanvas[48], cHead[64], cFoot[80];
 static void drawTabsAndIcons();
 static void drawHeader(uint8_t lit, const char *title = nullptr, const char *note = nullptr);
 
 static uint16_t rowOf(int32_t v) { return order[modp(v, nShown)]; }
-static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, ROWS); }
+static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, L.rows); }
 static int32_t topV() { return floordiv(pos, ROW_H); }
 static uint8_t offPx() { return (uint8_t)modp(pos, ROW_H); }
-static int16_t rowY(int32_t v) { return Y_ROW0 + (int16_t)((v - topV()) * ROW_H) - offPx(); }
-static void panelScroll(int32_t p) { boardScroll((int16_t)modp(p, STRIP)); }
+static int16_t rowY(int32_t v) { return L.yRow0 + (int16_t)((v - topV()) * ROW_H) - offPx(); }
+static void panelScroll(int32_t p) { boardScroll((int16_t)modp(p, L.strip)); }
 
 static void invalidateCache() {
-  for (uint8_t i = 0; i < ROWS; i++) cRow[i][0] = '\0';
+  for (uint8_t i = 0; i < L.rows; i++) cRow[i][0] = '\0';
   cHead[0] = '\0';
 }
 
@@ -902,33 +939,33 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
   char price[12], pct[12], key[48], b[16];
   rowKey(r, key, sizeof key, price, pct);
   uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
-  gfx->fillRect(0, y, LCD_W, ROW_H, C_BG);  // the columns move; nothing may outlive a change
-  if (rule) gfx->drawFastHLine(0, y, LCD_W, C_RULE);
-  if (!blitLogo(X_SYM, y + Y_BADGE, LOGO_BADGE, r.label)) {  // no file: a tile with the initial
-    gfx->fillRoundRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, 6, C_RULE);
+  gfx->fillRect(0, y, L.w, ROW_H, C_BG);  // the columns move; nothing may outlive a change
+  if (rule) gfx->drawFastHLine(0, y, L.w, C_RULE);
+  if (!blitLogo(L.xSym, y + L.yBadge, LOGO_BADGE, r.label)) {  // no file: a tile with the initial
+    gfx->fillRoundRect(L.xSym, y + L.yBadge, LOGO_BADGE, LOGO_BADGE, 6, C_RULE);
     char c[2] = {r.label[0], 0};
-    textAt(X_SYM + (LOGO_BADGE - textWidth(2, c)) / 2, y + Y_BADGE + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
+    textAt(L.xSym + (LOGO_BADGE - textWidth(2, c)) / 2, y + L.yBadge + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
   }
-  textAt(X_LBL, y + Y_LBL, 2, C_FG, r.label);
-  int16_t right = X_RIGHT;
+  textAt(L.xLbl, y + L.yLbl, 2, C_FG, r.label);
+  int16_t right = L.xRight;
   if (sCols & COL_PCT) {
-    textAt(right - textWidth(2, pct), y + Y_LBL, 2, fg, pct);
+    textAt(right - textWidth(2, pct), y + L.yLbl, 2, fg, pct);
     right -= 96;
   }
   if (sCols & COL_PRICE) {
-    textAt(right - textWidth(2, price), y + Y_LBL, 2, fg, price);
+    textAt(right - textWidth(2, price), y + L.yLbl, 2, fg, price);
     right -= 116;
   }
   if (sCols & COL_CHG) {
     if (r.valid && r.prev > 0) snprintf(b, sizeof b, "%+.2f", disp(r, r.price) - disp(r, r.prev));
     else strcpy(b, "");
-    textAt(right - textWidth(2, b), y + Y_LBL, 2, fg, b);
+    textAt(right - textWidth(2, b), y + L.yLbl, 2, fg, b);
     right -= 106;
   }
   if (sCols & COL_VOL) {
     if (r.valid && r.volume > 0) fmtVolume(r.volume, b, sizeof b);
     else strcpy(b, "");
-    textAt(right - textWidth(1, b), y + Y_LBL + 3, 1, C_MUTED, b);
+    textAt(right - textWidth(1, b), y + L.yLbl + 3, 1, C_MUTED, b);
     right -= 100;
   }
   if (sCols & COL_DAY) {
@@ -941,8 +978,8 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
     right -= 166;
   }
   if (sCols & COL_CHART) {
-    int16_t w = right - 16 - X_SPK;
-    if (w > 40) drawSpark(X_SPK, y + Y_SPK, w, SPK_H, r);
+    int16_t w = right - 16 - L.xSpk;
+    if (w > 40) drawSpark(L.xSpk, y + L.ySpk, w, L.spkH, r);
   }
 }
 static bool seamAt(int32_t v) {
@@ -957,7 +994,7 @@ static void paintSlot(int32_t v) {
   rowKey(r, key, sizeof key, price, pct);
   if (strcmp(key, cRow[slotOf(v)]) == 0) return;
   strcpy(cRow[slotOf(v)], key);
-  paintRow(Y_ROW0 + slotOf(v) * ROW_H, r, seamAt(v));
+  paintRow(L.yRow0 + slotOf(v) * ROW_H, r, seamAt(v));
 }
 
 // The entering row, painted off-screen. ponytail: the drawing helpers all
@@ -976,7 +1013,7 @@ static void paintCanvas(int32_t v) {
 }
 // Canvas lines [from, to) into the slot of virtual row v.
 static void feed(int32_t v, uint8_t from, uint8_t to) {
-  gfx->draw16bitRGBBitmap(0, Y_ROW0 + slotOf(v) * ROW_H + from, rowCanvas->getFramebuffer() + from * LCD_W, LCD_W,
+  gfx->draw16bitRGBBitmap(0, L.yRow0 + slotOf(v) * ROW_H + from, rowCanvas->getFramebuffer() + from * L.w, L.w,
                           to - from);
 }
 
@@ -988,11 +1025,11 @@ static void scrollBy(int32_t delta) {
     uint8_t off = offPx();
     if (delta > 0) {
       uint8_t k = (uint8_t)min<int32_t>(delta, ROW_H - off);
-      paintCanvas(v0 + ROWS);
+      paintCanvas(v0 + L.rows);
       pos += k;
       panelScroll(pos);
       feed(v0, off, off + k);
-      if (off + k == ROW_H) strcpy(cRow[slotOf(v0)], cCanvas);  // v0+ROWS owns the slot now
+      if (off + k == ROW_H) strcpy(cRow[slotOf(v0)], cCanvas);  // v0+L.rows owns the slot now
       delta -= k;
     } else {
       if (off == 0) {  // step back across the boundary: v0-1 starts entering at the top
@@ -1012,7 +1049,7 @@ static void scrollBy(int32_t delta) {
 
 static void listStart() {
   gfx->fillScreen(C_BG);
-  boardScrollArea(Y_ROW0, STRIP);
+  boardScrollArea(L.yRow0, L.strip);
   panelScroll(pos);
   invalidateCache();
   canvasV = INT32_MIN;
@@ -1020,9 +1057,9 @@ static void listStart() {
   cFoot[0] = '\0';
   int32_t v0 = topV();
   uint8_t off = offPx();
-  for (uint8_t p = 0; p < ROWS; p++) paintSlot(v0 + p);
+  for (uint8_t p = 0; p < L.rows; p++) paintSlot(v0 + p);
   if (off) {  // the shared slot: the entering row's lines over the top row's
-    paintCanvas(v0 + ROWS);
+    paintCanvas(v0 + L.rows);
     feed(v0, 0, off);
   }
   scrollLast = millis();
@@ -1037,12 +1074,12 @@ static void listTick() {
   uint32_t now = millis(), dt = now - scrollLast;
   scrollLast = now;
   int32_t v0 = topV();
-  for (uint8_t p = offPx() ? 1 : 0; p < ROWS; p++) paintSlot(v0 + p);
+  for (uint8_t p = offPx() ? 1 : 0; p < L.rows; p++) paintSlot(v0 + p);
   if (touchHeld || now < holdUntil) {
     scrollAcc = 0;
     return;
   }
-  scrollAcc += dt * STRIP;  // pixels, scaled by pageMs
+  scrollAcc += dt * L.strip;  // pixels, scaled by pageMs
   int32_t step = scrollAcc / pageMs;
   if (!step) return;
   scrollAcc -= (uint32_t)step * pageMs;
@@ -1057,37 +1094,40 @@ static int16_t tabX[5], tabW[5];  // each tab as wide as its word, laid out left
 static uint8_t litIcon = 0;       // 1 search, 2 heatmap, 3 headlines, 4 settings: the page that is open
 static bool tabsShown = false;    // the section tabs are only on the list; other pages put their name there
 static void drawTabsAndIcons() {
-  int16_t x = TAB_X;
-  gfx->fillRect(0, 0, TAG_X, Y_ROW0 - 1, C_BG);
+  int16_t x = L.tabX;
+  gfx->fillRect(0, 0, L.tagX > 0 ? L.tagX : L.iconX - 8, L.yRow0 - 1, C_BG);
   if (tabsShown) {
+    int16_t sum = 0;
+    for (uint8_t i = 0; i < 5; i++) sum += textWidth(1, TAB_NAMES[i]);
+    int16_t pad = min<int16_t>(28, (L.iconX - 8 - L.tabX - sum) / 5);  // the air around a name; less on the narrow screen
     for (uint8_t i = 0; i < 5; i++) {
       tabX[i] = x;
-      tabW[i] = textWidth(1, TAB_NAMES[i]) + 28;
+      tabW[i] = textWidth(1, TAB_NAMES[i]) + pad;
       bool on = i == sect;
-      textAt(x + 14, 12, 1, on ? C_FG : C_DIM, TAB_NAMES[i]);
-      if (on) gfx->fillRect(x + 10, 34, tabW[i] - 20, 3, C_FG);
+      textAt(x + pad / 2, 12, 1, on ? C_FG : C_DIM, TAB_NAMES[i]);
+      if (on) gfx->fillRect(x + pad / 2 - 4, 34, tabW[i] - pad + 8, 3, C_FG);
       x += tabW[i];
     }
   }
-  x = ICON_X;  // a magnifier
+  x = L.iconX;  // a magnifier
   uint16_t c1 = litIcon == 1 ? C_FG : C_MUTED, c2 = litIcon == 2 ? C_FG : C_MUTED, c3 = litIcon == 3 ? C_FG : C_MUTED,
            c4 = litIcon == 4 ? C_FG : C_MUTED;
-  gfx->fillRect(x - 8, 0, 4 * ICON_STEP, Y_ROW0 - 1, C_BG);
+  gfx->fillRect(x - 8, 0, 4 * L.iconStep, L.yRow0 - 1, C_BG);
   gfx->drawCircle(x + 13, 17, 7, c1);
   gfx->drawCircle(x + 13, 17, 6, c1);
   gfx->drawLine(x + 18, 22, x + 26, 30, c1);
   gfx->drawLine(x + 19, 21, x + 27, 29, c1);
-  x += ICON_STEP;  // a grid
+  x += L.iconStep;  // a grid
   for (uint8_t r = 0; r < 2; r++)
     for (uint8_t c = 0; c < 2; c++) gfx->fillRoundRect(x + 6 + c * 12, 9 + r * 12, 9, 9, 2, c2);
-  x += ICON_STEP;  // headlines: three lines of text
+  x += L.iconStep;  // headlines: three lines of text
   for (uint8_t r = 0; r < 3; r++) gfx->fillRect(x + 5, 10 + r * 7, r == 1 ? 22 : 16, 3, c3);
-  x += ICON_STEP;  // three sliders
+  x += L.iconStep;  // three sliders
   for (uint8_t r = 0; r < 3; r++) {
     gfx->drawFastHLine(x + 5, 12 + r * 8, 22, c4);
     gfx->fillCircle(x + 9 + (r == 1 ? 12 : r == 2 ? 6 : 0), 12 + r * 8, 3, c4);
   }
-  gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
+  gfx->drawFastHLine(0, L.yRow0 - 1, L.w, C_RULE);
 }
 // The header is on every page, drawn right after a page's fillScreen. The
 // right side -- the icons and the clock -- is fixed; the left side is the
@@ -1097,8 +1137,8 @@ static void drawHeader(uint8_t lit, const char *title, const char *note) {
   tabsShown = title == nullptr;
   drawTabsAndIcons();
   if (title) {
-    textAt(TAB_X, 10, 2, C_FG, title);
-    if (note) textAt(TAB_X + textWidth(2, title) + 14, 14, 1, C_MUTED, note);
+    textAt(L.tabX, 10, 2, C_FG, title);
+    if (note) textAt(L.tabX + textWidth(2, title) + 14, 14, 1, C_MUTED, note);
   }
   cHead[0] = '\0';
 }
@@ -1107,7 +1147,7 @@ static int8_t hitHeader(int16_t x) {
   if (tabsShown)
     for (uint8_t i = 0; i < 5; i++)
       if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
-  if (x >= ICON_X - 8 && x < ICON_X + 4 * ICON_STEP) return 10 + (x - (ICON_X - 8)) / ICON_STEP;
+  if (x >= L.iconX - 8 && x < L.iconX + 4 * L.iconStep) return 10 + (x - (L.iconX - 8)) / L.iconStep;
   return -1;
 }
 static void drawHead(const struct tm *t, bool haveTime) {
@@ -1118,14 +1158,19 @@ static void drawHead(const struct tm *t, bool haveTime) {
   snprintf(buf, sizeof buf, "%s|%u", clk, (unsigned)ses);
   if (strcmp(buf, cHead) == 0) return;
   strcpy(cHead, buf);
-  fieldRight(X_RIGHT, 12, 8, 1, C_MUTED, clk);
   char tag[24] = "";
   if (ses == Session::Closed) {
     char nx[16];
     nextOpen(*t, nx, sizeof nx);
     snprintf(tag, sizeof tag, "CLOSED %s", nx);
   }
-  field(TAG_X, 12, 17, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
+  if (L.tagX >= 0) {  // landscape: the tag and the clock in the header
+    fieldRight(L.xRight, 12, 8, 1, C_MUTED, clk);
+    field(L.tagX, 12, 17, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
+  } else {  // portrait: no room beside the tabs; the footer carries both
+    fieldRight(L.xRight, L.yFoot + 14, 8, 1, C_MUTED, clk);
+    fieldRight(L.xRight - 80, L.yFoot + 14, 17, 1, C_WARN, tag);
+  }
 }
 // The footer: an alert for ten seconds, else the session when it is not
 // simply open; and on the right how old the prices are. Quiet colours.
@@ -1141,49 +1186,50 @@ static void drawFoot(const struct tm *t, bool haveTime) {
     if (ses == Session::Closed) snprintf(left, sizeof left, "market closed, opens %s", nx);
     else snprintf(left, sizeof left, "%s", sessionWord(ses));
   }
-  if (lastOk) snprintf(right, sizeof right, "prices %lum old", (unsigned long)((millis() - lastOk) / 60000));
+  if (lastOk && L.tagX >= 0) snprintf(right, sizeof right, "prices %lum old", (unsigned long)((millis() - lastOk) / 60000));
   snprintf(key, sizeof key, "%s|%s", left, right);
   if (strcmp(key, cFoot) == 0) return;
   strcpy(cFoot, key);
-  gfx->drawFastHLine(0, Y_FOOT, LCD_W, C_RULE);
-  field(X_SYM, Y_FOOT + 14, 60, 1, banner ? C_MUTED : C_DIM, left);
-  fieldRight(X_RIGHT, Y_FOOT + 14, 20, 1, C_DIM, right);
+  gfx->drawFastHLine(0, L.yFoot, L.w, C_RULE);
+  field(L.xSym, L.yFoot + 14, L.tagX >= 0 ? 60 : 28, 1, banner ? C_MUTED : C_DIM, left);
+  if (L.tagX >= 0) fieldRight(L.xRight, L.yFoot + 14, 20, 1, C_DIM, right);
 }
 
 // ── boot splash: drawn, not shipped ──────────────────────────────────────
 // A navy-to-black sky, nine candles on the way up with a gold average
 // through them, the wordmark, and one status line that follows the Wi-Fi
 // join. Primitives only, so there is no asset to generate or push.
-static void splashStatus(const char *s) { fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_DIM, s); }
+static void splashStatus(const char *s) { fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, s); }
 static void drawSplash(const char *status) {
-  for (int16_t y = 0; y < LCD_H; y++) {  // (0,10,30) at the top fading to black
-    uint8_t g = 10 - (uint16_t)y * 10 / LCD_H, b = 30 - (uint16_t)y * 30 / LCD_H;
-    gfx->drawFastHLine(0, y, LCD_W, ((g & 0xFC) << 3) | (b >> 3));
+  for (int16_t y = 0; y < L.h; y++) {  // (0,10,30) at the top fading to black
+    uint8_t g = 10 - (uint16_t)y * 10 / L.h, b = 30 - (uint16_t)y * 30 / L.h;
+    gfx->drawFastHLine(0, y, L.w, ((g & 0xFC) << 3) | (b >> 3));
   }
   struct Candle { int16_t o, c, l, h; };  // in the CYD's 240-wide units; scaled below
   static const Candle k[9] = {{206, 196, 211, 192}, {196, 202, 205, 190}, {202, 184, 204, 180},
                               {184, 172, 188, 166}, {172, 178, 182, 168}, {178, 158, 180, 152},
                               {158, 148, 162, 144}, {148, 154, 156, 142}, {154, 132, 156, 126}};
   auto Y = [](int16_t y) -> int16_t { return 190 + (int16_t)((y - 126) * 2.5f); };  // 126..211 -> 190..402
+  int16_t cy = L.candleY - 190;  // the candle table is drawn around y 190
   for (uint8_t i = 0; i < 9; i++) {
-    int16_t x = 120 + i * 66;
+    int16_t x = L.candleX0 + i * L.candleStep;
     uint16_t col = k[i].c < k[i].o ? C_GOOD : C_BAD;
-    gfx->fillRect(x + 18, Y(k[i].h), 3, Y(k[i].l) - Y(k[i].h) + 1, col);
-    gfx->fillRect(x, Y(min(k[i].o, k[i].c)), 40, Y(max(k[i].o, k[i].c)) - Y(min(k[i].o, k[i].c)) + 2, col);
+    gfx->fillRect(x + L.candleW / 2 - 1, cy + Y(k[i].h), 3, Y(k[i].l) - Y(k[i].h) + 1, col);
+    gfx->fillRect(x, cy + Y(min(k[i].o, k[i].c)), L.candleW, Y(max(k[i].o, k[i].c)) - Y(min(k[i].o, k[i].c)) + 2, col);
   }
   for (uint8_t i = 1; i < 9; i++) {  // the average, a little under the bodies
-    int16_t x0 = 120 + (i - 1) * 66 + 20, x1 = x0 + 66;
-    int16_t y0 = Y((k[i - 1].o + k[i - 1].c) / 2) + 20, y1 = Y((k[i].o + k[i].c) / 2) + 20;
+    int16_t x0 = L.candleX0 + (i - 1) * L.candleStep + L.candleW / 2, x1 = x0 + L.candleStep;
+    int16_t y0 = cy + Y((k[i - 1].o + k[i - 1].c) / 2) + 20, y1 = cy + Y((k[i].o + k[i].c) / 2) + 20;
     for (int8_t d = 0; d < 3; d++) gfx->drawLine(x0, y0 + d, x1, y1 + d, C_GOLD);
   }
-  gfx->drawFastHLine(100, 416, 600, C_RULE);
+  gfx->drawFastHLine(L.w / 8, L.ruleY, L.w * 3 / 4, C_RULE);
   const char *name = "TICKER";
-  bigText((LCD_W - textWidth(3, name) * 2) / 2, 60, 3, 2, C_FG, name);
-  gfx->fillRect(LCD_W / 2 - 48, 128, 96, 3, C_GOLD);
-  const char *tag = "STOCKS      INDICES      CRYPTO      CURRENCIES      HEADLINES";
-  textAt((LCD_W - textWidth(1, tag)) / 2, 146, 1, C_MUTED, tag);
+  bigText((L.w - textWidth(3, name) * 2) / 2, L.wordY, 3, 2, C_FG, name);
+  gfx->fillRect(L.w / 2 - 48, L.wordY + 68, 96, 3, C_GOLD);
+  const char *tag = L.w >= 800 ? "STOCKS      INDICES      CRYPTO      CURRENCIES      HEADLINES" : "STOCKS   INDICES   CRYPTO   FX   HEADLINES";
+  textAt((L.w - textWidth(1, tag)) / 2, L.tagY, 1, C_MUTED, tag);
   const char *credit = "made by Richard Torcato";
-  textAt((LCD_W - textWidth(1, credit)) / 2, 424, 1, C_MUTED, credit);
+  textAt((L.w - textWidth(1, credit)) / 2, L.creditY, 1, C_MUTED, credit);
   splashStatus(status);
 }
 
@@ -1194,10 +1240,10 @@ static void drawPanel(const char *title, uint16_t tc, const char *const *lines, 
   int16_t y = header ? 60 : 52;  // with the page named in the header the title is smaller
   if (!header) {
     field(20, 52, 24, 3, tc, title);
-    gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
+    gfx->drawFastHLine(20, 96, L.w - 40, C_RULE);
     y = 110;
   }
-  for (uint8_t i = 0; i < n && i < 16; i++) field(20, y + i * 22, 90, 1, C_MUTED, lines[i]);
+  for (uint8_t i = 0; i < n && i < 16; i++) field(20, y + i * 22, (L.w - 40) / 8, 1, C_MUTED, lines[i]);
 }
 
 // ── detail page ──────────────────────────────────────────────────────────
@@ -1208,29 +1254,29 @@ static bool kChartReset = false;  // a chip tap: the chart part repaints on the 
 
 // One dim line at the foot of a page saying which swipes it takes. Not a
 // control: the gestures work anywhere on the page.
-static void drawHint(const char *s, uint16_t c = C_DIM) { fieldCentre(LCD_W / 2, Y_HINT, 80, 1, c, s); }
+static void drawHint(const char *s, uint16_t c = C_DIM) { fieldCentre(L.w / 2, L.yHint, 80, 1, c, s); }
 
 static void drawRange(const Row &r, int16_t y, const char *label, float lo, float hi, float v) {
   char b[12];
-  field(BAR_X, y, 12, 1, C_MUTED, label);
-  gfx->fillRoundRect(BAR_X, y + 22, BAR_W, BAR_H, BAR_H / 2, C_RULE);
+  field(L.barX, y, 12, 1, C_MUTED, label);
+  gfx->fillRoundRect(L.barX, y + 22, L.barW, L.barH, L.barH / 2, C_RULE);
   if (hi > lo) {
     float f = constrain((v - lo) / (hi - lo), 0.0f, 1.0f);
-    gfx->fillRoundRect(BAR_X + (int16_t)(f * (BAR_W - 6)), y + 20, 6, BAR_H + 4, 3, C_FG);
+    gfx->fillRoundRect(L.barX + (int16_t)(f * (L.barW - 6)), y + 20, 6, L.barH + 4, 3, C_FG);
   }
   priceStr(r, lo, b, sizeof b);
-  field(BAR_X, y + 34, 9, 1, C_DIM, b);
+  field(L.barX, y + 34, 9, 1, C_DIM, b);
   priceStr(r, hi, b, sizeof b);
-  fieldRight(BAR_X + BAR_W, y + 34, 9, 1, C_DIM, b);
+  fieldRight(L.barX + L.barW, y + 34, 9, 1, C_DIM, b);
 }
 
 static void drawRangeChips() {
   for (uint8_t i = 0; i < N_RANGES; i++) {
-    int16_t x = CH_X + i * R_STEP;
+    int16_t x = L.chX + i * L.rStep;
     bool on = i == rangeSel;
-    gfx->fillRoundRect(x, R_Y, R_W, R_H, 8, on ? C_DIM : C_BG);
-    gfx->drawRoundRect(x, R_Y, R_W, R_H, 8, on ? C_MUTED : C_RULE);
-    textAt(x + (R_W - textWidth(2, RANGES[i].label)) / 2, R_Y + (R_H - FACES[1].cap) / 2, 2, on ? C_FG : C_MUTED,
+    gfx->fillRoundRect(x, L.rY, L.rW, L.rH, 8, on ? C_DIM : C_BG);
+    gfx->drawRoundRect(x, L.rY, L.rW, L.rH, 8, on ? C_MUTED : C_RULE);
+    textAt(x + (L.rW - textWidth(2, RANGES[i].label)) / 2, L.rY + (L.rH - FACES[1].cap) / 2, 2, on ? C_FG : C_MUTED,
            RANGES[i].label);
   }
 }
@@ -1241,13 +1287,13 @@ static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint
     lo = min(lo, cl[i]);
     hi = max(hi, cl[i]);
   }
-  gfx->drawRect(CH_X - 1, CH_Y - 1, CH_W + 2, CH_H + 2, C_RULE);
-  int16_t yp = sparkY(prev, lo, hi, CH_Y, CH_H);
-  for (int16_t x = CH_X; x < CH_X + CH_W; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
-  int16_t px = CH_X, py = sparkY(cl[0], lo, hi, CH_Y, CH_H);
+  gfx->drawRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_RULE);
+  int16_t yp = sparkY(prev, lo, hi, L.chY, L.chH);
+  for (int16_t x = L.chX; x < L.chX + L.chW; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
+  int16_t px = L.chX, py = sparkY(cl[0], lo, hi, L.chY, L.chH);
   for (uint8_t i = 1; i < n; i++) {
-    int16_t nx = CH_X + (int32_t)i * (CH_W - 1) / (n - 1);
-    int16_t ny = sparkY(cl[i], lo, hi, CH_Y, CH_H);
+    int16_t nx = L.chX + (int32_t)i * (L.chW - 1) / (n - 1);
+    int16_t ny = sparkY(cl[i], lo, hi, L.chY, L.chH);
     gfx->drawLine(px, py, nx, ny, fg);
     px = nx;
     py = ny;
@@ -1256,9 +1302,9 @@ static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint
   // whatever the line does there: the row of chips below wanted the space.
   char b[12];
   priceStr(r, hi, b, sizeof b);
-  field(CH_X + 6, CH_Y + 4, 9, 1, C_DIM, b);
+  field(L.chX + 6, L.chY + 4, 9, 1, C_DIM, b);
   priceStr(r, lo, b, sizeof b);
-  field(CH_X + 6, CH_Y + CH_H - GH(1) - 4, 9, 1, C_DIM, b);
+  field(L.chX + 6, L.chY + L.chH - GH(1) - 4, 9, 1, C_DIM, b);
 }
 
 static uint8_t wrapText(const char *s, int16_t w, char out[][64], uint8_t lines);
@@ -1270,9 +1316,9 @@ static void drawDetail(bool full) {
     snprintf(head, sizeof head, "< %s", r.label);
     drawHeader(0, head, r.coin ? "crypto" : r.kind == K_FX ? "currency" : r.kind == K_INDEX ? "index" : r.name);
     cDetail[0] = '\0';
-    if (!blitLogo(D_X_LOGO, D_Y_LOGO, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
-      gfx->fillRoundRect(D_X_LOGO, D_Y_LOGO, LOGO_BIG, LOGO_BIG, 20, C_RULE);
-      textAt(D_X_LOGO + (LOGO_BIG - textWidth(3, r.label)) / 2, D_Y_LOGO + (LOGO_BIG - FACES[2].cap) / 2, 3, C_MUTED, r.label);
+    if (!blitLogo(L.dXLogo, L.dYLogo, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
+      gfx->fillRoundRect(L.dXLogo, L.dYLogo, LOGO_BIG, LOGO_BIG, 20, C_RULE);
+      textAt(L.dXLogo + (LOGO_BIG - textWidth(3, r.label)) / 2, L.dYLogo + (LOGO_BIG - FACES[2].cap) / 2, 3, C_MUTED, r.label);
     }
     drawHint("< next        ^ all headlines        v list        prev >");
     if (!r.coin) drawRangeChips();  // indices and FX have Yahoo history too
@@ -1335,20 +1381,20 @@ static void drawDetail(bool full) {
     snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.kind == K_FX ? "one US dollar buys" : r.name);
     if (!r.valid) snprintf(tag, sizeof tag, "fetching %s%.*s", r.label, dots, "...");
     else if (ext) snprintf(tag, sizeof tag, "%s", ses == Session::Pre ? "pre-market" : "after hours");
-    field(D_X_TXT, D_Y_SYM, MAX_LABEL + 1, 3, C_FG, r.label);
-    field(D_X_TXT, D_Y_NAME, 26, 1, C_MUTED, name);
-    field(D_X_TXT, D_Y_TAG, 26, 1, C_WARN, tag);
-    field(D_X_PRICE, D_Y_PRICE, 8, 4, fg, price);  // the tall digits
+    field(L.dXTxt, L.dYSym, MAX_LABEL + 1, 3, C_FG, r.label);
+    field(L.dXTxt, L.dYName, 26, 1, C_MUTED, name);
+    field(L.dXTxt, L.dYTag, 26, 1, C_WARN, tag);
+    field(L.dXPrice, L.dYPrice, 8, 4, fg, price);  // the tall digits
     bool conv = false;
     disp(r, shown, &conv);  // which currency the number is in
     const char *code = r.kind == K_FX ? "per USD" : conv ? sCur : r.cur;
-    gfx->fillRect(D_X_PRICE + 200, D_Y_PRICE + 30, 100, 20, C_BG);
+    gfx->fillRect(L.dXPrice + 200, L.dYPrice + 30, 100, 20, C_BG);
     if (r.valid && (r.kind == K_FX || strcmp(code, "USD") != 0 || strcmp(sCur, "USD") != 0))
-      textAt(D_X_PRICE + textWidth(4, price) + 10, D_Y_PRICE + 32, 1, C_DIM, code);
+      textAt(L.dXPrice + textWidth(4, price) + 10, L.dYPrice + 32, 1, C_DIM, code);
     char chg[12] = "";
     if (r.valid && base > 0) snprintf(chg, sizeof chg, "%+.2f", disp(r, shown) - disp(r, base));
-    field(D_X_PRICE, D_Y_CHG, 12, 2, fg, chg);
-    field(D_X_PCT, D_Y_CHG, 8, 2, fg, pct);
+    field(L.dXPrice, L.dYChg, 12, 2, fg, chg);
+    field(L.dXPct, L.dYChg, 8, 2, fg, pct);
   }
 
   // Chart: the sparkline's data with room to be a chart. The previous close
@@ -1357,19 +1403,19 @@ static void drawDetail(bool full) {
   snprintf(key, sizeof key, "%u|%u|%d|%d|%.2f|%d", rangeSel, n, mine && !sr.valid, r.valid, n ? cl[n - 1] : 0.0f, fg == C_GOOD);
   if (strcmp(key, kChart) != 0) {
     strcpy(kChart, key);
-    gfx->fillRect(CH_X - 1, CH_Y - 1, CH_W + 2, CH_H + 2, C_BG);  // chips below are left alone
+    gfx->fillRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_BG);  // chips below are left alone
     if (r.coin) {
-      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 40, 1, C_DIM, "no intraday series for coins");
+      field(L.chX + 8, L.chY + L.chH / 2 - 8, 40, 1, C_DIM, "no intraday series for coins");
     } else if (rangeSel && mine && !sr.valid) {
       char m[24];
       snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
-      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, m);
+      field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, m);
     } else if (rangeSel && n < 2) {
       char m[24];
       snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
-      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, m);
+      field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, m);
     } else if (!r.valid || n < 2) {
-      field(CH_X + 8, CH_Y + CH_H / 2 - 8, 24, 1, C_DIM, r.valid ? "no series" : "fetching...");
+      field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, r.valid ? "no series" : "fetching...");
     } else {
       drawChart(r, cl, n, prev, fg);
     }
@@ -1379,27 +1425,27 @@ static void drawDetail(bool full) {
   snprintf(key, sizeof key, "%u|%lu|%d", nNews, newsMine ? (unsigned long)newsAt : 0UL, r.coin);
   if (strcmp(key, kNews) != 0) {
     strcpy(kNews, key);
-    gfx->fillRect(CH_X, D_Y_NEWS, LCD_W - CH_X, Y_HINT - 4 - D_Y_NEWS, C_BG);
+    gfx->fillRect(L.chX, L.dYNews, L.w - L.chX, L.yHint - 4 - L.dYNews, C_BG);
     if (nNews) {
       for (uint8_t i = 0; i < nNews; i++) {
         char line[2][64];
-        wrapText(items[i].title, CH_W - 60, line, 1);
-        textAt(CH_X, D_Y_NEWS + i * 38, 1, C_FG, line[0]);
-        fieldRight(X_RIGHT, D_Y_NEWS + i * 38, 5, 1, C_DIM, items[i].age);
-        gfx->drawFastHLine(CH_X, D_Y_NEWS + i * 38 + 30, CH_W, C_RULE);
+        wrapText(items[i].title, L.chW - 60, line, 1);
+        textAt(L.chX, L.dYNews + i * L.newsStep, 1, C_FG, line[0]);
+        fieldRight(L.xRight, L.dYNews + i * L.newsStep, 5, 1, C_DIM, items[i].age);
+        if (L.newsStep > 30) gfx->drawFastHLine(L.chX, L.dYNews + i * L.newsStep + 30, L.chW, C_RULE);
       }
     } else if (!r.coin) {
-      textAt(CH_X, D_Y_NEWS, 1, C_DIM, newsMine ? "no headlines" : "headlines on their way...");
+      textAt(L.chX, L.dYNews, 1, C_DIM, newsMine ? "no headlines" : "headlines on their way...");
     }
   }
 
   snprintf(key, sizeof key, "%d|%.2f|%.2f|%.2f|%.2f|%.2f|%s", r.valid, r.price, r.dayLo, r.dayHi, r.wkLo, r.wkHi, sCur);
   if (strcmp(key, kRanges) != 0) {
     strcpy(kRanges, key);
-    gfx->fillRect(0, D_Y_DAY, 380, Y_HINT - 4 - D_Y_DAY, C_BG);
+    gfx->fillRect(0, L.dYDay, L.barX + L.barW + 20, (L.dYNews > L.dYDay ? L.dYNews : L.yHint - 4) - L.dYDay, C_BG);
     if (r.valid) {
-      drawRange(r, D_Y_DAY, "day range", r.dayLo, r.dayHi, r.price);
-      drawRange(r, D_Y_WK, "52-week range", r.wkLo, r.wkHi, r.price);
+      drawRange(r, L.dYDay, "day range", r.dayLo, r.dayHi, r.price);
+      drawRange(r, L.dYWk, "52-week range", r.wkLo, r.wkHi, r.price);
     }
   }
 }
@@ -1447,7 +1493,7 @@ static void setupSave() {
   // Try the network before keeping it: the access point stays up while the
   // station side joins, so a wrong password comes straight back to the
   // phone as an error instead of a board stuck on NO WIFI.
-  fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_DIM, "trying that network...");
+  fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, "trying that network...");
   Serial.printf("setup: trying '%s'\n", ssid.c_str());
   WiFi.begin(ssid.c_str(), pass.c_str());
   uint32_t t0 = millis();
@@ -1456,7 +1502,7 @@ static void setupSave() {
     WiFi.disconnect();
     snprintf(setupError, sizeof setupError, "Could not join \"%.32s\". Wrong password? Try again.", ssid.c_str());
     Serial.printf("setup: join failed (%s)\n", setupError);
-    fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_WARN, "that network did not let it in. wrong password?");
+    fieldCentre(L.w / 2, L.yHint, 80, 1, C_WARN, "that network did not let it in. wrong password?");
     setupPage();  // the form again, with the reason at the top
     return;
   }
@@ -1473,25 +1519,49 @@ static void setupSave() {
 static void drawSetup(const char *status) {
   gfx->fillScreen(C_BG);
   field(20, 20, 24, 3, C_FG, "SETUP");
-  gfx->drawFastHLine(20, 64, LCD_W - 40, C_RULE);
+  gfx->drawFastHLine(20, 64, L.w - 40, C_RULE);
   char l[40];
   // One column, top to bottom; the network name and its password on one
   // line so a phone can be held next to it.
+  bool wide = L.w >= 800;
   textAt(20, 88, 2, C_GOOD, "1");
   textAt(56, 90, 1, C_MUTED, "on your phone, join the Wi-Fi network");
   textAt(56, 118, 3, C_FG, "ticker-setup");
-  int16_t x = 56 + textWidth(3, "ticker-setup") + 40;
-  textAt(x, 126, 1, C_MUTED, "password");
   snprintf(l, sizeof l, "%.4s %.4s", setupPin, setupPin + 4);
-  textAt(x + textWidth(1, "password") + 16, 118, 3, C_GOLD, l);
-  textAt(20, 180, 2, C_GOOD, "2");
-  textAt(56, 182, 1, C_MUTED, "a sign-in page opens by itself; if not, open this in the browser");
-  textAt(56, 210, 3, C_FG, "192.168.4.1");
-  textAt(20, 272, 2, C_GOOD, "3");
-  textAt(56, 274, 1, C_MUTED, "pick your network, type its password, save. The ticker restarts and joins.");
-  gfx->drawFastHLine(20, 330, LCD_W - 40, C_RULE);
-  textAt(20, 346, 1, C_DIM, "nothing leaves this board: the password is kept in its own flash, and only there.");
-  fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_DIM, status);
+  if (wide) {
+    int16_t x = 56 + textWidth(3, "ticker-setup") + 40;
+    textAt(x, 126, 1, C_MUTED, "password");
+    textAt(x + textWidth(1, "password") + 16, 118, 3, C_GOLD, l);
+  } else {
+    textAt(56, 160, 1, C_MUTED, "password");
+    textAt(56 + textWidth(1, "password") + 16, 152, 3, C_GOLD, l);
+  }
+  int16_t y = wide ? 180 : 210;
+  textAt(20, y, 2, C_GOOD, "2");
+  if (wide) {
+    textAt(56, y + 2, 1, C_MUTED, "a sign-in page opens by itself; if not, open this in the browser");
+  } else {
+    textAt(56, y + 2, 1, C_MUTED, "a sign-in page opens by itself;");
+    textAt(56, y + 22, 1, C_MUTED, "if not, open this in the browser");
+    y += 20;
+  }
+  textAt(56, y + 30, 3, C_FG, "192.168.4.1");
+  y += wide ? 92 : 100;
+  textAt(20, y, 2, C_GOOD, "3");
+  if (wide) {
+    textAt(56, y + 2, 1, C_MUTED, "pick your network, type its password, save. The ticker restarts and joins.");
+  } else {
+    textAt(56, y + 2, 1, C_MUTED, "pick your network, type its password,");
+    textAt(56, y + 22, 1, C_MUTED, "save. The ticker restarts and joins.");
+    y += 20;
+  }
+  gfx->drawFastHLine(20, y + 58, L.w - 40, C_RULE);
+  if (wide) textAt(20, y + 74, 1, C_DIM, "nothing leaves this board: the password is kept in its own flash, and only there.");
+  else {
+    textAt(20, y + 74, 1, C_DIM, "nothing leaves this board: the password");
+    textAt(20, y + 94, 1, C_DIM, "is kept in its own flash, and only there.");
+  }
+  fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, status);
 }
 static void startSetup() {
   setupMode = true;
@@ -1550,6 +1620,7 @@ static void loadSettings() {
     sSleep = prefs.getUChar("slp", sSleep) % 3;
     sClock = prefs.getUChar("clk", sClock) % 2;
     sCols = prefs.getUChar("cols", sCols) & 63;
+    sRot = prefs.getUChar("rot", sRot) & 3;
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1576,6 +1647,7 @@ static void saveSettings() {
   prefs.putUChar("slp", sSleep);
   prefs.putUChar("clk", sClock);
   prefs.putUChar("cols", sCols);
+  prefs.putUChar("rot", sRot);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -1585,17 +1657,17 @@ static void saveSettings() {
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
-  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Clock", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
+  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Orientation", "Clock", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
   char ssid[24];
   snprintf(ssid, sizeof ssid, "%.20s", wifiSsid[0] ? wifiSsid : "not set");
-  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? CLOCK_NAMES[sClock]
-                : i == 4 ? RET_NAMES[sRet] : i == 5 ? SLEEP_NAMES[sSleep] : i == 6 ? sCur : i == 7 ? ">" : i == 8 ? ssid : ">";
-  if (i < setTop || i >= setTop + S_N) return;
-  int16_t y = S_Y0 + (i - setTop) * S_H;
-  gfx->fillRect(20, y + 3, LCD_W - 20, GH(2) + 4, C_BG);
-  textAt(20, y + 5, 2, i == 9 ? C_BAD : C_MUTED, labels[i]);
-  textAt(LCD_W - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
-  gfx->drawFastHLine(20, y + S_H - 1, LCD_W - 40, C_RULE);
+  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? ROT_NAMES[sRot] : i == 4 ? CLOCK_NAMES[sClock]
+                : i == 5 ? RET_NAMES[sRet] : i == 6 ? SLEEP_NAMES[sSleep] : i == 7 ? sCur : i == 8 ? ">" : i == 9 ? ssid : ">";
+  if (i < setTop || i >= setTop + L.sN) return;
+  int16_t y = L.sY0 + (i - setTop) * L.sH;
+  gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
+  textAt(20, y + 5, 2, i == 10 ? C_BAD : C_MUTED, labels[i]);
+  textAt(L.w - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
+  gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
 static void nextCurrency() {
@@ -1612,12 +1684,12 @@ static void nextCurrency() {
 }
 // The Columns page: six toggles for what a list row shows.
 static void drawColumnRow(uint8_t i) {
-  int16_t y = S_Y0 + i * S_H;
-  gfx->fillRect(20, y + 3, LCD_W - 20, GH(2) + 4, C_BG);
+  int16_t y = L.sY0 + i * L.sH;
+  gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
   bool on = sCols & (1 << i);
   textAt(20, y + 5, 2, C_MUTED, COL_NAMES[i]);
-  textAt(LCD_W - 20 - textWidth(2, on ? "on" : "off"), y + 5, 2, on ? C_GOOD : C_DIM, on ? "on" : "off");
-  gfx->drawFastHLine(20, y + S_H - 1, LCD_W - 40, C_RULE);
+  textAt(L.w - 20 - textWidth(2, on ? "on" : "off"), y + 5, 2, on ? C_GOOD : C_DIM, on ? "on" : "off");
+  gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
 }
 static void drawColumns() {
   drawPanel("COLUMNS", C_MUTED, nullptr, 0, true, 4, "< COLUMNS", "what a row shows");
@@ -1628,7 +1700,7 @@ static void drawColumns() {
 // so there is no blanket clear and nothing to flicker -- and the hint only
 // when it changes.
 static void drawSettingRows() {
-  for (uint8_t i = setTop; i < setTop + S_N && i < S_ROWS; i++) drawSettingRow(i);
+  for (uint8_t i = setTop; i < setTop + L.sN && i < L.sRows; i++) drawSettingRow(i);
   drawHint("< list");
 }
 static void drawSettings() {
@@ -1638,7 +1710,7 @@ static void drawSettings() {
 // The confirm screen for the two rows that cannot be undone: an action
 // sheet, the way a phone asks. A glyph, a title, one quiet line, a pill
 // to act -- red text for the one that wipes -- and Cancel under it.
-static const int16_t CF_Y = 330, CF_H = 56, CF_CANCEL_Y = 402, CF_X = 240, CF_W = 320;
+// (confirm sheet positions: see Layout)
 static void powerGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
   for (float a = 35; a <= 325; a += 0.5f) {  // an open ring, gap at the top, five px thick
     float rad = (a - 90) * 3.14159265f / 180;
@@ -1651,40 +1723,48 @@ static void drawConfirm() {
   drawHeader(4, "< SETTINGS");
   bool clear = confirmWhat == 2;
   if (clear) {  // a ring with a cross
-    for (int16_t k = 0; k < 4; k++) gfx->drawCircle(LCD_W / 2, 150, 40 - k, C_BAD);
+    for (int16_t k = 0; k < 4; k++) gfx->drawCircle(L.w / 2, L.cfGlyphY, 40 - k, C_BAD);
     for (int16_t k = -2; k <= 2; k++) {
-      gfx->drawLine(LCD_W / 2 - 16 + k, 134, LCD_W / 2 + 16 + k, 166, C_BAD);
-      gfx->drawLine(LCD_W / 2 + 16 + k, 134, LCD_W / 2 - 16 + k, 166, C_BAD);
+      gfx->drawLine(L.w / 2 - 16 + k, L.cfGlyphY - 16, L.w / 2 + 16 + k, L.cfGlyphY + 16, C_BAD);
+      gfx->drawLine(L.w / 2 + 16 + k, L.cfGlyphY - 16, L.w / 2 - 16 + k, L.cfGlyphY + 16, C_BAD);
     }
   } else {
-    powerGlyph(LCD_W / 2, 150, 40, C_FG);
+    powerGlyph(L.w / 2, L.cfGlyphY, 40, C_FG);
   }
   const char *title = clear ? "Clear Device" : "Shut Down";
-  textAt((LCD_W - textWidth(3, title)) / 2, 210, 3, C_FG, title);
-  const char *l1 = clear ? "Wipes the network, settings, edits and calibration." : "Everything goes dark and stays dark.";
-  const char *l2 = clear ? "Restarts into setup, ready for someone else." : "The BOOT button on the back turns it on.";
-  textAt((LCD_W - textWidth(2, l1)) / 2, 254, 2, C_MUTED, l1);
-  textAt((LCD_W - textWidth(2, l2)) / 2, 284, 2, C_MUTED, l2);
-  gfx->fillRoundRect(CF_X, CF_Y, CF_W, CF_H, CF_H / 2, rgb(44, 48, 54));
-  textAt((LCD_W - textWidth(2, title)) / 2, CF_Y + (CF_H - FACES[1].cap) / 2, 2, clear ? C_BAD : C_FG, title);
-  gfx->drawRoundRect(CF_X, CF_CANCEL_Y, CF_W, 48, 24, C_RULE);
-  textAt((LCD_W - textWidth(2, "Cancel")) / 2, CF_CANCEL_Y + (48 - FACES[1].cap) / 2, 2, C_MUTED, "Cancel");
+  textAt((L.w - textWidth(3, title)) / 2, L.cfTitleY, 3, C_FG, title);
+  const char *l1 = clear ? "Wipes the network, settings and edits." : "Everything goes dark and stays dark.";
+  const char *l2 = clear ? "Restarts into setup, for someone else." : "The BOOT button on the back turns it on.";
+  uint8_t sz = L.w >= 800 ? 2 : 1;
+  textAt((L.w - textWidth(sz, l1)) / 2, L.cfL1Y, sz, C_MUTED, l1);
+  textAt((L.w - textWidth(sz, l2)) / 2, L.cfL2Y, sz, C_MUTED, l2);
+  gfx->fillRoundRect(L.cfX, L.cfY, L.cfW, L.cfH, L.cfH / 2, rgb(44, 48, 54));
+  textAt((L.w - textWidth(2, title)) / 2, L.cfY + (L.cfH - FACES[1].cap) / 2, 2, clear ? C_BAD : C_FG, title);
+  gfx->drawRoundRect(L.cfX, L.cfCancelY, L.cfW, 48, 24, C_RULE);
+  textAt((L.w - textWidth(2, "Cancel")) / 2, L.cfCancelY + (48 - FACES[1].cap) / 2, 2, C_MUTED, "Cancel");
 }
-static bool hitConfirm(int16_t x, int16_t y) { return y >= CF_Y && y < CF_Y + CF_H && x >= CF_X && x < CF_X + CF_W; }
+static bool hitConfirm(int16_t x, int16_t y) { return y >= L.cfY && y < L.cfY + L.cfH && x >= L.cfX && x < L.cfX + L.cfW; }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
 // 2 (touch calibration), 3 (confirm a shutdown), 4 (Wi-Fi setup), 5 (confirm
 // clearing the device).
 static uint8_t tapSetting(uint8_t i) {
   if (i == 0) return 3;
   if (i == 2) return 7;
-  if (i == 7) return 1;
-  if (i == 8) return 4;
-  if (i == 9) return 5;
-  if (i == 6) nextCurrency();
+  if (i == 8) return 1;
+  if (i == 9) return 4;
+  if (i == 10) return 5;
+  if (i == 3) {  // orientation: saved, then a restart, which is cheaper than re-allocating every buffer
+    sRot = (sRot + 1) % 4;
+    saveSettings();
+    drawHint("turning the screen. restarting", C_WARN);
+    delay(600);
+    ESP.restart();
+  }
+  if (i == 7) nextCurrency();
   else if (i == 1) sSpeed = (sSpeed + 1) % 3;
-  else if (i == 3) sClock = !sClock;
-  else if (i == 4) sRet = (sRet + 1) % 3;
-  else if (i == 5) sSleep = (sSleep + 1) % 3;
+  else if (i == 4) sClock = !sClock;
+  else if (i == 5) sRet = (sRet + 1) % 3;
+  else if (i == 6) sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
   return 0;
@@ -1728,7 +1808,7 @@ static void drawInfo(bool full) {
   snprintf(l[n++], 40, "built " __DATE__ " " __TIME__);
   l[n++][0] = '\0';
   snprintf(l[n++], 40, "tap anywhere for the splash screen");
-  for (uint8_t i = 0; i < n; i++) field(20, 60 + i * 22, 90, 1, i == 0 ? C_FG : C_MUTED, l[i]);
+  for (uint8_t i = 0; i < n; i++) field(20, 60 + i * 22, (L.w - 40) / 8, 1, i == 0 ? C_FG : C_MUTED, l[i]);
 }
 
 // ── heatmap: swipe left from the list ────────────────────────────────────
@@ -1736,7 +1816,7 @@ static void drawInfo(bool full) {
 // not just its sign: a 0.2% drift and a 7% drop must not look the same.
 // The signed percent is printed on every tile, because colour is never
 // the only cue. Pages of twelve; swipe up and down between them.
-static const int16_t H_Y0 = 44, H_W = 130, H_H = 98, H_COLS = 6, H_ROWS = 4, H_PER = H_COLS * H_ROWS;
+// (heatmap grid: see Layout)
 static uint8_t heatPage = 0;
 static char cHeat[160];
 static uint16_t heatColour(float pct, bool valid) {
@@ -1750,11 +1830,11 @@ static uint16_t heatColour(float pct, bool valid) {
   const uint8_t *c = pct >= 0 ? up[lvl - 1] : dn[lvl - 1];
   return rgb(c[0], c[1], c[2]);
 }
-static uint8_t heatPages() { return (nShown + H_PER - 1) / H_PER; }
+static uint8_t heatPages() { return (nShown + L.hPer - 1) / L.hPer; }
 static int8_t hitTile(int16_t x, int16_t y) {
-  if (y < H_Y0 || y >= H_Y0 + H_ROWS * (H_H + 2)) return -1;
-  int8_t t = (y - H_Y0) / (H_H + 2) * H_COLS + x / (H_W + 2);
-  return heatPage * H_PER + t < nShown ? t : -1;
+  if (y < L.hY0 || y >= L.hY0 + L.hRows * (L.hH + 2)) return -1;
+  int8_t t = (y - L.hY0) / (L.hH + 2) * L.hCols + x / (L.hW + 2);
+  return heatPage * L.hPer + t < nShown ? t : -1;
 }
 static void drawHeat(bool full) {
   if (full) {
@@ -1766,22 +1846,22 @@ static void drawHeat(bool full) {
     cHeat[0] = '\0';
   }
   char key[160] = "";
-  for (uint8_t t = 0; t < H_PER && heatPage * H_PER + t < nShown; t++) {
-    const Row &r = rows[order[heatPage * H_PER + t]];
+  for (uint8_t t = 0; t < L.hPer && heatPage * L.hPer + t < nShown; t++) {
+    const Row &r = rows[order[heatPage * L.hPer + t]];
     char k[8];
     snprintf(k, sizeof k, "%d,", r.valid ? (int)(r.pct * 10) : -9999);
     strlcat(key, k, sizeof key);
   }
   if (strcmp(key, cHeat) == 0) return;
   strcpy(cHeat, key);
-  for (uint8_t t = 0; t < H_PER; t++) {
-    int16_t x = (t % H_COLS) * (H_W + 2), y = H_Y0 + (t / H_COLS) * (H_H + 2);
-    if (heatPage * H_PER + t >= nShown) {
-      gfx->fillRect(x, y, H_W, H_H, C_BG);
+  for (uint8_t t = 0; t < L.hPer; t++) {
+    int16_t x = (t % L.hCols) * (L.hW + 2), y = L.hY0 + (t / L.hCols) * (L.hH + 2);
+    if (heatPage * L.hPer + t >= nShown) {
+      gfx->fillRect(x, y, L.hW, L.hH, C_BG);
       continue;
     }
-    Row r = rowCopy(order[heatPage * H_PER + t]);
-    gfx->fillRoundRect(x, y, H_W, H_H, 10, heatColour(r.pct, r.valid));
+    Row r = rowCopy(order[heatPage * L.hPer + t]);
+    gfx->fillRoundRect(x, y, L.hW, L.hH, 10, heatColour(r.pct, r.valid));
     textAt(x + 10, y + 10, 2, C_FG, r.label);
     char b[12];
     if (r.valid) formatPct(r.pct, b, sizeof b);
@@ -1798,32 +1878,32 @@ static void drawHeat(bool full) {
 // Symbols are short and upper-case, so the keyboard is a 6x5 grid of 40px
 // keys, finger-sized on a resistive panel: A-X, then Y Z . - backspace GO.
 static const char *const KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-";  // + backspace + GO
-static const int16_t K_Y0 = 200, K_W = 80, K_H = 76, Q_Y = 60, RES_Y0 = 100, RES_H = 56;  // ten keys across, three rows
+// (keyboard and results: see Layout)
 static int8_t hitKey(int16_t x, int16_t y) {
-  if (y < K_Y0 || y >= K_Y0 + 3 * K_H) return -1;
-  int8_t i = (y - K_Y0) / K_H * 10 + x / K_W;
+  if (y < L.kY0 || y >= L.kY0 + (30 / L.kCols) * L.kH) return -1;
+  int8_t i = (y - L.kY0) / L.kH * L.kCols + x / L.kW;
   return i < 30 ? i : -1;
 }
 static int8_t hitResult(int16_t y) {
-  if (y < RES_Y0 || y >= RES_Y0 + RES_H * nHits) return -1;
-  return (y - RES_Y0) / RES_H;
+  if (y < L.resY0 || y >= L.resY0 + L.resH * nHits) return -1;
+  return (y - L.resY0) / L.resH;
 }
 // The caret blinks after the text, or ahead of the placeholder: a field
 // with no cursor does not look like it is listening.
 static void drawCaret(bool on) {
   int16_t x = 40 + (query[0] ? textWidth(3, query) + 4 : 0);
-  gfx->fillRect(x, Q_Y + 12, 3, 36, on ? C_FG : C_RULE);
+  gfx->fillRect(x, L.qY + 12, 3, 36, on ? C_FG : C_RULE);
 }
 static void drawQuery() {
-  gfx->fillRoundRect(20, Q_Y, LCD_W - 40, 60, 14, C_RULE);
-  if (query[0]) textAt(40, Q_Y + 14, 3, C_FG, query);
-  else textAt(52, Q_Y + 20, 1, C_DIM, "symbol or company name");
+  gfx->fillRoundRect(20, L.qY, L.w - 40, 60, 14, C_RULE);
+  if (query[0]) textAt(40, L.qY + 14, 3, C_FG, query);
+  else textAt(52, L.qY + 20, 1, C_DIM, "symbol or company name");
   drawCaret(true);
 }
 static void drawKeyboard() {
   for (uint8_t i = 0; i < 30; i++) {
-    int16_t x = (i % 10) * K_W, y = K_Y0 + (i / 10) * K_H;
-    gfx->drawRoundRect(x + 3, y + 3, K_W - 6, K_H - 6, 10, C_RULE);
+    int16_t x = (i % L.kCols) * L.kW, y = L.kY0 + (i / L.kCols) * L.kH;
+    gfx->drawRoundRect(x + 3, y + 3, L.kW - 6, L.kH - 6, 10, C_RULE);
     char k[3] = {0, 0, 0};
     const char *lab = k;
     uint16_t c = C_FG;
@@ -1833,7 +1913,7 @@ static void drawKeyboard() {
       lab = "GO";
       c = C_GOOD;
     }
-    textAt(x + (K_W - textWidth(2, lab)) / 2, y + (K_H - FACES[1].cap) / 2, 2, c, lab);
+    textAt(x + (L.kW - textWidth(2, lab)) / 2, y + (L.kH - FACES[1].cap) / 2, 2, c, lab);
   }
 }
 static void drawSearch(bool full) {
@@ -1868,15 +1948,15 @@ static void drawSearch(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
     drawHeader(1, "< SEARCH", searchQ);
-    textAt(LCD_W - 20 - textWidth(1, "v back to the keyboard"), 62, 1, C_DIM, "v back to the keyboard");
-    gfx->drawFastHLine(20, 96, LCD_W - 40, C_RULE);
+    textAt(L.w - 20 - textWidth(1, "v back to the keyboard"), 62, 1, C_DIM, "v back to the keyboard");
+    gfx->drawFastHLine(20, 96, L.w - 40, C_RULE);
     cSearch[0] = '\0';
   }
   char key[16];
   snprintf(key, sizeof key, "%u|%d|%d", n, done, failed);
   if (strcmp(key, cSearch) == 0) return;
   strcpy(cSearch, key);
-  gfx->fillRect(0, RES_Y0, LCD_W, Y_HINT - RES_Y0, C_BG);
+  gfx->fillRect(0, L.resY0, L.w, L.yHint - L.resY0, C_BG);
   if (!done) {
     field(20, 200, 30, 1, C_DIM, "searching...");
     return;
@@ -1886,12 +1966,12 @@ static void drawSearch(bool full) {
     return;
   }
   for (uint8_t i = 0; i < n; i++) {
-    int16_t y = RES_Y0 + i * RES_H;
+    int16_t y = L.resY0 + i * L.resH;
     bool listed = findRow(h[i].sym) >= 0;
     textAt(20, y + 6, 2, C_FG, h[i].sym);
-    fieldRight(LCD_W - 20, y + 12, 10, 1, listed ? C_GOOD : C_DIM, listed ? "on list" : h[i].exch);
+    fieldRight(L.w - 20, y + 12, 10, 1, listed ? C_GOOD : C_DIM, listed ? "on list" : h[i].exch);
     textAt(180, y + 12, 1, C_MUTED, h[i].name);
-    gfx->drawFastHLine(20, y + RES_H - 1, LCD_W - 40, C_RULE);
+    gfx->drawFastHLine(20, y + L.resH - 1, L.w - 40, C_RULE);
   }
   drawHint("tap one to add it and open it");
 }
@@ -1953,7 +2033,7 @@ static void drawNews(bool full) {
   snprintf(key, sizeof key, "%u|%u|%d|%lu|%u", detailIdx, n, failed, (unsigned long)newsAt, newsPage);
   if (strcmp(key, cNews) == 0) return;
   strcpy(cNews, key);
-  gfx->fillRect(0, Y_ROW0, LCD_W, Y_HINT - 4 - Y_ROW0, C_BG);
+  gfx->fillRect(0, L.yRow0, L.w, L.yHint - 4 - L.yRow0, C_BG);
   if (!mine || (!n && !failed)) {
     field(20, 220, 30, 1, C_DIM, "loading headlines...");
     return;
@@ -1963,13 +2043,13 @@ static void drawNews(bool full) {
     return;
   }
   int16_t y = 56;
-  for (uint8_t i = newsPage * 6; i < n && i < newsPage * 6 + 6 && y + 40 <= Y_HINT - 8; i++) {
+  for (uint8_t i = newsPage * 6; i < n && i < newsPage * 6 + 6 && y + 40 <= L.yHint - 8; i++) {
     char lines[2][64];
-    uint8_t k = wrapText(items[i].title, LCD_W - 40 - 70, lines, 2);
+    uint8_t k = wrapText(items[i].title, L.w - 40 - 70, lines, 2);
     for (uint8_t j = 0; j < k; j++) textAt(20, y + j * 20, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
-    fieldRight(LCD_W - 20, y, 6, 1, C_DIM, items[i].age);
+    fieldRight(L.w - 20, y, 6, 1, C_DIM, items[i].age);
     y += k * 20 + 8;
-    gfx->drawFastHLine(20, y, LCD_W - 40, C_RULE);
+    gfx->drawFastHLine(20, y, L.w - 40, C_RULE);
     y += 10;
   }
 }
@@ -2615,7 +2695,7 @@ static void selfCheck() {
     labelFor("BTC-USD", lab, sizeof lab);  assert(strcmp(lab, "BTC") == 0);
     labelFor("GOOGL", lab, sizeof lab);    assert(strcmp(lab, "GOOGL") == 0);
     labelFor("BRK-B", lab, sizeof lab);    assert(strcmp(lab, "BRK-B") == 0);
-    assert(hitKey(0, K_Y0 - 1) == -1 && hitKey(0, K_Y0) == 0 && hitKey(LCD_W - 1, K_Y0 + 2 * K_H) == 29);
+    assert(hitKey(0, L.kY0 - 1) == -1 && hitKey(0, L.kY0) == 0 && hitKey(L.w - 1, L.kY0 + (30 / L.kCols - 1) * L.kH) == 29);
   }
   {  // holiday: a weekday at 10:00 with the only stock last traded yesterday
     struct tm w = {};
@@ -2664,40 +2744,50 @@ static void selfCheck() {
   // Ring hit tests on a 26-row list: row 0 at the top at pos 0, the entering
   // row at the bottom edge once scrolled, the wrap, and a drag back past 0.
   assert(modp(-1, 26) == 25 && floordiv(-1, ROW_H) == -1 && floordiv(ROW_H, ROW_H) == 1);
-  assert(hitRow(Y_ROW0 - 1, 0, 26) == -1 && hitRow(Y_ROW0, 0, 26) == 0 && hitRow(Y_ROW0, 0, 0) == -1);
-  assert(hitRow(Y_ROW0 + RING - 1, 0, 26) == ROWS - 1 && hitRow(Y_ROW0 + RING, 0, 26) == -1);
-  assert(hitRow(Y_ROW0, ROW_H - 1, 26) == 0 && hitRow(Y_ROW0 + 1, ROW_H - 1, 26) == 1);
-  assert(hitRow(Y_ROW0 + RING - 1, ROW_H - 1, 26) == ROWS);
-  assert(hitRow(Y_ROW0 + RING - 1, 24 * ROW_H + ROW_H - 1, 26) == (24 + ROWS) % 26);
-  assert(hitRow(Y_ROW0, -1, 26) == 25 && hitRow(Y_ROW0, 26 * ROW_H, 26) == 0);
-  assert(hitRange(CH_X, CH_Y + CH_H) == 0 && hitRange(CH_X + R_STEP * 4, D_Y_NEWS - 1) == 4);
-  assert(hitRange(CH_X, CH_Y + CH_H - 1) == -1 && hitRange(CH_X, D_Y_NEWS) == -1);
-  assert(hitRange(CH_X - 1, R_Y) == -1 && hitRange(CH_X + R_STEP * 5, R_Y) == -1);
+  assert(hitRow(L.yRow0 - 1, 0, 26) == -1 && hitRow(L.yRow0, 0, 26) == 0 && hitRow(L.yRow0, 0, 0) == -1);
+  assert(hitRow(L.yRow0 + L.strip - 1, 0, 26) == L.rows - 1 && hitRow(L.yRow0 + L.strip, 0, 26) == -1);
+  assert(hitRow(L.yRow0, ROW_H - 1, 26) == 0 && hitRow(L.yRow0 + 1, ROW_H - 1, 26) == 1);
+  assert(hitRow(L.yRow0 + L.strip - 1, ROW_H - 1, 26) == L.rows);
+  assert(hitRow(L.yRow0 + L.strip - 1, 24 * ROW_H + ROW_H - 1, 26) == (24 + L.rows) % 26);
+  assert(hitRow(L.yRow0, -1, 26) == 25 && hitRow(L.yRow0, 26 * ROW_H, 26) == 0);
+  assert(hitRange(L.chX, L.chY + L.chH) == 0 && hitRange(L.chX + L.rStep * 4, L.dYNews - 1) == 4);
+  assert(hitRange(L.chX, L.chY + L.chH - 1) == -1 && hitRange(L.chX, L.dYNews) == -1);
+  assert(hitRange(L.chX - 1, L.rY) == -1 && hitRange(L.chX + L.rStep * 5, L.rY) == -1);
   // Sparkline scaling: extremes hit the box edges, a flat series sits mid-box.
   assert(sparkY(10, 10, 20, 100, 28) == 127 && sparkY(20, 10, 20, 100, 28) == 100);
   assert(sparkY(5, 5, 5, 100, 28) == 114);
 
+  for (uint8_t o = 0; o < 2; o++) {
+    Lp = &LAYOUTS[o];
   // Geometry, 800x480: a row's badge, symbol, name, sparkline, price and
   // percent never overlap; the strip fills the panel under the header.
-  assert(X_SYM + LOGO_BADGE <= X_LBL && X_LBL + GW(2) * (MAX_LABEL + 2) <= X_SPK);
-  assert(X_LBL + GW(2) * (MAX_LABEL + 2) + 96 + 116 + 106 + 100 + 166 <= X_RIGHT);  // every numeric column on still clears the symbol; the chart yields
-  assert(X_PRICE + 8 <= X_RIGHT - GW(2) * 7 && X_RIGHT <= LCD_W);
-  assert(Y_BADGE + LOGO_BADGE <= ROW_H && Y_LBL + GH(2) <= ROW_H && Y_SPK + SPK_H <= ROW_H);
-  assert(Y_ROW0 + STRIP <= Y_FOOT && Y_FOOT + 14 + GH(1) <= LCD_H && Y_HEAD + GH(2) <= Y_ROW0);
-  assert(STRIP % 20 != 1 || true);  // (the bounce buffer is 20 lines; the ring maps per line, any height works)
-  assert(TAG_X + GW(1) * 17 <= ICON_X - 8 && ICON_X + 4 * ICON_STEP <= X_RIGHT - GW(1) * 8);
-  assert(hitHeader(ICON_X) == 10 && hitHeader(ICON_X + 3 * ICON_STEP + 10) == 13 && hitHeader(TAG_X + 20) == -1);
-  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N <= S_ROWS);
-  // Detail: the left column stacks, the right column stacks, neither crosses the middle.
-  assert(D_X_LOGO + LOGO_BIG <= D_X_TXT && D_X_TXT + GW(1) * 26 <= CH_X && D_Y_LOGO + LOGO_BIG <= D_Y_PRICE);
-  assert(D_Y_SYM + GH(3) <= D_Y_NAME && D_Y_NAME + GH(1) <= D_Y_TAG && D_Y_TAG + GH(1) <= D_Y_PRICE);
-  assert(D_Y_PRICE + GH(4) <= D_Y_CHG && D_Y_CHG + GH(2) <= D_Y_DAY && D_X_PRICE + GW(4) * 8 <= CH_X);
-  assert(D_X_PCT + GW(2) * 8 <= CH_X && BAR_X + BAR_W <= CH_X);
-  assert(D_Y_DAY + 34 + GH(1) <= D_Y_WK && D_Y_WK + 34 + GH(1) <= Y_HINT && Y_HINT + GH(1) <= LCD_H);
-  assert(CH_X + CH_W <= LCD_W && CH_Y + CH_H <= R_Y && R_Y + R_H <= D_Y_NEWS && D_Y_NEWS + 3 * 38 <= Y_HINT);
-  assert(R_W <= R_STEP && GW(2) * 2 <= R_W && GH(2) <= R_H && CH_X + R_STEP * (N_RANGES - 1) + R_W <= LCD_W);
-  assert(H_COLS * (H_W + 2) <= LCD_W + 2 && H_Y0 + H_ROWS * (H_H + 2) <= LCD_H);
-  assert(K_Y0 + 3 * K_H <= LCD_H && 10 * K_W <= LCD_W && RES_Y0 + MAX_HITS * RES_H <= Y_HINT);
+  assert(L.xSym + LOGO_BADGE <= L.xLbl && L.xLbl + GW(2) * (MAX_LABEL + 2) <= L.xSpk);
+  assert(L.xLbl + GW(2) * (MAX_LABEL + 2) + 96 + 116 + 106 <= L.xRight);  // price, percent and change always clear the symbol; the rest yield
+  assert(L.xPrice + 8 <= L.xRight - GW(2) * 7 && L.xRight <= L.w);
+  assert(L.yBadge + LOGO_BADGE <= ROW_H && L.yLbl + GH(2) <= ROW_H && L.ySpk + L.spkH <= ROW_H);
+  assert(L.yRow0 + L.strip <= L.yFoot && L.yFoot + 14 + GH(1) <= L.h && L.yHead + GH(2) <= L.yRow0);
+  assert(L.strip % 20 != 1 || true);  // (the bounce buffer is 20 lines; the ring maps per line, any height works)
+  if (L.tagX >= 0) assert(L.tagX + GW(1) * 17 <= L.iconX - 8 && L.iconX + 4 * L.iconStep <= L.xRight - GW(1) * 8);
+  else assert(L.iconX + 4 * L.iconStep <= L.w && GW(1) * (28 + 17 + 8) + 24 <= L.w);  // the footer holds the message, the tag and the clock
+  assert(hitHeader(L.iconX) == 10 && hitHeader(L.iconX + 3 * L.iconStep + 10) == 13 && hitHeader(L.tagX + 20) == -1);
+  assert(L.sY0 + L.sH * L.sN <= L.yHint && hitSetting(L.sY0 - 1) == -1 && hitSetting(L.sY0) == 0 && L.sN <= L.sRows);
+  // Detail: two columns in landscape (text left, chart right), one in
+  // portrait (the chart under the price, the bars under the chips, the
+  // headlines last); nothing crosses into the next block either way.
+  bool two = L.chX > L.dXTxt;
+  int16_t edge = two ? L.chX : L.w;
+  assert(L.dXLogo + LOGO_BIG <= L.dXTxt && L.dXTxt + GW(1) * 26 <= edge && L.dYLogo + LOGO_BIG <= L.dYPrice);
+  assert(L.dYSym + GH(3) <= L.dYName && L.dYName + GH(1) <= L.dYTag && L.dYTag + GH(1) <= L.dYPrice);
+  assert(L.dYPrice + GH(4) <= L.dYChg && L.dYChg + GH(2) <= (two ? L.dYDay : L.chY) && L.dXPrice + GW(4) * 8 <= edge);
+  assert(L.dXPct + GW(2) * 8 <= edge && L.barX + L.barW <= edge);
+  assert(L.dYDay + 34 + GH(1) <= L.dYWk && L.dYWk + 34 + GH(1) <= (two ? L.yHint : L.dYNews) && L.yHint + GH(1) <= L.h);
+  if (!two) assert(L.rY + L.rH <= L.dYDay);
+  assert(L.chX + L.chW <= L.w && L.chY + L.chH <= L.rY && L.rY + L.rH <= L.dYNews && L.dYNews + 3 * L.newsStep <= L.yHint);
+  assert(L.rW <= L.rStep && GW(2) * 2 <= L.rW && GH(2) <= L.rH && L.chX + L.rStep * (N_RANGES - 1) + L.rW <= L.w);
+  assert(L.hCols * (L.hW + 2) <= L.w + 2 && L.hY0 + L.hRows * (L.hH + 2) <= L.h);
+  assert(30 % L.kCols == 0 && L.kY0 + (30 / L.kCols) * L.kH <= L.h && L.kCols * L.kW <= L.w && L.resY0 + MAX_HITS * L.resH <= L.yHint);
+  }
+  Lp = &LAYOUTS[0];
   assert(sizeof logoBuf >= (size_t)LOGO_BADGE * LOGO_BADGE * 2);
   for (const Face &f : FACES) assert(f.font[13] == f.cap && (uint8_t)(-(int8_t)f.font[14]) == f.desc);  // u8g2 header: ascent_A, descent_g
 }
@@ -2735,6 +2825,8 @@ void setup() {
     Serial.printf("config error: %s\n", cfgErr);
     gfx = boardDisplay();
     gfx->begin();
+    boardSetRotation(sRot);
+    Lp = &LAYOUTS[sRot & 1];
     gfx->setTextWrap(false);
     backlight(255);
     return;  // loop() draws the panel
@@ -2750,9 +2842,11 @@ void setup() {
 
   gfx = boardDisplay();
   gfx->begin();
+  boardSetRotation(sRot);  // the Orientation setting; loadSettings ran above
+  Lp = &LAYOUTS[sRot & 1];
   gfx->fillScreen(C_BG);
   gfx->setTextWrap(false);
-  rowCanvas = new Arduino_Canvas(LCD_W, ROW_H, nullptr);
+  rowCanvas = new Arduino_Canvas(L.w, ROW_H, nullptr);
   if (!rowCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) Serial.println("row canvas: alloc failed");  // 20KB
   rowCanvas->setTextWrap(false);
   logoInventory();
@@ -2969,7 +3063,7 @@ void loop() {
       int n = WiFi.softAPgetStationNum();
       if (n) snprintf(st, sizeof st, "%d phone%s joined, form at 192.168.4.1", n, n == 1 ? "" : "s");
       else snprintf(st, sizeof st, "%s", wifiSsid[0] ? "swipe down to keep the old network" : "waiting for you");
-      fieldCentre(LCD_W / 2, Y_HINT, 80, 1, C_DIM, st);
+      fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, st);
     }
     if (g == Gesture::SwipeDown && wifiSsid[0]) ESP.restart();
     delay(10);
@@ -3086,7 +3180,7 @@ void loop() {
     if (g == Gesture::Tap && hilite == INT32_MIN) {
       int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) {
-        hilite = floordiv(pos + ty - Y_ROW0, ROW_H);
+        hilite = floordiv(pos + ty - L.yRow0, ROW_H);
         gfx->fillRect(0, rowY(hilite) + 2, 4, ROW_H - 4, C_FG);
       }
     }
@@ -3097,7 +3191,7 @@ void loop() {
     if (g == Gesture::TapUp) {
       int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) openDetail(order[r]);
-      else if (ty < Y_ROW0) headerTap(tx);
+      else if (ty < L.yRow0) headerTap(tx);
     }
   }
   // Swipes are the navigation, phone style. List: right opens settings.
@@ -3180,16 +3274,16 @@ void loop() {
   if (view == View::Settings && g == Gesture::Drag && ddy) {
     static int16_t acc = 0;
     acc += ddy;
-    while (acc <= -S_H && setTop + S_N < S_ROWS) { acc += S_H; setTop++; drawSettingRows(); }
-    while (acc >= S_H && setTop > 0) { acc -= S_H; setTop--; drawSettingRows(); }
+    while (acc <= -L.sH && setTop + L.sN < L.sRows) { acc += L.sH; setTop++; drawSettingRows(); }
+    while (acc >= L.sH && setTop > 0) { acc -= L.sH; setTop--; drawSettingRows(); }
     if (setTop == 0 && acc > 0) acc = 0;
-    if (setTop + S_N >= S_ROWS && acc < 0) acc = 0;
+    if (setTop + L.sN >= L.sRows && acc < 0) acc = 0;
   }
   if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
     removeArmedUntil = 0;
     drawHint("< next    ^ news    v list    prev >");
   }
-  if (tap && state == State::Running && view == View::Detail && removeArmedUntil && ty > D_Y_WK) {
+  if (tap && state == State::Running && view == View::Detail && removeArmedUntil && ty > L.dYWk) {
     removeArmedUntil = 0;
     userRemove(detailIdx);
     if (nRows == 0) {
@@ -3203,14 +3297,14 @@ void loop() {
 
   // The header is on every page: a tab picks a section and returns to the
   // list; an icon opens its page, or closes it if it is the one open.
-  if (tap && state == State::Running && view != View::List && view != View::Splash && ty < Y_ROW0) {
+  if (tap && state == State::Running && view != View::List && view != View::Splash && ty < L.yRow0) {
     headerTap(tx);
     tap = false;
   }
   if (tap && state == State::Running && view != View::List) {
     if (view == View::Heat) {
       int8_t t = hitTile(tx, ty);
-      if (t >= 0) openDetail(order[heatPage * H_PER + t]);
+      if (t >= 0) openDetail(order[heatPage * L.hPer + t]);
     } else if (view == View::Search) {
       pageOpenedAt = millis();
       if (searchMode == 0) {
@@ -3223,7 +3317,7 @@ void loop() {
     } else if (view == View::Settings) {
       int8_t i = hitSetting(ty);
       pageOpenedAt = millis();
-      uint8_t r = i >= 0 && setTop + i < S_ROWS ? tapSetting((uint8_t)(setTop + i)) : 0;
+      uint8_t r = i >= 0 && setTop + i < L.sRows ? tapSetting((uint8_t)(setTop + i)) : 0;
       if (r == 1) {
         view = View::Info;
         drawInfo(true);

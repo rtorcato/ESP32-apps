@@ -117,7 +117,12 @@ inline bool boardBegin() {
 namespace boarddetail {
 inline uint16_t *fb = nullptr;
 inline esp_lcd_panel_handle_t panelHandle = nullptr;
-inline volatile int16_t scrollY0 = 0, scrollH = 0, scrollOff = 0;
+// The scroll band, in BUFFER terms: a run of lines (landscape) or of
+// columns (portrait, where the screen's vertical axis runs across each
+// buffer line), read forwards or backwards depending on the rotation.
+inline volatile int16_t bandStart = 0, bandLen = 0, bandOff = 0;
+inline volatile bool bandCols = false, bandRev = false;
+inline uint8_t rotation = 0;
 
 // Runs in the LCD DMA interrupt: one bounce buffer (LCD_BOUNCE_PX pixels,
 // whole lines) to fill from our framebuffer. static, not inline: an inline
@@ -125,15 +130,33 @@ inline volatile int16_t scrollY0 = 0, scrollH = 0, scrollOff = 0;
 static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_px, int len_bytes, void *) {
   uint16_t *dst = (uint16_t *)buf;
   int line = pos_px / LCD_W, n = len_bytes / (LCD_W * 2);
-  int16_t y0 = scrollY0, h = scrollH, off = scrollOff;
+  int16_t b0 = bandStart, len = bandLen, off = bandOff;
+  bool cols = bandCols, rev = bandRev;
   for (int i = 0; i < n; i++, line++) {
-    int src = line;
-    if (h > 0 && line >= y0 && line < y0 + h) {
-      src = line - y0 + off;
-      if (src >= h) src -= h;
-      src += y0;
+    uint16_t *d = dst + (size_t)i * LCD_W;
+    if (len <= 0) {
+      memcpy(d, fb + (size_t)line * LCD_W, LCD_W * 2);
+    } else if (!cols) {  // a band of lines: this line comes from another line
+      int src = line;
+      if (line >= b0 && line < b0 + len) {
+        int k = rev ? (b0 + len - 1 - line) : (line - b0);
+        k += off;
+        if (k >= len) k -= len;
+        src = rev ? (b0 + len - 1 - k) : (b0 + k);
+      }
+      memcpy(d, fb + (size_t)src * LCD_W, LCD_W * 2);
+    } else {  // a band of columns: the same line, the band's columns rotated
+      const uint16_t *sl = fb + (size_t)line * LCD_W;
+      memcpy(d, sl, (size_t)b0 * 2);
+      memcpy(d + b0 + len, sl + b0 + len, (size_t)(LCD_W - b0 - len) * 2);
+      if (!rev) {  // d[b0 + j] = sl[b0 + (j + off) % len]
+        memcpy(d + b0, sl + b0 + off, (size_t)(len - off) * 2);
+        memcpy(d + b0 + len - off, sl + b0, (size_t)off * 2);
+      } else {  // mirrored: d[b0 + len - 1 - j] = sl[b0 + len - 1 - (j + off) % len]
+        memcpy(d + b0 + off, sl + b0, (size_t)(len - off) * 2);
+        memcpy(d + b0, sl + b0 + len - off, (size_t)off * 2);
+      }
     }
-    memcpy(dst + (size_t)i * LCD_W, fb + (size_t)src * LCD_W, LCD_W * 2);
   }
   return false;
 }
@@ -195,12 +218,26 @@ inline Arduino_GFX *boardDisplay() {
   return &gfx;
 }
 inline uint16_t *boardFramebuffer() { return boarddetail::fb; }
-// The scroll band: screen lines y0..y0+h show buffer lines rotated by off.
-inline void boardScrollArea(int16_t y0, int16_t h) {
-  boarddetail::scrollY0 = y0;
-  boarddetail::scrollH = h;
+// Rotation, 0-3 as Arduino_GFX counts them: 0 landscape, 1 portrait (the
+// connector at the bottom), 2 landscape upside down, 3 portrait the other
+// way. The canvas maps each to buffer memory as: 0 line=y col=x;
+// 1 line=x col=799-y; 2 line=479-y col=799-x; 3 line=479-x col=y.
+inline void boardSetRotation(uint8_t r) {
+  boarddetail::rotation = r & 3;
+  boardDisplay()->setRotation(boarddetail::rotation);
 }
-inline void boardScroll(int16_t off) { boarddetail::scrollOff = off; }
+// The scroll band in SCREEN terms: screen lines y0..y0+h scroll by off.
+// Turned into buffer terms by the rotation above.
+inline void boardScrollArea(int16_t y0, int16_t h) {
+  switch (boarddetail::rotation) {
+    case 1: boarddetail::bandCols = true;  boarddetail::bandRev = true;  boarddetail::bandStart = LCD_W - y0 - h; break;
+    case 2: boarddetail::bandCols = false; boarddetail::bandRev = true;  boarddetail::bandStart = LCD_H - y0 - h; break;
+    case 3: boarddetail::bandCols = true;  boarddetail::bandRev = false; boarddetail::bandStart = y0; break;
+    default: boarddetail::bandCols = false; boarddetail::bandRev = false; boarddetail::bandStart = y0; break;
+  }
+  boarddetail::bandLen = h;
+}
+inline void boardScroll(int16_t off) { boarddetail::bandOff = off; }
 
 // --- Touch (GT911, raw I2C) --------------------------------------------------
 // 0x814E: bit 7 says a report is ready, low nibble is the finger count; the
@@ -215,7 +252,9 @@ namespace boarddetail {
 inline bool touched = false;
 inline int16_t tx = 0, ty = 0;
 }
-inline bool touchRead(int16_t *x, int16_t *y) {
+// The GT911 reports in panel pixels, landscape; the screen's rotation is
+// applied on the way out, so pages see the coordinates they draw in.
+inline bool touchReadRaw(int16_t *x, int16_t *y) {
   *x = boarddetail::tx;
   *y = boarddetail::ty;
   Wire.beginTransmission(boarddetail::gtAddr);
@@ -245,6 +284,17 @@ inline bool touchRead(int16_t *x, int16_t *y) {
   Wire.write(0);
   Wire.endTransmission();
   boarddetail::touched = down;
+  return down;
+}
+inline bool touchRead(int16_t *x, int16_t *y) {
+  int16_t px, py;
+  bool down = touchReadRaw(&px, &py);
+  switch (boarddetail::rotation) {
+    case 1: *x = py; *y = LCD_W - 1 - px; break;
+    case 2: *x = LCD_W - 1 - px; *y = LCD_H - 1 - py; break;
+    case 3: *x = LCD_H - 1 - py; *y = px; break;
+    default: *x = px; *y = py; break;
+  }
   return down;
 }
 inline bool touchDown() { return boarddetail::touched; }
