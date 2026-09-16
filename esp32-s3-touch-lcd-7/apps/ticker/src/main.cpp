@@ -46,7 +46,7 @@ static uint32_t stockOpenMs = 5UL * 60 * 1000, stockExtMs = 15UL * 60 * 1000, co
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000, LOG_MS = 60UL * 1000;
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
 
-static const uint8_t ROWS = 10, MAX_SYMBOLS = 40, MAX_LABEL = 5, SPARK_N = 200;  // 04:00-20:00 at 5m is 192
+static const uint8_t ROWS = 9, MAX_SYMBOLS = 40, MAX_LABEL = 5, SPARK_N = 200;  // 04:00-20:00 at 5m is 192
 // Two logo sizes, both pre-converted on the Mac (tools/make-logos.py --size N
 // --out data/logo/N) and read raw from /logo/<N>/<LABEL>.565. Must match.
 // 32px badges and 128px on the page: the 3.4MB data partition has the room.
@@ -81,6 +81,13 @@ static const uint32_t SPEED_MS[] = {20000, 10000, 5000};
 static const char *const RET_NAMES[] = {"15s", "60s", "never"};
 static const uint32_t RET_MS[] = {15000, 60000, 0};
 static const char *const SLEEP_NAMES[] = {"never", "night", "closed"};
+static const char *const CLOCK_NAMES[] = {"12-hour", "24-hour"};
+static uint8_t sClock = 0;
+// "9:05 PM" or "21:05", by the Clock setting.
+static void fmtClock(const struct tm &t, char *out, size_t n) {
+  if (sClock) snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
+  else snprintf(out, n, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min, t.tm_hour < 12 ? "AM" : "PM");
+}
 static uint8_t sSpeed = 1, sRet = 1, sSleep = 0;
 // Prices show in this currency, converted through the CURRENCIES rows
 // (how many of X one USD buys). USD, or any code the config lists. A row
@@ -413,13 +420,16 @@ static bool loadConfig() {
 
 // ── layout (portrait 240x320, fixed) ─────────────────────────────────────
 // List: six 42px rows. Badge | symbol | sparkline | price over percent.
-// Ten 44px rows under a 40px header: badge | symbol | name | sparkline |
-// price | percent, everything centred on y+22.
+// Nine 44px rows between a 40px header (section tabs, the CLOSED tag,
+// three icons, the clock) and a 44px footer for messages: badge | symbol |
+// a wide sparkline | price | percent, everything centred on y+22. No
+// company name: the symbol is the identity, and the name ran into it.
 static const int16_t Y_HEAD = 10, Y_ROW0 = 40, ROW_H = 44, X_SYM = 12, Y_BADGE = 6, X_LBL = 56, Y_LBL = 12,
-                     X_NAME = 132, X_SPK = 340, Y_SPK = 6, SPK_W = 180, SPK_H = 32, X_PRICE = 640, X_RIGHT = 788;
+                     X_SPK = 200, Y_SPK = 6, SPK_W = 320, SPK_H = 32, X_PRICE = 640, X_RIGHT = 788,
+                     Y_FOOT = 436, TAB_X = 12, TAB_W = 80, TAB_STEP = 84, TAG_X = 440, ICON_X = 600, ICON_STEP = 40;
 // Settings: title, five 40px rows, the LIST button.
 // Settings: eight 48px rows, all on screen. Heatmap: 6 x 4 tiles.
-static const int16_t S_Y0 = 80, S_H = 46, S_N = 8, S_ROWS = 8;
+static const int16_t S_Y0 = 80, S_H = 40, S_N = 9, S_ROWS = 9;
 // Detail, landscape: a left column (logo, symbol, name, the big price,
 // change, the two range bars) and a right column (chart with high and low
 // inside it, five range chips, three headlines). One gesture hint at the
@@ -843,10 +853,11 @@ static void goToSleep(uint32_t secs) {
 static Arduino_Canvas *rowCanvas;
 static uint16_t *fb = nullptr;  // the panel's own framebuffer
 static int32_t canvasV = INT32_MIN;
-static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
+static uint32_t scrollLast = 0, holdUntil = 0;
 static const int16_t STRIP = ROW_H * ROWS;  // the scrolling region, Y_ROW0..Y_ROW0+STRIP
 static const uint8_t CSLOTS = ROWS + 2;     // row caches, one per row that can be on screen
-static char cRow[CSLOTS][48], cCanvas[48], cHead[64];
+static char cRow[CSLOTS][48], cCanvas[48], cHead[64], cFoot[80];
+static void drawTabsAndIcons();
 
 static uint16_t rowOf(int32_t v) { return order[modp(v, nShown)]; }
 static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, CSLOTS); }
@@ -883,10 +894,7 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
     char c[2] = {r.label[0], 0};
     textAt(X_SYM + (LOGO_BADGE - textWidth(2, c)) / 2, y + Y_BADGE + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
   }
-  field(X_LBL, y + Y_LBL, MAX_LABEL + 1, 2, C_FG, r.label);
-  char name[26];
-  snprintf(name, sizeof name, "%s", r.coin ? "crypto" : r.kind == K_FX ? "per US dollar" : r.name);
-  field(X_NAME, y + Y_LBL + 4, 25, 1, C_MUTED, name);
+  field(X_LBL, y + Y_LBL, MAX_LABEL + 2, 2, C_FG, r.label);
   drawSpark(X_SPK, y + Y_SPK, SPK_W, SPK_H, r);
   fieldRight(X_PRICE, y + Y_LBL, 8, 2, fg, price);
   fieldRight(X_RIGHT, y + Y_LBL, 7, 2, fg, pct);
@@ -968,7 +976,8 @@ static void listStart() {
   gfx->fillScreen(C_BG);
   invalidateCache();
   canvasV = INT32_MIN;
-  field(X_SYM, Y_HEAD, 12, 2, C_MUTED, SECT_NAMES[sect]);
+  drawTabsAndIcons();
+  cFoot[0] = '\0';
   int32_t v0 = topV();
   uint8_t off = offPx();
   for (uint8_t p = 0; p <= ROWS; p++) paintVisible(v0 + p);
@@ -979,47 +988,102 @@ static void listStart() {
     blitLines(Y_ROW0 + STRIP - off, 0, off);
   }
   scrollLast = millis();
-  scrollAcc = 0;
 }
 
 // Every pass: refresh the rows fully in view, then advance the crawl by
-// however many pixels the clock owes. Frozen while a finger is down and
-// for a moment after, so a drag or a press is not fought.
+// however many pixels the clock owes -- but no more often than 25 times a
+// second, because every step is a 700KB memmove of PSRAM and the panel
+// scans that same memory: forty a second starved it into flicker. At the
+// normal speed that is two pixels a frame, which still reads as a glide.
+// Frozen while a finger is down and for a moment after.
 static void listTick() {
-  uint32_t now = millis(), dt = now - scrollLast;
-  scrollLast = now;
+  uint32_t now = millis();
   int32_t v0 = topV();
   for (uint8_t p = 0; p <= ROWS; p++) paintVisible(v0 + p);
+  static uint32_t frameAt = 0, acc = 0;
   if (touchHeld || now < holdUntil) {
-    scrollAcc = 0;
+    frameAt = now;
+    acc = 0;
     return;
   }
-  scrollAcc += dt * STRIP;  // pixels, scaled by pageMs
-  int32_t step = scrollAcc / pageMs;
+  if (now - frameAt < 40) return;
+  acc += (now - frameAt) * STRIP;  // pixels, scaled by pageMs
+  frameAt = now;
+  int32_t step = acc / pageMs;
   if (!step) return;
-  scrollAcc -= (uint32_t)step * pageMs;
+  acc -= (uint32_t)step * pageMs;
   scrollBy(step);
 }
 
+// The header, left to right: five section tabs (tap one), the CLOSED tag,
+// three icons (search, heatmap, settings), the clock. The tabs and icons
+// are drawn once by listStart; this keeps the clock and the tag current.
+static void drawTabsAndIcons() {
+  for (uint8_t i = 0; i < 5; i++) {
+    int16_t x = TAB_X + i * TAB_STEP;
+    bool on = i == sect;
+    gfx->fillRect(x, 0, TAB_W, Y_ROW0 - 1, C_BG);
+    textAt(x + (TAB_W - textWidth(1, SECT_NAMES[i])) / 2, 12, 1, on ? C_FG : C_DIM, SECT_NAMES[i]);
+    if (on) gfx->fillRect(x + 8, 34, TAB_W - 16, 3, C_FG);
+  }
+  int16_t x = ICON_X;  // a magnifier
+  gfx->drawCircle(x + 13, 17, 7, C_MUTED);
+  gfx->drawCircle(x + 13, 17, 6, C_MUTED);
+  gfx->drawLine(x + 18, 22, x + 26, 30, C_MUTED);
+  gfx->drawLine(x + 19, 21, x + 27, 29, C_MUTED);
+  x += ICON_STEP;  // a grid
+  for (uint8_t r = 0; r < 2; r++)
+    for (uint8_t c = 0; c < 2; c++) gfx->fillRoundRect(x + 6 + c * 12, 9 + r * 12, 9, 9, 2, C_MUTED);
+  x += ICON_STEP;  // three sliders
+  for (uint8_t r = 0; r < 3; r++) {
+    gfx->drawFastHLine(x + 5, 12 + r * 8, 22, C_MUTED);
+    gfx->fillCircle(x + 9 + (r == 1 ? 12 : r == 2 ? 6 : 0), 12 + r * 8, 3, C_MUTED);
+  }
+}
+// Which header thing a tap at x lands on: 0-4 a tab, 10 search, 11 heatmap, 12 settings, -1 nothing.
+static int8_t hitHeader(int16_t x) {
+  if (x >= TAB_X && x < TAB_X + 5 * TAB_STEP && (x - TAB_X) % TAB_STEP < TAB_W) return (x - TAB_X) / TAB_STEP;
+  if (x >= ICON_X - 8 && x < ICON_X + 3 * ICON_STEP) return 10 + (x - (ICON_X - 8)) / ICON_STEP;
+  return -1;
+}
 static void drawHead(const struct tm *t, bool haveTime) {
-  char buf[64], clk[8];
-  if (haveTime) strftime(clk, sizeof clk, "%H:%M", t);
+  char buf[48], clk[12];
+  if (haveTime) fmtClock(*t, clk, sizeof clk);
   else snprintf(clk, sizeof clk, "--:--");
   Session ses = haveTime ? sessionNow(*t) : Session::Regular;
-  bool banner = bannerUntil && millis() < bannerUntil;
-  if (bannerUntil && !banner) bannerUntil = 0;
-  snprintf(buf, sizeof buf, "%s|%u|%s", clk, (unsigned)ses, banner ? bannerText : "");
+  snprintf(buf, sizeof buf, "%s|%u", clk, (unsigned)ses);
   if (strcmp(buf, cHead) == 0) return;
   strcpy(cHead, buf);
-  fieldRight(X_RIGHT, Y_HEAD, 5, 2, C_MUTED, clk);
-  char tag[48] = "";
-  if (banner) snprintf(tag, sizeof tag, "%s", bannerText);  // an alert, for ten seconds
-  else if (ses == Session::Closed) {
+  fieldRight(X_RIGHT, 12, 8, 1, C_MUTED, clk);
+  char tag[24] = "";
+  if (ses == Session::Closed) {
     char nx[16];
     nextOpen(*t, nx, sizeof nx);
     snprintf(tag, sizeof tag, "CLOSED til %s", nx);
   }
-  field(300, Y_HEAD, 36, 2, C_WARN, tag);  // "market open" says nothing; only closed, or an alert, is news
+  field(TAG_X, 12, 19, 1, C_WARN, tag);  // "market open" says nothing; only closed is news
+}
+// The footer: an alert for ten seconds, else the session when it is not
+// simply open; and on the right how old the prices are. Quiet colours.
+static void drawFoot(const struct tm *t, bool haveTime) {
+  char left[48] = "", right[24] = "", key[80];
+  bool banner = bannerUntil && millis() < bannerUntil;
+  if (bannerUntil && !banner) bannerUntil = 0;
+  Session ses = haveTime ? sessionNow(*t) : Session::Regular;
+  if (banner) snprintf(left, sizeof left, "%s", bannerText);
+  else if (haveTime && ses != Session::Regular) {
+    char nx[16];
+    nextOpen(*t, nx, sizeof nx);
+    if (ses == Session::Closed) snprintf(left, sizeof left, "market closed, opens %s", nx);
+    else snprintf(left, sizeof left, "%s", sessionWord(ses));
+  }
+  if (lastOk) snprintf(right, sizeof right, "prices %lum old", (unsigned long)((millis() - lastOk) / 60000));
+  snprintf(key, sizeof key, "%s|%s", left, right);
+  if (strcmp(key, cFoot) == 0) return;
+  strcpy(cFoot, key);
+  gfx->drawFastHLine(0, Y_FOOT, LCD_W, C_RULE);
+  field(X_SYM, Y_FOOT + 14, 60, 1, banner ? C_MUTED : C_DIM, left);
+  fieldRight(X_RIGHT, Y_FOOT + 14, 20, 1, C_DIM, right);
 }
 
 // ── boot splash: drawn, not shipped ──────────────────────────────────────
@@ -1384,6 +1448,7 @@ static void loadSettings() {
     sSpeed = prefs.getUChar("speed", sSpeed) % 3;
     sRet = prefs.getUChar("ret", sRet) % 3;
     sSleep = prefs.getUChar("slp", sSleep) % 3;
+    sClock = prefs.getUChar("clk", sClock) % 2;
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1408,6 +1473,7 @@ static void saveSettings() {
   prefs.putUChar("speed", sSpeed);
   prefs.putUChar("ret", sRet);
   prefs.putUChar("slp", sSleep);
+  prefs.putUChar("clk", sClock);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -1417,16 +1483,16 @@ static void saveSettings() {
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
-  static const char *const labels[] = {"Shutdown", "Scroll", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
+  static const char *const labels[] = {"Shutdown", "Scroll", "Clock", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
   char ssid[24];
   snprintf(ssid, sizeof ssid, "%.20s", wifiSsid[0] ? wifiSsid : "not set");
-  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? RET_NAMES[sRet] : i == 3 ? SLEEP_NAMES[sSleep]
-                : i == 4 ? sCur : i == 5 ? ">" : i == 6 ? ssid : ">";
+  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? CLOCK_NAMES[sClock] : i == 3 ? RET_NAMES[sRet]
+                : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? sCur : i == 6 ? ">" : i == 7 ? ssid : ">";
   if (i < setTop || i >= setTop + S_N) return;
   int16_t y = S_Y0 + (i - setTop) * S_H;
-  gfx->fillRect(20, y + 8, LCD_W - 20, GH(2) + 4, C_BG);
-  textAt(20, y + 12, 2, i == 7 ? C_BAD : C_MUTED, labels[i]);
-  textAt(LCD_W - 20 - textWidth(2, v), y + 12, 2, C_FG, v);
+  gfx->fillRect(20, y + 6, LCD_W - 20, GH(2) + 4, C_BG);
+  textAt(20, y + 8, 2, i == 8 ? C_BAD : C_MUTED, labels[i]);
+  textAt(LCD_W - 20 - textWidth(2, v), y + 8, 2, C_FG, v);
   gfx->drawFastHLine(20, y + S_H - 1, LCD_W - 40, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
@@ -1493,13 +1559,14 @@ static bool hitConfirm(int16_t x, int16_t y) { return y >= CF_Y && y < CF_Y + CF
 // clearing the device).
 static uint8_t tapSetting(uint8_t i) {
   if (i == 0) return 3;
-  if (i == 5) return 1;
-  if (i == 6) return 4;
-  if (i == 7) return 5;
-  if (i == 4) nextCurrency();
+  if (i == 6) return 1;
+  if (i == 7) return 4;
+  if (i == 8) return 5;
+  if (i == 5) nextCurrency();
   else if (i == 1) sSpeed = (sSpeed + 1) % 3;
-  else if (i == 2) sRet = (sRet + 1) % 3;
-  else if (i == 3) sSleep = (sSleep + 1) % 3;
+  else if (i == 2) sClock = !sClock;
+  else if (i == 3) sRet = (sRet + 1) % 3;
+  else if (i == 4) sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
   return 0;
@@ -2461,12 +2528,14 @@ static void selfCheck() {
 
   // Geometry, 800x480: a row's badge, symbol, name, sparkline, price and
   // percent never overlap; the strip fills the panel under the header.
-  assert(X_SYM + LOGO_BADGE <= X_LBL && X_LBL + GW(2) * (MAX_LABEL + 1) <= X_NAME);
-  assert(X_NAME + GW(1) * 25 <= X_SPK && X_SPK + SPK_W <= X_PRICE - GW(2) * 8);
+  assert(X_SYM + LOGO_BADGE <= X_LBL && X_LBL + GW(2) * (MAX_LABEL + 2) <= X_SPK);
+  assert(X_SPK + SPK_W <= X_PRICE - GW(2) * 8);
   assert(X_PRICE + 8 <= X_RIGHT - GW(2) * 7 && X_RIGHT <= LCD_W);
   assert(Y_BADGE + LOGO_BADGE <= ROW_H && Y_LBL + GH(2) <= ROW_H && Y_SPK + SPK_H <= ROW_H);
-  assert(Y_ROW0 + STRIP <= LCD_H && Y_HEAD + GH(2) <= Y_ROW0);
-  assert(300 + GW(2) * 36 <= X_RIGHT - GW(2) * 5);  // the header tag clears the clock
+  assert(Y_ROW0 + STRIP <= Y_FOOT && Y_FOOT + 14 + GH(1) <= LCD_H && Y_HEAD + GH(2) <= Y_ROW0);
+  assert(TAB_X + 4 * TAB_STEP + TAB_W <= TAG_X && TAG_X + GW(1) * 19 <= ICON_X - 8 && ICON_X + 3 * ICON_STEP <= X_RIGHT - GW(1) * 8);
+  assert(hitHeader(TAB_X) == 0 && hitHeader(TAB_X + 4 * TAB_STEP + TAB_W - 1) == 4 && hitHeader(ICON_X) == 10 &&
+         hitHeader(ICON_X + 2 * ICON_STEP + 10) == 12 && hitHeader(TAG_X + 20) == -1);
   assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N <= S_ROWS);
   // Detail: the left column stacks, the right column stacks, neither crosses the middle.
   assert(D_X_LOGO + LOGO_BIG <= D_X_TXT && D_X_TXT + GW(1) * 26 <= CH_X && D_Y_LOGO + LOGO_BIG <= D_Y_PRICE);
@@ -2802,6 +2871,7 @@ void loop() {
   } else if (view == View::List) {
     drawHead(&t, haveTime);
     listTick();
+    drawFoot(&t, haveTime);
   } else if (view == View::Info) {
     drawInfo(false);
   } else if (view == View::Detail) {
@@ -2838,13 +2908,25 @@ void loop() {
     if (g == Gesture::TapUp) {
       int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) openDetail(order[r]);
-      else if (ty < Y_ROW0) {  // the header: the next section
-        do sect = (sect + 1) % 5;
-        while (sect && !std::any_of(rows, rows + nRows, [](const Row &x) { return x.kind == SECT_KIND[sect]; }));
-        buildOrder();
-        saveSettings();
-        pos = 0;
-        listStart();
+      else if (ty < Y_ROW0) {  // the header: a tab, or an icon
+        int8_t h = hitHeader(tx);
+        if (h >= 0 && h < 5 && h != sect) {
+          uint8_t was = sect;
+          sect = (uint8_t)h;
+          buildOrder();
+          if (sect != h) sect = was;  // an empty section falls back; stay put
+          else {
+            saveSettings();
+            pos = 0;
+          }
+          listStart();
+        } else if (h == 10) openSearch();
+        else if (h == 11) openHeat();
+        else if (h == 12) {
+          view = View::Settings;
+          pageOpenedAt = millis();
+          drawSettings();
+        }
       }
     }
   }

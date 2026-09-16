@@ -19,17 +19,20 @@
 #define LCD_W 800
 #define LCD_H 480
 
-// Calibration knobs for the RGB timing. 16MHz with an inverted pixel clock is
-// what both sources run. If the picture shifts or tears, lower the clock
-// first; if it is mirrored in colour (cyan draws yellow), swap the R and B
-// pin groups below, as the rotary needed.
-#define LCD_PCLK_HZ 16000000
+// Calibration knobs for the RGB timing. Both sources run 16MHz with an
+// inverted pixel clock; that flickered here even on a still page, so 12MHz
+// (~28 frames a second, plenty for a ticker) asks a quarter less of the
+// PSRAM the panel scans out of. If it still flickers, go lower; if the
+// colours are mirrored (cyan draws yellow), swap the R and B pin groups.
+#define LCD_PCLK_HZ 12000000
 #define LCD_PCLK_NEG 1
 
-// The panel DMA reads its framebuffer from PSRAM; a CPU flooding PSRAM (a
-// full-width scroll) starves it and the picture glitches. A bounce buffer
-// in internal RAM is Espressif's fix. 10 lines: 2 x 16KB of SRAM.
-#define LCD_BOUNCE_PX (LCD_W * 10)
+// The panel DMA reads its framebuffer from PSRAM; whenever the CPU competes
+// for it (a full-width scroll, Wi-Fi, a flash cache miss) the DMA starves
+// and the picture glitches. A bounce buffer in internal RAM is Espressif's
+// fix: the DMA reads SRAM and an interrupt refills it in bursts. 20 lines:
+// 2 x 32KB of SRAM, and worth every byte on a 768KB framebuffer.
+#define LCD_BOUNCE_PX (LCD_W * 20)
 
 #define I2C_SDA 8
 #define I2C_SCL 9
