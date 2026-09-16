@@ -1694,10 +1694,17 @@ static int8_t hitResult(int16_t y) {
   if (y < RES_Y0 || y >= RES_Y0 + RES_H * nHits) return -1;
   return (y - RES_Y0) / RES_H;
 }
+// The caret blinks after the text, or ahead of the placeholder: a field
+// with no cursor does not look like it is listening.
+static void drawCaret(bool on) {
+  int16_t x = 40 + (query[0] ? textWidth(3, query) + 4 : 0);
+  gfx->fillRect(x, Q_Y + 12, 3, 36, on ? C_FG : C_RULE);
+}
 static void drawQuery() {
   gfx->fillRoundRect(20, Q_Y, LCD_W - 40, 60, 14, C_RULE);
   if (query[0]) textAt(40, Q_Y + 14, 3, C_FG, query);
-  else textAt(40, Q_Y + 20, 1, C_DIM, "symbol or company name");
+  else textAt(52, Q_Y + 20, 1, C_DIM, "symbol or company name");
+  drawCaret(true);
 }
 static void drawKeyboard() {
   for (uint8_t i = 0; i < 30; i++) {
@@ -1718,7 +1725,16 @@ static void drawKeyboard() {
 static void drawSearch(bool full) {
   static char cSearch[16];
   if (searchMode == 0) {
-    if (!full) return;
+    if (!full) {
+      static uint32_t blink = 0;
+      static bool on = true;
+      if (millis() - blink > 500) {
+        blink = millis();
+        on = !on;
+        drawCaret(on);
+      }
+      return;
+    }
     gfx->fillScreen(C_BG);
     textAt(20, 16, 2, C_MUTED, "SEARCH");
     textAt(LCD_W - 20 - textWidth(1, "v list"), 20, 1, C_DIM, "v list");
