@@ -1,15 +1,21 @@
-# ticker — **built** (list + detail)
+# ticker — **built** (list + detail + logos)
 
 Built 2026-09-15, first version: the LIST layout with a sparkline on every
 row, tap a row for the stock's own page (chart with previous-close line, day
 and 52-week range bars, PREV / LIST / NEXT buttons), fetches on core 0,
-brightness from the LDR. **Not built yet:** logos, the SD card, the HEATMAP
-layout, and the NVS layout memory -- the design below is the roadmap for those.
+brightness from the LDR. 2026-09-16: logos, at two sizes, from LittleFS.
+**Not built yet:** the SD card, the HEATMAP layout, and the NVS layout memory
+-- the design below is the roadmap for those.
 
 ```sh
+python3 tools/make-logos.py --size 24 --out data/logo/24   # once, on the Mac
+python3 tools/make-logos.py --size 96 --out data/logo/96
 pio run -e ticker -t upload -t monitor
-./push-config ticker
+./push-config ticker                                        # config + logos
 ```
+
+Verified 2026-09-16: `logos 24px: 26/26 present`, `logos 96px: 26/26 present`
+on the boot log, ~162KB heap free after the first coin fetch.
 
 
 <img src="preview.svg" alt="ticker list layout with logo badges and sparklines" width="240">
@@ -86,19 +92,26 @@ not look the same. Bucket the magnitude and keep the signed percentage printed o
 every tile, because colour is never allowed to be the only cue (the C6 build
 settled that already).
 
-## Logos, at two sizes, because the ceiling is gone
+## Logos, at two sizes
 
-The C6 ships 26 logos at 96×96 RGB565 — 18KB each, **479KB, 52% of its 896KB data
-partition.** That ceiling is the reason for both the size and the symbol count.
-Here they live on the SD card on its own bus and the ceiling simply doesn't
-exist, so ship **two sizes, both prepared on the host**:
+Two sizes, **both prepared on the host** and shipped raw on LittleFS:
 
 | File | Size | Used by |
 |---|---|---|
-| `/logo/128/NVDA.565` | 32KB | The stock's own page |
+| `/logo/96/NVDA.565` | 18KB | The stock's own page |
 | `/logo/24/NVDA.565` | 1.1KB | The badge on each list row |
 
-Thirty-two symbols at both sizes is ~1.1MB. On a card, that's noise.
+**96 on the detail page, not the 128 this section first planned.** 128px is
+32KB a logo; 26 of them plus the badges overflows the 896KB LittleFS partition
+once LittleFS's 4KB blocks are counted. 96 is the C6's size, the whole set at
+both sizes is 26 × (18KB + 1.1KB) ≈ 510KB (628KB on disk with block rounding),
+and it needed no SD card driver. `// ponytail:` in `main.cpp` marks it: when
+the SD card lands, the ceiling goes and 128 is one constant and one rerun.
+
+`tools/make-logos.py` is the C6's converter reached by symlink, with an `--out`
+so one script writes both sizes into this app's `data/`. The firmware reads
+`/logo/<size>/<LABEL>.565` into one static 18KB buffer and blits it; the boot
+log inventories both sizes (`logos 24px: 26/26 present`).
 
 **Two files rather than scaling on the device.** Nearest-neighbour from 128 to 24
 turns a logo into a smear, and anything better costs code plus a buffer on a

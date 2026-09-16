@@ -20,6 +20,11 @@ and this is not worth a pip install.
 Usage:
     python3 tools/make-logos.py            # from apps/ticker/
     python3 tools/make-logos.py --size 64  # smaller, if flash gets tight
+    python3 tools/make-logos.py --size 24 --out data/logo/24   # a second size
+
+The CYD ticker reaches this file through a symlink in its own tools/, so paths
+are taken from the link's location (absolute(), not resolve()) and land in
+THAT app's data/, not this one's.
 """
 
 import argparse
@@ -31,7 +36,7 @@ import sys
 import urllib.error
 import urllib.request
 
-HERE = pathlib.Path(__file__).resolve().parent.parent
+HERE = pathlib.Path(__file__).absolute().parent.parent
 CONFIG = HERE / "data" / "config.json"
 OUTDIR = HERE / "data" / "logo"
 
@@ -222,7 +227,9 @@ def to_rgb565(px, w, h, mode: str, invert_glyph: bool) -> bytes:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--size", type=int, default=96, help="square logo size in px (default 96)")
+    ap.add_argument("--out", type=pathlib.Path, default=OUTDIR, help="output dir (default data/logo)")
     args = ap.parse_args()
+    outdir = args.out
 
     wl = json.loads(CONFIG.read_text())
     targets = [(s, STOCK_URL.format(s)) for s in wl.get("stocks", [])]
@@ -233,7 +240,7 @@ def main() -> int:
         # resolve, and the firmware falls back to drawing the text.
         targets.append((label, COIN_URL.format(label.lower())))
 
-    OUTDIR.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
     tmp = pathlib.Path("/tmp/ticker-logos")
     tmp.mkdir(exist_ok=True)
 
@@ -252,7 +259,7 @@ def main() -> int:
             continue
 
         mode, invert = classify(px, w, h)
-        dest = OUTDIR / f"{label}.565"
+        dest = outdir / f"{label}.565"
         data = to_rgb565(px, w, h, mode, invert)
         dest.write_bytes(data)
 
@@ -264,12 +271,12 @@ def main() -> int:
                   if max(_unpack565(data, i)) >= 40) * 100 // (w * h)
         warn = "  <-- WARNING: nearly invisible on black" if vis < 6 else ""
         print(f"    {w}x{h}  bg={mode}{', mark inverted' if invert else ''}"
-              f"  {vis}% visible  -> {dest.relative_to(HERE)}{warn}")
+              f"  {vis}% visible  -> {dest}{warn}")
         ok += 1
         if vis < 6:
             faint += 1
 
-    total = sum(f.stat().st_size for f in OUTDIR.glob("*.565"))
+    total = sum(f.stat().st_size for f in outdir.glob("*.565"))
     if faint:
         print(f"\n{faint} logo(s) came out nearly invisible on black -- the border "
               f"detection in classify() did not catch their background shape.")

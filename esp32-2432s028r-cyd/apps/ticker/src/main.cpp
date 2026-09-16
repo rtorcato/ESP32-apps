@@ -16,6 +16,7 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <LittleFS.h>
 #include <NetworkClientSecure.h>
 #include <WiFi.h>
 #include <assert.h>
@@ -41,6 +42,11 @@ static const uint32_t WIFI_RETRY_MS = 20UL * 1000, LOG_MS = 60UL * 1000;
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
 
 static const uint8_t ROWS = 6, MAX_SYMBOLS = 32, MAX_LABEL = 5, SPARK_N = 80;
+// Two logo sizes, both pre-converted on the Mac (tools/make-logos.py --size N
+// --out data/logo/N) and read raw from /logo/<N>/<LABEL>.565. Must match.
+// ponytail: 96 on the detail page, not the README's 128 -- 26 x 32KB plus
+// badges overflows the 896KB LittleFS partition. 128 when the SD card lands.
+static const uint8_t LOGO_BADGE = 24, LOGO_BIG = 96;
 #define GW(s) (6 * (s))
 #define GH(s) (8 * (s))
 
@@ -159,12 +165,13 @@ static bool loadConfig() {
 }
 
 // ── layout (portrait 240x320, fixed) ─────────────────────────────────────
-// List: six 42px rows. Symbol | sparkline | price over percent.
-static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, X_SPK = 72, SPK_W = 70,
-                     SPK_H = 28, X_RIGHT = 234, Y_FOOT = 282, FOOT_STEP = 12;
-// Detail: symbol, name, price, change, chart, two range bars, three buttons.
-static const int16_t D_Y_SYM = 6, D_Y_NAME = 32, D_Y_PRICE = 46, D_Y_CHG = 82, D_Y_HI = 100,
-                     CH_X = 6, CH_Y = 110, CH_W = 228, CH_H = 90, D_Y_LO = 202, D_Y_DAY = 218,
+// List: six 42px rows. Badge | symbol | sparkline | price over percent.
+static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 7, X_LBL = 32,
+                     X_SPK = 96, SPK_W = 50, SPK_H = 28, X_RIGHT = 234, Y_FOOT = 282, FOOT_STEP = 12;
+// Detail: 96px logo at the left with symbol, name, price, change beside it;
+// then chart, two range bars, three buttons.
+static const int16_t D_X_TXT = 108, D_Y_SYM = 6, D_Y_NAME = 34, D_Y_PRICE = 46, D_Y_CHG = 74, D_Y_PCT = 92,
+                     D_Y_HI = 112, CH_X = 6, CH_Y = 122, CH_W = 228, CH_H = 78, D_Y_LO = 202, D_Y_DAY = 218,
                      D_Y_WK = 242, BAR_X = 40, BAR_W = 194, BAR_H = 6, D_Y_BTN = 282, BTN_H = 34,
                      BTN_W = 76;
 
@@ -227,6 +234,43 @@ static void fieldCentre(int16_t cx, int16_t y, uint8_t chars, uint8_t size, uint
   gfx->setTextColor(fg);
   gfx->setCursor(cx - GW(size) * (int16_t)strlen(s) / 2, y);
   gfx->print(s);
+}
+
+// Logos are raw RGB565 files on LittleFS: open, check the length is exactly
+// size*size*2, blit. No decoder, no fetch. False when the file is missing or
+// the wrong size, and the caller draws nothing there -- the symbol text next
+// to it carries the identity. One static buffer serves both sizes.
+static uint16_t logoBuf[LOGO_BIG * LOGO_BIG];
+static bool blitLogo(int16_t x, int16_t y, uint8_t size, const char *label) {
+  char path[40];
+  snprintf(path, sizeof path, "/logo/%u/%s.565", size, label);
+  File f = LittleFS.open(path, "r");
+  if (!f) return false;
+  const size_t want = (size_t)size * size * 2;
+  bool ok = f.size() == want && f.read((uint8_t *)logoBuf, want) == want;
+  f.close();
+  if (!ok) {
+    Serial.printf("%s: bad size, rerun tools/make-logos.py --size %u\n", path, size);
+    return false;
+  }
+  gfx->draw16bitRGBBitmap(x, y, logoBuf, size, size);
+  return true;
+}
+
+// Inventory at boot so a missing set is named on the log, not discovered row
+// by row. A missing logo is an ordinary case, not an error.
+static void logoInventory() {
+  for (uint8_t size : {LOGO_BADGE, LOGO_BIG}) {
+    uint8_t have = 0;
+    for (uint8_t i = 0; i < nRows; i++) {
+      char path[40];
+      snprintf(path, sizeof path, "/logo/%u/%s.565", size, rows[i].label);
+      File f = LittleFS.open(path, "r");
+      if (f && f.size() == (size_t)size * size * 2) have++;
+    }
+    Serial.printf("logos %upx: %u/%u present%s\n", size, have, nRows,
+                  have ? "" : "  (python3 tools/make-logos.py --size N --out data/logo/N; ./push-config ticker)");
+  }
 }
 
 // The series as a shape: scaled to its own min/max, no axis. "Not yet" is a
@@ -301,7 +345,9 @@ static void drawRows(bool cascade = false) {
     strcpy(cRow[slot], key);
 
     uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
-    field(X_SYM, y + 4, MAX_LABEL, 2, C_FG, r.label);
+    if (!blitLogo(X_SYM, y + Y_BADGE, LOGO_BADGE, r.label))
+      gfx->fillRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, C_BG);  // the previous page's badge
+    field(X_LBL, y + 4, MAX_LABEL, 2, C_FG, r.label);
     drawSpark(X_SPK, y + 4, SPK_W, SPK_H, r);
     fieldRight(X_RIGHT, y + 2, 7, 2, fg, price);
     fieldRight(X_RIGHT, y + 22, 7, 1, fg, pct);
@@ -385,6 +431,7 @@ static void drawDetail(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
     cDetail[0] = '\0';
+    blitLogo(X_SYM, D_Y_SYM, LOGO_BIG, r.label);  // missing: the square stays black
     drawButton(0, "<PREV");
     drawButton(1, "LIST");
     drawButton(2, "NEXT>");
@@ -402,18 +449,15 @@ static void drawDetail(bool full) {
   strcpy(cDetail, key);
 
   uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
-  field(X_SYM, D_Y_SYM, MAX_LABEL, 3, C_FG, r.label);
-  field(X_SYM, D_Y_NAME, 38, 1, C_MUTED, r.coin ? "crypto, 24h change" : r.name);
-  field(X_SYM, D_Y_PRICE, 9, 4, fg, price);
-  char chg[24];
-  if (r.valid && r.prev > 0) {
-    char a[12];
-    snprintf(a, sizeof a, "%+.2f", r.price - r.prev);
-    snprintf(chg, sizeof chg, "%s  %s", a, pct);
-  } else {
-    snprintf(chg, sizeof chg, "%s", pct);
-  }
-  field(X_SYM, D_Y_CHG, 19, 2, fg, chg);
+  char name[22];  // what fits beside the logo; a long name is cut, not wrapped
+  snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.name);
+  field(D_X_TXT, D_Y_SYM, MAX_LABEL, 3, C_FG, r.label);
+  field(D_X_TXT, D_Y_NAME, 21, 1, C_MUTED, name);
+  field(D_X_TXT, D_Y_PRICE, 7, 3, fg, price);
+  char chg[12] = "";
+  if (r.valid && r.prev > 0) snprintf(chg, sizeof chg, "%+.2f", r.price - r.prev);
+  field(D_X_TXT, D_Y_CHG, 10, 2, fg, chg);
+  field(D_X_TXT, D_Y_PCT, 7, 2, fg, pct);
 
   // Chart: the sparkline's data with room to be a chart. The previous close
   // is a dashed reference line -- the percent is measured from it, so
@@ -709,19 +753,24 @@ static void selfCheck() {
   assert(sparkY(10, 10, 20, 100, 28) == 127 && sparkY(20, 10, 20, 100, 28) == 100);
   assert(sparkY(5, 5, 5, 100, 28) == 114);
 
-  // Geometry: symbol, sparkline and price never overlap; rows clear the footer.
-  assert(X_SYM + GW(2) * MAX_LABEL <= X_SPK);
+  // Geometry: badge, symbol, sparkline and price never overlap; rows clear the footer.
+  assert(X_SYM + LOGO_BADGE <= X_LBL);
+  assert(Y_BADGE + LOGO_BADGE <= ROW_H - 4);
+  assert(X_LBL + GW(2) * MAX_LABEL <= X_SPK);
   assert(X_SPK + SPK_W <= X_RIGHT - GW(2) * 7);
   assert(4 + SPK_H <= ROW_H - 4);
   assert(Y_ROW0 + ROW_H * ROWS <= Y_FOOT);
   assert(Y_FOOT + FOOT_STEP * 2 + GH(1) <= 320);
-  // Detail: the vertical stack, the chart labels and the buttons all fit.
+  // Detail: the logo and the text column beside it, then the chart labels
+  // and the buttons, all fit.
+  assert(X_SYM + LOGO_BIG <= D_X_TXT && D_Y_SYM + LOGO_BIG <= D_Y_HI);
+  assert(D_X_TXT + GW(3) * 7 <= 240 && D_X_TXT + GW(1) * 21 <= 240 && D_X_TXT + GW(2) * 10 <= 240);
   assert(D_Y_SYM + GH(3) <= D_Y_NAME && D_Y_NAME + GH(1) <= D_Y_PRICE);
-  assert(D_Y_PRICE + GH(4) <= D_Y_CHG && D_Y_CHG + GH(2) <= D_Y_HI);
+  assert(D_Y_PRICE + GH(3) <= D_Y_CHG && D_Y_CHG + GH(2) <= D_Y_PCT && D_Y_PCT + GH(2) <= D_Y_HI);
   assert(D_Y_HI + GH(1) <= CH_Y && CH_Y + CH_H <= D_Y_LO && D_Y_LO + GH(1) <= D_Y_DAY);
   assert(D_Y_DAY + 10 + GH(1) <= D_Y_WK && D_Y_WK + 10 + GH(1) <= D_Y_BTN);
   assert(D_Y_BTN + BTN_H <= 320 && 2 + 2 * 80 + BTN_W <= 240);
-  assert(GW(4) * 9 <= 240 && GW(1) * 38 <= 240 - X_SYM);
+  assert(sizeof logoBuf >= (size_t)LOGO_BADGE * LOGO_BADGE * 2);
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
@@ -746,6 +795,7 @@ void setup() {
     return;  // loop() draws the panel
   }
   cfgRelease();
+  logoInventory();
 
   const char *boot[] = {"connecting to wifi", WIFI_SSID};
   drawPanel("STARTING", C_MUTED, boot, 2);
