@@ -938,6 +938,8 @@ static void drawSplash(const char *status) {
   gfx->fillRect(LCD_W / 2 - 24, 86, 48, 2, C_GOLD);
   const char *tag = "STOCKS   CRYPTO   HEADLINES";
   textAt((LCD_W - textWidth(1, tag)) / 2, 98, 1, C_MUTED, tag);
+  const char *credit = "made by Richard Torcato";
+  textAt((LCD_W - textWidth(1, credit)) / 2, 248, 1, C_MUTED, credit);
   splashStatus(status);
 }
 
@@ -1295,6 +1297,8 @@ static void drawInfo(bool full) {
   snprintf(l[n++], 40, "%u symbols: %u stocks, %u coins", nRows, nStocks, nCoins);
   snprintf(l[n++], 40, "logos %u/%u badges, %u/%u large", haveLogo[0], nRows, haveLogo[1], nRows);
   snprintf(l[n++], 40, "built " __DATE__ " " __TIME__);
+  l[n++][0] = '\0';
+  snprintf(l[n++], 40, "tap anywhere for the splash screen");
   for (uint8_t i = 0; i < n; i++) field(8, 62 + i * 11, 38, 1, i == 0 ? C_FG : C_MUTED, l[i]);
 }
 
@@ -2163,7 +2167,7 @@ static void selfCheck() {
 
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
-enum class View { List, Detail, Settings, Info, Calib, News, Search };
+enum class View { List, Detail, Settings, Info, Calib, News, Search, Splash };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -2367,6 +2371,7 @@ void loop() {
       else if (view == View::Info) drawInfo(true);
       else if (view == View::News) drawNews(true);
       else if (view == View::Search) drawSearch(true);
+      else if (view == View::Splash) drawSplash("tap to return");
       else drawDetail(true);
     }
   }
@@ -2456,7 +2461,7 @@ void loop() {
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) ||
                 (view == View::Search && g == Gesture::SwipeDown) ||
-                (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown));
+                (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (acts && (sSound & 1)) tone(SPK, 1200, 15);
     if (view == View::List && g == Gesture::SwipeRight) {
       view = View::Settings;
@@ -2491,6 +2496,10 @@ void loop() {
         pageOpenedAt = millis();
         drawSettings();
       }
+    } else if (view == View::Splash) {  // any swipe brings the info page back
+      view = View::Info;
+      pageOpenedAt = millis();
+      drawInfo(true);
     }
   }
 
@@ -2543,8 +2552,14 @@ void loop() {
         calStep = 0;
         drawCalTarget();
       }
-    } else if (view == View::Info) {
-      pageOpenedAt = millis();  // a tap only keeps it open
+    } else if (view == View::Info) {  // a tap shows the splash, as the last line says
+      view = View::Splash;
+      pageOpenedAt = millis();
+      drawSplash("tap to return");
+    } else if (view == View::Splash) {
+      view = View::Info;
+      pageOpenedAt = millis();
+      drawInfo(true);
     } else {
       int8_t rg = hitRange(tx, ty);
       if (rg >= 0 && !rows[detailIdx].coin && rg != rangeSel) {
@@ -2559,7 +2574,7 @@ void loop() {
 
   if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
     backToList();
-  if ((view == View::Info || view == View::Settings || view == View::Search) && returnMs && !touchHeld &&
+  if ((view == View::Info || view == View::Settings || view == View::Search || view == View::Splash) && returnMs && !touchHeld &&
       millis() - pageOpenedAt > returnMs)
     backToList();
 

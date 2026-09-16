@@ -29,5 +29,6 @@
   <text x="120" y="73" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" font-weight="bold" fill="#e6edf3" text-anchor="middle">TICKER</text>
   <rect x="96" y="86" width="48" height="2" rx="0" fill="#e8a020"/>
   <text x="120" y="106" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="middle">STOCKS   CRYPTO   HEADLINES</text>
+  <text x="120" y="256" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#9aa4ae" text-anchor="middle">made by Richard Torcato</text>
   <text x="120" y="294" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#5c6670" text-anchor="middle">connecting to MatrixZeroIOT</text>
 </svg>

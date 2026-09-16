@@ -319,8 +319,9 @@ first if a gesture "does nothing".
 
 **Boot splash**, drawn rather than shipped: a navy-to-black sky, nine
 candles on the way up with a gold average through them, the wordmark, and
-one status line that follows the Wi-Fi join. A wake from deep sleep skips it
-and goes straight to the restored list.
+one status line that follows the Wi-Fi join, and the maker's credit. A wake
+from deep sleep skips it and goes straight to the restored list. A tap on the
+INFO page shows it again; a tap or swipe returns.
 
 **Type.** Four logical text sizes, each a Helvetica bitmap face (the X11
 Adobe set, via U8g2, extracted into `lib/fonts/helv.h` rather than pulling
