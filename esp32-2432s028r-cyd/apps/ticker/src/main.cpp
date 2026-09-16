@@ -95,8 +95,8 @@ static char wifiSsid[33] = "", wifiPass[65] = "";
 // Shutdown is deep sleep with nothing but a touch to wake it: this board has
 // no power switch, and the panel, radio and chip all go dark. Two taps
 // within three seconds, so a stray finger cannot turn it off.
-static uint32_t shutdownArmedUntil = 0, clearArmedUntil = 0;
-static uint8_t setPage = 0;  // settings page: 0 the everyday rows, 1 the device rows
+static uint8_t setTop = 0;      // the first settings row on screen, 0..S_ROWS-S_N
+static uint8_t confirmWhat = 0;  // the confirm screen: 1 shut down, 2 clear the device
 // Sound and LED are each two bits: bit 0 the everyday use (tap clicks /
 // the day's glow), bit 1 the alerts (chime / white blinks).
 static const char *const TWO_NAMES[][4] = {{"off", "taps", "alerts", "both"}, {"off", "glow", "alerts", "both"}};
@@ -426,7 +426,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 64, S_H = 30, S_N = 8;  // rows per page; two pages, a row or a swipe apart
+static const int16_t S_Y0 = 64, S_H = 30, S_N = 8, S_ROWS = 12;  // eight of twelve rows show; drag for the rest
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -1379,21 +1379,19 @@ static void saveSettings() {
 }
 
 static void drawSettingRow(uint8_t i) {
-  // Row numbers run across both pages: 0-7 on the first (the last one opens
-  // the second), 8-13 on the second (the last one comes back). A swipe up
-  // or down does the same, but a row is something you can see.
-  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Device",
-                                       "Touch", "Wi-Fi", "Info", "Clear device", "Shutdown", "Back"};
+  // One list, twelve rows, eight on screen; a drag scrolls it a row at a
+  // time. The everyday rows first, Shutdown among them, the device rows last.
+  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Shutdown",
+                                       "Touch", "Wi-Fi", "Info", "Clear device"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
                 : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
                 : i == 6 ? sCur : i == 7 ? ">" : i == 8 ? "calibrate" : i == 9 ? (wifiSsid[0] ? wifiSsid : "not set")
-                : i == 10 ? ">" : i == 11 ? (clearArmedUntil ? "tap again" : "tap twice")
-                : i == 12 ? (shutdownArmedUntil ? "tap again" : "tap twice") : "<";
-  if (i / S_N != setPage) return;
-  int16_t y = S_Y0 + (i % S_N) * S_H;
-  bool danger = i == 11 || i == 12, armed = (i == 11 && clearArmedUntil) || (i == 12 && shutdownArmedUntil);
+                : i == 10 ? ">" : ">";
+  if (i < setTop || i >= setTop + S_N) return;
+  int16_t y = S_Y0 + (i - setTop) * S_H;
+  bool danger = i == 7 || i == 11;
   field(8, y + 6, 11, 2, danger ? C_BAD : C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 6, 9, 2, armed ? C_WARN : C_FG, v);
+  fieldRight(X_RIGHT, y + 6, 9, 2, C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
@@ -1416,31 +1414,40 @@ static void nextCurrency() {
   (void)codes;
 }
 static void drawSettings() {
-  drawPanel(setPage ? "DEVICE" : "SETTINGS", C_MUTED, nullptr, 0);
-  for (uint8_t i = 0; i < 14; i++) drawSettingRow(i);
-  drawHint(setPage ? "v settings     < list" : "^ device     < list");
+  drawPanel("SETTINGS", C_MUTED, nullptr, 0);
+  gfx->fillRect(0, S_Y0, LCD_W, S_H * S_N, C_BG);
+  for (uint8_t i = 0; i < S_ROWS; i++) drawSettingRow(i);
+  drawHint(setTop + S_N < S_ROWS ? "drag up for more     < list" : "drag down for the rest     < list");
 }
+// The confirm screen for the two rows that cannot be undone.
+static void drawConfirm() {
+  gfx->fillScreen(C_BG);
+  bool clear = confirmWhat == 2;
+  field(8, 24, 12, 3, C_BAD, clear ? "CLEAR DEVICE" : "SHUT DOWN");
+  gfx->drawFastHLine(8, 54, 224, C_RULE);
+  const char *const l1[] = {"This wipes everything the board", "holds: the Wi-Fi network and its",
+                            "password, every setting, the list", "edits, the touch calibration.", "",
+                            "It restarts into setup, ready for", "someone else."};
+  const char *const l2[] = {"The panel, the radio and the chip", "go dark. A touch wakes it.", "",
+                            "Prices on screen are kept and come", "back the moment it wakes."};
+  const char *const *l = clear ? l1 : l2;
+  uint8_t n = clear ? 7 : 5;
+  for (uint8_t i = 0; i < n; i++) textAt(8, 66 + i * 13, 1, C_MUTED, l[i]);
+  gfx->fillRoundRect(8, 200, 224, 60, 10, C_BAD);
+  const char *t = clear ? "TAP TO CLEAR" : "TAP TO SHUT DOWN";
+  textAt((LCD_W - textWidth(2, t)) / 2, 200 + (60 - FACES[1].cap) / 2, 2, C_FG, t);
+  drawHint("v cancel, or tap anywhere else");
+}
+static bool hitConfirm(int16_t x, int16_t y) { return y >= 200 && y < 260 && x >= 8 && x < 232; }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
-// 2 (touch calibration), 3 (shut down now), 4 (Wi-Fi setup), 5 (clear the
-// device), 6 (the other settings page).
+// 2 (touch calibration), 3 (confirm a shutdown), 4 (Wi-Fi setup), 5 (confirm
+// clearing the device).
 static uint8_t tapSetting(uint8_t i) {
-  if (i == 7 || i == 13) return 6;
   if (i == 10) return 1;
   if (i == 8) return 2;
   if (i == 9) return 4;
-  if (i == 12) {
-    if (shutdownArmedUntil && millis() < shutdownArmedUntil) return 3;
-    shutdownArmedUntil = millis() + 3000;
-    drawSettingRow(12);
-    return 0;
-  }
-  if (i == 11) {
-    if (clearArmedUntil && millis() < clearArmedUntil) return 5;
-    clearArmedUntil = millis() + 3000;
-    drawSettingRow(11);
-    return 0;
-  }
-  if (i > 6) return 0;
+  if (i == 7) return 3;
+  if (i == 11) return 5;
   if (i == 6) nextCurrency();
   else if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
@@ -2534,7 +2541,7 @@ static void selfCheck() {
   assert(Y_SPK + SPK_H <= ROW_H - 4);
   assert(Y_ROW0 + RING <= LCD_H);  // the ring plus header fills the panel; nothing below it
   assert(72 + GW(1) * 18 <= X_RIGHT - GW(1) * 5);
-  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N * 2 >= 14);
+  assert(S_Y0 + S_H * S_N <= Y_HINT && hitSetting(S_Y0 - 1) == -1 && hitSetting(S_Y0) == 0 && S_N <= S_ROWS);
   assert(hitSetting(S_Y0 + S_H * S_N - 1) == S_N - 1 && hitSetting(S_Y0 + S_H * S_N) == -1);
   // Detail: the logo and the text column beside it, then the chart labels
   // and the buttons, all fit.
@@ -2553,7 +2560,7 @@ static void selfCheck() {
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
-enum class View { List, Detail, Settings, Info, Calib, News, Search, Splash, Heat };
+enum class View { List, Detail, Settings, Info, Calib, News, Search, Splash, Heat, Confirm };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -2826,6 +2833,7 @@ void loop() {
       else if (view == View::Search) drawSearch(true);
       else if (view == View::Splash) drawSplash("tap to return");
       else if (view == View::Heat) drawHeat(true);
+      else if (view == View::Confirm) drawConfirm();
       else drawDetail(true);
     }
   }
@@ -2920,7 +2928,7 @@ void loop() {
   if (swipe && state == State::Running) {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
-                (view == View::Settings && (g == Gesture::SwipeLeft || g == Gesture::SwipeUp || g == Gesture::SwipeDown)) ||
+                (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && g == Gesture::SwipeDown) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (acts && (sSound & 1)) tone(SPK, 1200, 15);
@@ -2957,8 +2965,8 @@ void loop() {
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
-    } else if (view == View::Settings && (g == Gesture::SwipeUp || g == Gesture::SwipeDown)) {
-      setPage = g == Gesture::SwipeUp ? 1 : 0;
+    } else if (view == View::Confirm && g == Gesture::SwipeDown) {
+      view = View::Settings;
       pageOpenedAt = millis();
       drawSettings();
     } else if (view == View::Info) {
@@ -2984,13 +2992,15 @@ void loop() {
     drawHint(m, C_WARN);
     if (sSound & 1) tone(SPK, 600, 40);
   }
-  if (shutdownArmedUntil && millis() > shutdownArmedUntil) {
-    shutdownArmedUntil = 0;
-    if (view == View::Settings) drawSettingRow(12);
-  }
-  if (clearArmedUntil && millis() > clearArmedUntil) {
-    clearArmedUntil = 0;
-    if (view == View::Settings) drawSettingRow(11);
+  // A drag on settings scrolls it a row per 30px; the shared drag handler
+  // below reports the delta.
+  if (view == View::Settings && g == Gesture::Drag && ddy) {
+    static int16_t acc = 0;
+    acc += ddy;
+    while (acc <= -S_H && setTop + S_N < S_ROWS) { acc += S_H; setTop++; drawSettings(); }
+    while (acc >= S_H && setTop > 0) { acc -= S_H; setTop--; drawSettings(); }
+    if (setTop == 0 && acc > 0) acc = 0;
+    if (setTop + S_N >= S_ROWS && acc < 0) acc = 0;
   }
   if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
     removeArmedUntil = 0;
@@ -3026,7 +3036,7 @@ void loop() {
     } else if (view == View::Settings) {
       int8_t i = hitSetting(ty);
       pageOpenedAt = millis();
-      uint8_t r = i >= 0 ? tapSetting((uint8_t)(setPage * S_N + i)) : 0;
+      uint8_t r = i >= 0 && setTop + i < S_ROWS ? tapSetting((uint8_t)(setTop + i)) : 0;
       if (r == 1) {
         view = View::Info;
         drawInfo(true);
@@ -3034,19 +3044,27 @@ void loop() {
         view = View::Calib;
         calStep = 0;
         drawCalTarget();
-      } else if (r == 3) {
-        drawHint("shutting down. touch to wake", C_WARN);
-        delay(600);
-        goToSleep(0);  // no timer: a touch is the only way back
+      } else if (r == 3 || r == 5) {
+        confirmWhat = r == 3 ? 1 : 2;
+        view = View::Confirm;
+        drawConfirm();
       } else if (r == 4) {
         WiFi.disconnect(true);
         startSetup();
-      } else if (r == 5) {
-        drawHint("clearing. it restarts into setup", C_WARN);
-        delay(600);
-        clearDevice();
-      } else if (r == 6) {
-        setPage = !setPage;
+      }
+    } else if (view == View::Confirm) {
+      if (hitConfirm(tx, ty)) {
+        if (confirmWhat == 2) {
+          drawHint("clearing. it restarts into setup", C_WARN);
+          delay(600);
+          clearDevice();
+        } else {
+          drawHint("shutting down. touch to wake", C_WARN);
+          delay(600);
+          goToSleep(0);  // no timer: a touch is the only way back
+        }
+      } else {
+        view = View::Settings;
         drawSettings();
       }
     } else if (view == View::Info) {  // a tap shows the splash, as the last line says
@@ -3071,7 +3089,8 @@ void loop() {
 
   if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
     backToList();
-  if ((view == View::Info || view == View::Settings || view == View::Search || view == View::Splash || view == View::Heat) &&
+  if ((view == View::Info || view == View::Settings || view == View::Search || view == View::Splash || view == View::Heat ||
+       view == View::Confirm) &&
       returnMs && !touchHeld &&
       millis() - pageOpenedAt > returnMs)
     backToList();

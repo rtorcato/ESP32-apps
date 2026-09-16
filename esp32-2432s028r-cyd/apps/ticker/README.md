@@ -279,18 +279,19 @@ the list. Settings: swipe left for the list. Info: left for the list, down
 for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
-**SETTINGS, swipe right from the list.** Two pages: a Device row at the
-foot of the first opens the second, a Back row returns, and a swipe up or
-down does the same.
-The everyday page, tap to cycle: scroll speed (slow / normal / fast),
-backlight (auto / bright / dim), sound (off / taps / alerts / both),
-auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
-the night window is `sleep.from` / `.to` in config.json), LED (off / glow /
-alerts / both), Currency. The DEVICE page: Touch (the calibration above),
-Wi-Fi (the setup below, again), Info, Clear device (wipes everything the
-device holds -- network, settings, edits, calibration -- and restarts into
-setup; two taps within three seconds), and Shutdown (deep sleep with nothing
-but a touch to wake it, since the board has no power switch; two taps).
+**SETTINGS, swipe right from the list.** One list of twelve rows, eight on
+screen, a drag scrolls it a row at a time. Tap to cycle: scroll speed
+(slow / normal / fast), backlight (auto / bright / dim), sound (off / taps /
+alerts / both), auto-return (15s / 60s / never), sleep (never / night /
+closed -- see below; the night window is `sleep.from` / `.to` in
+config.json), LED (off / glow / alerts / both), Currency, Shutdown (deep
+sleep with nothing but a touch to wake it, since the board has no power
+switch), then the device rows: Touch (the calibration above), Wi-Fi (the
+setup below, again), Info, and Clear device (wipes everything the device
+holds -- network, settings, edits, calibration -- and restarts into setup).
+Shutdown and Clear device open a **confirm screen** that says what will
+happen, with one red tile to tap; a swipe down or a tap anywhere else
+cancels.
 
 **Setup: the device asks for its Wi-Fi.** There is no `secrets.h` in this
 app and nothing compiled in. With no network in NVS -- first boot, after
