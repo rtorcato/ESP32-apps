@@ -2485,6 +2485,7 @@ static void selfCheck() {
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
+static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
 enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
@@ -2580,7 +2581,7 @@ static void netTick() {
   // Retry with a fresh scan, backing off, whenever the link is down for a
   // while -- whatever is on the screen.
   static uint32_t lastRetry = 0;
-  static uint16_t retries = 0;
+  uint16_t &retries = wifiRetries;
   if (up) {
     retries = 0;
     lastRetry = 0;
@@ -2789,8 +2790,13 @@ void loop() {
     }
   } else if (state != State::Running) {
     drawFailPanel();
-    if (state == State::NoWifi && (g == Gesture::Tap || g == Gesture::TapUp || g == Gesture::SwipeRight)) {
-      WiFi.disconnect(true);  // the panel said so: any touch on NO WIFI opens setup
+    // Any touch on NO WIFI opens setup; so does the BOOT button; and so
+    // does the third failed join on its own (about a minute), because a
+    // wrong network name must never need a working touch panel to fix.
+    if (state == State::NoWifi && (g == Gesture::Tap || g == Gesture::TapUp || g == Gesture::SwipeRight || bootPressed() ||
+                                   wifiRetries >= 3)) {
+      Serial.println(wifiRetries >= 3 ? "three joins failed: setup" : "setup asked for");
+      WiFi.disconnect(true);
       startSetup();
     }
   } else if (view == View::List) {
