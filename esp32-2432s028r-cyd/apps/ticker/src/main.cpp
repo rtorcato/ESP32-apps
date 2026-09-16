@@ -86,6 +86,10 @@ static uint8_t sSpeed = 1, sBl = 0, sRet = 1, sSleep = 0;
 // (how many of X one USD buys). USD, or any code the config lists. A row
 // whose rate is missing shows its own currency, and the page says which.
 static char sCur[4] = "USD";
+// Shutdown is deep sleep with nothing but a touch to wake it: this board has
+// no power switch, and the panel, radio and chip all go dark. Two taps
+// within three seconds, so a stray finger cannot turn it off.
+static uint32_t shutdownArmedUntil = 0;
 // Sound and LED are each two bits: bit 0 the everyday use (tap clicks /
 // the day's glow), bit 1 the alerts (chime / white blinks).
 static const char *const TWO_NAMES[][4] = {{"off", "taps", "alerts", "both"}, {"off", "glow", "alerts", "both"}};
@@ -1265,10 +1269,6 @@ static void drawSettingRow(uint8_t i) {
   fieldRight(X_RIGHT, y + 3, 9, 2, i == 9 && shutdownArmedUntil ? C_WARN : C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
-// Shutdown is deep sleep with nothing but a touch to wake it: this board has
-// no power switch, and the panel, radio and chip all go dark. Two taps
-// within three seconds, so a stray finger cannot turn it off.
-static uint32_t shutdownArmedUntil = 0;
 // The next display currency: USD, then each CURRENCIES row, round again.
 static void nextCurrency() {
   int8_t cur = -1;
