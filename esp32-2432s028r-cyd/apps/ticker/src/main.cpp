@@ -211,7 +211,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 64, S_H = 36, S_N = 6;
+static const int16_t S_Y0 = 64, S_H = 34, S_N = 7;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -239,6 +239,18 @@ static Series series[N_RANGES];  // [0] unused; written by the fetch task, read 
 static volatile uint8_t seriesWant = 0;  // bitmask of ranges still to fetch for seriesIdx
 static volatile uint8_t seriesIdx = 0;
 static uint8_t rangeSel = 0;
+
+// ── news: Yahoo's per-symbol headline RSS, keyless ───────────────────────
+struct NewsItem {
+  char title[96];
+  char age[8];
+};
+static const uint8_t NEWS_N = 6;
+static NewsItem news[NEWS_N];  // fetch task writes, UI reads, under mux
+static uint8_t newsN = 0, newsIdx = 255;
+static uint32_t newsAt = 0;
+static bool newsFailed = false;
+static volatile int16_t newsWant = -1;  // symbol index to fetch headlines for, or -1
 
 // ── pure helpers (what selfCheck covers) ─────────────────────────────────
 static void formatPrice(float v, char *out, size_t n) {
@@ -680,7 +692,7 @@ static void drawDetail(bool full) {
     gfx->fillScreen(C_BG);
     cDetail[0] = '\0';
     blitLogo(X_SYM, D_Y_SYM, LOGO_BIG, r.label);  // missing: the square stays black
-    drawHint("< next     v list     prev >");
+    drawHint("< next    ^ news    v list    prev >");
     if (!r.coin) drawRangeChips();
   }
   // The selected range's series: the row's own for 1D, else that range's
@@ -772,6 +784,17 @@ static void loadSettings() {
     sRet = prefs.getUChar("ret", sRet) % 3;
     sSound = prefs.getBool("snd", sSound);
     sSleep = prefs.getUChar("slp", sSleep) % 3;
+  }
+  if (prefs.isKey("tx0")) {
+    touchCal.swap = prefs.getBool("tsw", false);
+    touchCal.xMin = prefs.getShort("tx0", touchCal.xMin);
+    touchCal.xMax = prefs.getShort("tx1", touchCal.xMax);
+    touchCal.yMin = prefs.getShort("ty0", touchCal.yMin);
+    touchCal.yMax = prefs.getShort("ty1", touchCal.yMax);
+    Serial.printf("touch cal from NVS: swap %d  x %d..%d  y %d..%d\n", touchCal.swap, touchCal.xMin, touchCal.xMax,
+                  touchCal.yMin, touchCal.yMax);
+  }
+  if (any) {
     applySettings();
   } else {  // nothing saved yet: the config's own values stand
     for (uint8_t i = 0; i < 3; i++) if (SPEED_MS[i] == pageMs) sSpeed = i;
@@ -796,12 +819,12 @@ static void saveSettings() {
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Sleep", "Info"};
+  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Sleep", "Touch", "Info"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? (sSound ? "on" : "off")
-                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : ">";
+                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? "calibrate" : ">";
   int16_t y = S_Y0 + i * S_H;
-  field(8, y + 12, 11, 2, C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 12, 7, 2, C_FG, v);
+  field(8, y + 8, 11, 2, C_MUTED, labels[i]);
+  fieldRight(X_RIGHT, y + 8, 9, 2, C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
 static void drawSettings() {
@@ -809,9 +832,10 @@ static void drawSettings() {
   for (uint8_t i = 0; i < S_N; i++) drawSettingRow(i);
   drawHint("< list");
 }
-// A tap on row i: cycle it, or open info. Returns true if info was opened.
-static bool tapSetting(uint8_t i) {
-  if (i == 5) return true;
+// A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info), 2 (touch calibration).
+static uint8_t tapSetting(uint8_t i) {
+  if (i == 6) return 1;
+  if (i == 5) return 2;
   if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
   else if (i == 2) sSound = !sSound;
@@ -819,7 +843,90 @@ static bool tapSetting(uint8_t i) {
   else sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
-  return false;
+  return 0;
+}
+
+// ── touch calibration: three targets, the panel's own numbers ────────────
+// Top-left, top-right, bottom-left. Which chip axis moved between the first
+// two says whether the axes are swapped; the sign of the move says whether
+// one is mirrored; extrapolating to the screen edges gives the ranges. It
+// replaces guessing at a wiring fact, and it survives in NVS.
+static const int16_t CAL_PT[3][2] = {{20, 20}, {LCD_W - 21, 20}, {20, LCD_H - 21}};
+static uint8_t calStep = 0;
+static uint16_t calRaw[3][2];
+static void drawCalTarget() {
+  gfx->fillScreen(C_BG);
+  field(8, 24, 12, 3, C_MUTED, "TOUCH");
+  char l[40];
+  snprintf(l, sizeof l, "tap the target, %u of 3", calStep + 1);
+  fieldCentre(LCD_W / 2, 150, 30, 1, C_MUTED, l);
+  int16_t x = CAL_PT[calStep][0], y = CAL_PT[calStep][1];
+  gfx->drawCircle(x, y, 10, C_WARN);
+  gfx->drawFastHLine(x - 14, y, 29, C_WARN);
+  gfx->drawFastVLine(x, y - 14, 29, C_WARN);
+}
+static bool touchCalFrom(const uint16_t raw[3][2], TouchCal *c) {
+  int32_t dx = (int32_t)raw[1][0] - raw[0][0], dy = (int32_t)raw[1][1] - raw[0][1];  // TL -> TR
+  bool swap = abs(dy) > abs(dx);
+  int32_t ax0 = swap ? raw[0][1] : raw[0][0], ax1 = swap ? raw[1][1] : raw[1][0];  // along screen X
+  int32_t ay0 = swap ? raw[0][0] : raw[0][1], ay2 = swap ? raw[2][0] : raw[2][1];  // along screen Y
+  if (abs(ax1 - ax0) < 500 || abs(ay2 - ay0) < 500) return false;  // two taps in one place
+  float sx = (float)(ax1 - ax0) / (CAL_PT[1][0] - CAL_PT[0][0]);
+  float sy = (float)(ay2 - ay0) / (CAL_PT[2][1] - CAL_PT[0][1]);
+  c->swap = swap;
+  c->xMin = (int16_t)lroundf(ax0 - CAL_PT[0][0] * sx);
+  c->xMax = (int16_t)lroundf(c->xMin + (LCD_W - 1) * sx);
+  c->yMin = (int16_t)lroundf(ay0 - CAL_PT[0][1] * sy);
+  c->yMax = (int16_t)lroundf(c->yMin + (LCD_H - 1) * sy);
+  return true;
+}
+static void saveTouchCal() {
+  prefs.begin("ticker", false);
+  prefs.putBool("tsw", touchCal.swap);
+  prefs.putShort("tx0", touchCal.xMin);
+  prefs.putShort("tx1", touchCal.xMax);
+  prefs.putShort("ty0", touchCal.yMin);
+  prefs.putShort("ty1", touchCal.yMax);
+  prefs.end();
+}
+// One pass while the calibration page is up: average the raw samples of a
+// press, take the average on release. True when all three are in.
+static bool calibTick() {
+  static uint32_t sx = 0, sy = 0, n = 0, lastUp = 0;
+  static bool down = false;
+  uint16_t rx, ry;
+  bool contact = touchRaw(&rx, &ry);
+  if (contact) {
+    if (millis() - lastUp < 300) return false;  // the tail of the previous press
+    sx += rx;
+    sy += ry;
+    n++;
+    down = true;
+    return false;
+  }
+  if (!down) return false;
+  down = false;
+  lastUp = millis();
+  if (n < 3) return false;
+  calRaw[calStep][0] = sx / n;
+  calRaw[calStep][1] = sy / n;
+  Serial.printf("touch cal %u: raw %u,%u (%lu samples)\n", calStep, calRaw[calStep][0], calRaw[calStep][1],
+                (unsigned long)n);
+  sx = sy = n = 0;
+  if (++calStep < 3) {
+    drawCalTarget();
+    return false;
+  }
+  calStep = 0;
+  TouchCal c;
+  if (touchCalFrom(calRaw, &c)) {
+    touchCal = c;
+    saveTouchCal();
+    Serial.printf("touch cal: swap %d  x %d..%d  y %d..%d  (saved)\n", c.swap, c.xMin, c.xMax, c.yMin, c.yMax);
+  } else {
+    Serial.println("touch cal: taps too close together, not saved");
+  }
+  return true;
 }
 
 // ── info page: what the footer used to say, one row of settings ──────────
@@ -860,6 +967,78 @@ static void drawInfo(bool full) {
   snprintf(l[n++], 40, "logos %u/%u badges, %u/%u large", haveLogo[0], nRows, haveLogo[1], nRows);
   snprintf(l[n++], 40, "built " __DATE__ " " __TIME__);
   for (uint8_t i = 0; i < n; i++) field(8, 62 + i * 11, 38, 1, i == 0 ? C_FG : C_MUTED, l[i]);
+}
+
+// ── news page: swipe up from a stock ─────────────────────────────────────
+static char cNews[24];
+// Greedy word wrap by measured width into at most `lines` lines of `w` px.
+static uint8_t wrapText(const char *s, int16_t w, char out[][64], uint8_t lines) {
+  uint8_t n = 0;
+  char line[64] = "";
+  const char *p = s;
+  while (*p && n < lines) {
+    const char *e = p;
+    while (*e && *e != ' ') e++;
+    char cand[64];
+    snprintf(cand, sizeof cand, "%s%s%.*s", line, line[0] ? " " : "", (int)(e - p), p);
+    if (textWidth(1, cand) <= w || !line[0]) {
+      strcpy(line, cand);
+    } else {
+      strcpy(out[n++], line);
+      line[0] = '\0';
+      continue;
+    }
+    p = *e ? e + 1 : e;
+  }
+  if (line[0] && n < lines) strcpy(out[n++], line);
+  if (*p && n == lines) {  // ran out of lines: mark the cut
+    size_t l = strlen(out[n - 1]);
+    if (l > 3) strcpy(out[n - 1] + l - 3, "...");
+  }
+  return n;
+}
+static void drawNews(bool full) {
+  Row r = rowCopy(detailIdx);
+  if (full) {
+    gfx->fillScreen(C_BG);
+    field(8, 8, 5, 3, C_FG, r.label);
+    textAt(8 + textWidth(3, r.label) + 8, 14, 1, C_MUTED, "headlines");
+    gfx->drawFastHLine(8, 38, 224, C_RULE);
+    drawHint("< next     v stock     prev >");
+    cNews[0] = '\0';
+  }
+  NewsItem items[NEWS_N];
+  uint8_t n;
+  bool mine, failed;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  mine = newsIdx == detailIdx;
+  n = mine ? newsN : 0;
+  failed = mine && newsFailed;
+  memcpy(items, news, sizeof items);
+  xSemaphoreGive(mux);
+  char key[24];
+  snprintf(key, sizeof key, "%u|%u|%d|%lu", detailIdx, n, failed, (unsigned long)newsAt);
+  if (strcmp(key, cNews) == 0) return;
+  strcpy(cNews, key);
+  gfx->fillRect(0, 42, LCD_W, Y_HINT - 44, C_BG);
+  if (!mine || (!n && !failed)) {
+    field(8, 150, 20, 1, C_DIM, "loading headlines...");
+    return;
+  }
+  if (!n) {
+    field(8, 150, 20, 1, C_DIM, "no headlines");
+    return;
+  }
+  int16_t y = 44;
+  for (uint8_t i = 0; i < n && y + 24 <= Y_HINT - 4; i++) {
+    char lines[2][64];
+    uint8_t k = wrapText(items[i].title, LCD_W - 16 - 30, lines, 2);
+    for (uint8_t j = 0; j < k; j++) textAt(8, y + j * 11, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
+    fieldRight(X_RIGHT, y, 5, 1, C_DIM, items[i].age);
+    y += k * 11 + 3;
+    gfx->drawFastHLine(8, y, 224, C_RULE);
+    y += 5;
+  }
 }
 
 // ── fetching (core 0 task) ───────────────────────────────────────────────
@@ -966,6 +1145,112 @@ static bool seriesHeld(uint8_t idx, uint8_t range) {  // a byte read; no lock ne
   return series[range].idx == idx && series[range].range == range;
 }
 
+// Days since the epoch for a civil date (Howard Hinnant's algorithm), so
+// an RFC 822 pubDate can be compared with time() without a timezone dance.
+static int32_t daysFromCivil(int y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  int era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);
+  unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t)doe - 719468;
+}
+static const char *const MONTHS = "JanFebMarAprMayJunJulAugSepOctNovDec";
+// "Wed, 16 Sep 2026 14:05:28 +0000" -> UTC epoch, 0 if unparseable.
+static time_t parseRfc822(const char *s) {
+  char mon[4];
+  int d, y, H, M, S;
+  if (sscanf(s, "%*3s, %d %3s %d %d:%d:%d", &d, mon, &y, &H, &M, &S) != 6) return 0;
+  const char *m = strstr(MONTHS, mon);
+  if (!m) return 0;
+  return (time_t)daysFromCivil(y, (m - MONTHS) / 3 + 1, d) * 86400 + H * 3600 + M * 60 + S;
+}
+static void ageOf(time_t when, char *out, size_t n) {
+  time_t now = time(nullptr);
+  if (!when || now < 1000000000L || now < when) { out[0] = '\0'; return; }
+  uint32_t s = now - when;
+  if (s < 3600) snprintf(out, n, "%um", (unsigned)(s / 60));
+  else if (s < 86400) snprintf(out, n, "%uh", (unsigned)(s / 3600));
+  else snprintf(out, n, "%ud", (unsigned)(s / 86400));
+}
+// The few entities Yahoo's titles use, in place.
+static void decodeEntities(char *s) {
+  static const char *const from[] = {"&amp;", "&#39;", "&apos;", "&quot;", "&lt;", "&gt;", "&#x27;", "&nbsp;"};
+  static const char *const to[] = {"&", "'", "'", "\"", "<", ">", "'", " "};
+  for (uint8_t i = 0; i < 8; i++) {
+    char *p;
+    while ((p = strstr(s, from[i]))) {
+      size_t fl = strlen(from[i]), tl = strlen(to[i]);
+      memcpy(p, to[i], tl);
+      memmove(p + tl, p + fl, strlen(p + fl) + 1);
+    }
+  }
+}
+// Text between <tag> and </tag> after `from`, CDATA unwrapped, into out.
+static const char *xmlText(const char *from, const char *end, const char *tag, char *out, size_t n) {
+  char open[24], close[24];
+  snprintf(open, sizeof open, "<%s>", tag);
+  snprintf(close, sizeof close, "</%s>", tag);
+  const char *a = strstr(from, open);
+  if (!a || a >= end) { out[0] = '\0'; return nullptr; }
+  a += strlen(open);
+  const char *b = strstr(a, close);
+  if (!b || b > end) { out[0] = '\0'; return nullptr; }
+  if (strncmp(a, "<![CDATA[", 9) == 0) { a += 9; if (b - 3 > a && strncmp(b - 3, "]]>", 3) == 0) b -= 3; }
+  size_t l = (size_t)(b - a);
+  if (l >= n) l = n - 1;
+  memcpy(out, a, l);
+  out[l] = '\0';
+  return b;
+}
+static void doNews(uint8_t idx) {
+  Row r = rowCopy(idx);
+  char url[160];
+  snprintf(url, sizeof url, "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s%s&region=US&lang=en-US", r.label,
+           r.coin ? "-USD" : "");
+  NetworkClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setConnectTimeout(6000);
+  http.setTimeout(6000);
+  NewsItem got[NEWS_N];
+  uint8_t n = 0;
+  bool ok = false;
+  if (http.begin(client, url)) {
+    http.addHeader("User-Agent", UA);
+    int code = http.GET();
+    if (code == 200) {
+      String body = http.getString();  // ~12KB
+      ok = true;
+      const char *p = body.c_str();
+      while (n < NEWS_N) {
+        const char *item = strstr(p, "<item>");
+        if (!item) break;
+        const char *end = strstr(item, "</item>");
+        if (!end) break;
+        char date[40];
+        xmlText(item, end, "title", got[n].title, sizeof got[n].title);
+        xmlText(item, end, "pubDate", date, sizeof date);
+        decodeEntities(got[n].title);
+        ageOf(parseRfc822(date), got[n].age, sizeof got[n].age);
+        if (got[n].title[0]) n++;
+        p = end + 7;
+      }
+    } else {
+      Serial.printf("news %s http %d\n", r.label, code);
+    }
+    http.end();
+  }
+  xSemaphoreTake(mux, portMAX_DELAY);
+  newsIdx = idx;
+  newsN = n;
+  newsFailed = !ok;
+  newsAt = millis();
+  memcpy(news, got, sizeof news);
+  xSemaphoreGive(mux);
+  Serial.printf("news %s: %u headlines%s (heap %u)\n", r.label, n, ok ? "" : " FAILED", ESP.getFreeHeap());
+}
+
 static bool fetchCoins(NetworkClientSecure &client) {
   if (!coinIds[0]) return false;
   char url[sizeof coinIds + 128];
@@ -1039,6 +1324,12 @@ static void fetchTask(void *) {
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(250));
     if (WiFi.status() != WL_CONNECTED || asleep) continue;
+    int16_t nw = newsWant;
+    if (nw >= 0) {  // the news page is waiting
+      newsWant = -1;
+      doNews((uint8_t)nw);
+      continue;
+    }
     uint8_t want = seriesWant;
     if (want) {  // the page is waiting on these; they jump even the tapped symbol
       uint8_t rg = (want >> rangeSel) & 1 ? rangeSel : (uint8_t)__builtin_ctz(want);
@@ -1091,24 +1382,27 @@ static void fetchTask(void *) {
   }
 }
 
-// ── touch: tap, long press, vertical drag, horizontal swipe ──────────────
-// A finger that holds still for 100ms is a tap, fired then and there -- on
-// release it felt a beat late, and 100ms is below notice. Still at 450ms
-// it is a long press (the list opens a stock on that, so a drag can start
-// on a row without opening it). Once the finger has moved 24px with one
-// axis clearly winning it locks to that axis: vertical is a drag, reported
-// as the delta since the last poll; horizontal is a swipe if it goes 50px
-// by release. Resistive panels jitter on first contact and drop contact
-// for a poll or two mid-stroke, so a release counts only after three
-// polls without contact. Every stroke is traced on serial.
-enum class Gesture : uint8_t { None, Tap, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
-static const uint32_t TAP_MS = 100, LONG_MS = 450;
+// ── touch: tap, tap-up, vertical drag, horizontal swipe ──────────────────
+// A finger that holds still for 100ms is a Tap, fired then and there (the
+// list uses it to highlight the row; pages use it as the press). When a
+// still finger lifts it is a TapUp -- the list opens the stock on that, so
+// it is as quick as the lift itself and a drag can start on a row. If the
+// press was quicker than 100ms, tapUpQuick says the Tap never fired so the
+// TapUp counts as the tap. Once the finger has moved 24px with one axis
+// clearly winning it locks to that axis: vertical is a drag, reported as
+// the delta since the last poll; horizontal is a swipe if it goes 50px by
+// release. Resistive panels jitter on first contact and drop contact for a
+// poll or two mid-stroke, so a release counts only after three polls
+// without contact. Every stroke is traced on serial.
+enum class Gesture : uint8_t { None, Tap, TapUp, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
+static const uint32_t TAP_MS = 100;
 static const int16_t AXIS_PX = 24, SWIPE_PX = 50;
+static bool tapUpQuick = false;
 static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
   static int16_t x0 = 0, y0 = 0, lx = 0, ly = 0;
   static uint32_t t0 = 0, lastTap = 0;
   static uint8_t axis = 0, gap = 0;  // axis: 0 undecided, 1 horizontal, 2 vertical
-  static bool tapped = false, longed = false;
+  static bool tapped = false;
   int16_t cx, cy;
   bool contact = touchRead(&cx, &cy);
   if (contact) gap = 0;
@@ -1120,7 +1414,7 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
     y0 = ly = cy;
     t0 = millis();
     axis = 0;
-    tapped = longed = false;
+    tapped = false;
   } else if (now) {
     int16_t ddx = cx - x0, ddy = cy - y0;
     if (!axis && (abs(ddx) >= AXIS_PX || abs(ddy) >= AXIS_PX)) {
@@ -1130,17 +1424,12 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
     if (axis == 2) {
       *dy = cy - ly;
       g = Gesture::Drag;
-    } else if (!axis) {
+    } else if (!axis && !tapped && millis() - t0 >= TAP_MS && millis() - lastTap > 150) {
+      tapped = true;
+      lastTap = millis();
       *x = x0;
       *y = y0;
-      if (!tapped && millis() - t0 >= TAP_MS && millis() - lastTap > 150) {
-        tapped = true;
-        lastTap = millis();
-        g = Gesture::Tap;
-      } else if (tapped && !longed && millis() - t0 >= LONG_MS) {
-        longed = true;
-        g = Gesture::LongPress;
-      }
+      g = Gesture::Tap;
     }
     lx = cx;
     ly = cy;
@@ -1152,15 +1441,16 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
     } else if (axis == 2) {  // a vertical drag that went far enough is also a swipe; the list ignores it
       if (ddy >= SWIPE_PX) g = Gesture::SwipeDown;
       else if (ddy <= -SWIPE_PX) g = Gesture::SwipeUp;
-    } else if (!tapped && millis() - lastTap > 150) {  // a tap quicker than TAP_MS
+    } else {
+      tapUpQuick = !tapped;
       lastTap = millis();
       *x = x0;
       *y = y0;
-      g = Gesture::Tap;
+      g = Gesture::TapUp;
     }
-    static const char *const names[] = {"none", "tap", "long", "drag", "swipe right", "swipe left", "swipe up", "swipe down"};
-    Serial.printf("touch: %d,%d -> %d,%d  %lums  axis %c  %s%s\n", x0, y0, lx, ly, (unsigned long)(millis() - t0),
-                  axis == 1 ? 'h' : axis == 2 ? 'v' : '-', names[(uint8_t)g], longed ? " (after long press)" : "");
+    static const char *const names[] = {"none", "tap", "tap-up", "drag", "swipe right", "swipe left", "swipe up", "swipe down"};
+    Serial.printf("touch: %d,%d -> %d,%d  %lums  axis %c  %s\n", x0, y0, lx, ly, (unsigned long)(millis() - t0),
+                  axis == 1 ? 'h' : axis == 2 ? 'v' : '-', names[(uint8_t)g]);
   }
   touchHeld = now;
   return g;
@@ -1221,6 +1511,24 @@ static void selfCheck() {
   t.tm_hour = 12; t.tm_wday = 6;                assert(session(t) == Session::Closed);
   assert(inNight(23, 23, 7) && inNight(3, 23, 7) && !inNight(7, 23, 7) && !inNight(12, 23, 7));
   assert(inNight(1, 0, 6) && !inNight(6, 0, 6) && !inNight(5, 23, 23));
+  {  // calibration: a plain panel, a swapped-and-mirrored one, and two taps in one place
+    TouchCal c;
+    uint16_t plain[3][2] = {{500, 500}, {3400, 520}, {480, 3500}};
+    assert(touchCalFrom(plain, &c) && !c.swap && c.xMin < 500 && c.xMax > 3400 && c.yMin < 500 && c.yMax > 3500);
+    int16_t x, y;
+    touchMap(c, 500, 500, &x, &y);
+    assert(abs(x - 20) <= 1 && abs(y - 20) <= 1);
+    uint16_t sw[3][2] = {{3500, 500}, {3480, 3400}, {600, 520}};  // chip Y runs along screen X; chip X mirrored
+    assert(touchCalFrom(sw, &c) && c.swap && c.yMin > c.yMax);
+    touchMap(c, 600, 520, &x, &y);
+    assert(abs(x - 20) <= 1 && abs(y - (LCD_H - 21)) <= 1);
+    uint16_t same[3][2] = {{500, 500}, {520, 510}, {480, 3500}};
+    assert(!touchCalFrom(same, &c));
+    assert(parseRfc822("Wed, 16 Sep 2026 14:05:28 +0000") == 1789567528L && parseRfc822("junk") == 0);
+    char t[40] = "A &amp; B&#39;s &quot;x&quot;";
+    decodeEntities(t);
+    assert(strcmp(t, "A & B's \"x\"") == 0);
+  }
   char nx[24];
   t.tm_wday = 6; t.tm_hour = 12;  nextOpen(t, nx, sizeof nx);  assert(strcmp(nx, "Mon 09:30") == 0);
   t.tm_wday = 5; t.tm_hour = 17;  nextOpen(t, nx, sizeof nx);  assert(strcmp(nx, "Mon 09:30") == 0);
@@ -1277,7 +1585,7 @@ static void selfCheck() {
 
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
-enum class View { List, Detail, Settings, Info };
+enum class View { List, Detail, Settings, Info, Calib, News };
 static State state = State::Boot;
 static View view = View::List;
 
@@ -1365,12 +1673,21 @@ static void backToList() {
   view = View::List;
   listStart();
 }
+// Headlines for symbol idx; the fetch is skipped if they are under 10 min old.
+static void openNews(uint8_t idx) {
+  view = View::News;
+  detailIdx = idx;
+  detailOpenedAt = millis();
+  if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000)) newsWant = idx;
+  panelScroll(0);
+  drawNews(true);
+}
 
 void loop() {
   int16_t tx, ty;
   int16_t ddy = 0;
   Gesture g = pollGesture(&tx, &ty, &ddy);
-  bool tap = g == Gesture::Tap;
+  bool tap = g == Gesture::Tap || (g == Gesture::TapUp && tapUpQuick);
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
   bool open = haveTime && marketOpen(t);
@@ -1392,8 +1709,9 @@ void loop() {
     blApplied = -1;  // brightnessTick re-applies
     invalidateCache();
     if (view == View::List) listStart();
-    else if (view == View::Settings) drawSettings();
+    else if (view == View::Settings || view == View::Calib) { view = View::Settings; drawSettings(); }
     else if (view == View::Info) drawInfo(true);
+    else if (view == View::News) drawNews(true);
     else drawDetail(true);
     Serial.println("wake");
   }
@@ -1414,8 +1732,9 @@ void loop() {
     panelScroll(0);  // panels draw the screen 1:1
     if (state == State::Running) {
       if (view == View::List) listStart();
-      else if (view == View::Settings) drawSettings();
+      else if (view == View::Settings || view == View::Calib) { view = View::Settings; drawSettings(); }
       else if (view == View::Info) drawInfo(true);
+      else if (view == View::News) drawNews(true);
       else drawDetail(true);
     }
   }
@@ -1448,20 +1767,44 @@ void loop() {
     drawInfo(false);
   } else if (view == View::Detail) {
     drawDetail(false);
+  } else if (view == View::News) {
+    drawNews(false);
+  } else if (view == View::Calib) {
+    if (calibTick()) {
+      view = View::Settings;
+      pageOpenedAt = millis();
+      drawSettings();
+    }
+    brightnessTick(open);
+    delay(20);
+    return;  // raw touch only; no gestures on this page
   }
 
   // On the list: drag scrolls it, any touch holds the crawl for 3s after,
   // and a long press opens the stock. Swipe right opens settings; swipe
   // left there goes back.
+  // On the list: a still finger highlights its row at once and opens the
+  // stock when it lifts (touch-up, the way a phone list works); a moving
+  // finger drags the list; any touch holds the crawl for 3s after.
+  static int8_t hilite = -1;
   if (state == State::Running && view == View::List) {
     if (touchHeld) holdUntil = millis() + 3000;
     if (g == Gesture::Drag && ddy) scrollBy(-ddy);
-    if (g == Gesture::LongPress) {
+    if (g == Gesture::Tap && hilite < 0) {
       int16_t r = hitRow(ty, pos, nRows);
       if (r >= 0) {
+        hilite = slotOf(floordiv(pos + ty - Y_ROW0, ROW_H));
+        gfx->fillRect(0, Y_ROW0 + hilite * ROW_H + 2, 3, ROW_H - 4, C_FG);
         if (sSound) tone(SPK, 1200, 15);
-        openDetail((uint8_t)r);
       }
+    }
+    if (hilite >= 0 && (!touchHeld || g == Gesture::Drag)) {
+      gfx->fillRect(0, Y_ROW0 + hilite * ROW_H + 2, 3, ROW_H - 4, C_BG);
+      hilite = -1;
+    }
+    if (g == Gesture::TapUp) {
+      int16_t r = hitRow(ty, pos, nRows);
+      if (r >= 0) openDetail((uint8_t)r);
     }
   }
   // Swipes are the navigation, phone style. List: right opens settings.
@@ -1469,8 +1812,8 @@ void loop() {
   // Settings: left is the list. Info: left the list, down settings.
   bool swipe = g == Gesture::SwipeLeft || g == Gesture::SwipeRight || g == Gesture::SwipeDown || g == Gesture::SwipeUp;
   if (swipe && state == State::Running) {
-    bool acts = (view == View::List && g == Gesture::SwipeRight) ||
-                (view == View::Detail && g != Gesture::SwipeUp) ||
+    bool acts = (view == View::List && g == Gesture::SwipeRight) || view == View::Detail ||
+                (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown));
     if (acts && sSound) tone(SPK, 1200, 15);
@@ -1483,6 +1826,11 @@ void loop() {
       if (g == Gesture::SwipeLeft) openDetail((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openDetail((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) backToList();
+      else if (g == Gesture::SwipeUp) openNews(detailIdx);
+    } else if (view == View::News) {
+      if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
+      else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
+      else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
     } else if (view == View::Info) {
@@ -1500,9 +1848,14 @@ void loop() {
     if (view == View::Settings) {
       int8_t i = hitSetting(ty);
       pageOpenedAt = millis();
-      if (i >= 0 && tapSetting((uint8_t)i)) {
+      uint8_t r = i >= 0 ? tapSetting((uint8_t)i) : 0;
+      if (r == 1) {
         view = View::Info;
         drawInfo(true);
+      } else if (r == 2) {
+        view = View::Calib;
+        calStep = 0;
+        drawCalTarget();
       }
     } else if (view == View::Info) {
       pageOpenedAt = millis();  // a tap only keeps it open
@@ -1518,7 +1871,8 @@ void loop() {
     Serial.printf("tap %d,%d -> view %u %s\n", tx, ty, (unsigned)view, view == View::Detail ? rows[detailIdx].label : "");
   }
 
-  if (view == View::Detail && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs) backToList();
+  if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
+    backToList();
   if ((view == View::Info || view == View::Settings) && returnMs && !touchHeld && millis() - pageOpenedAt > returnMs)
     backToList();
 

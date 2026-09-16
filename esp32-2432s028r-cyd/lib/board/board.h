@@ -102,10 +102,14 @@ inline bool bootPressed() { return digitalRead(BTN_BOOT) == LOW; }
 // SPIClass if a third SPI host ever appears, which on this chip it won't.
 //
 // Raw ADC range is panel-specific: the community defaults (200-3700 in X,
-// 240-3800 in Y) are the starting point and apps/hello/data/config.json
-// overrides them. Tune until the dot sits under the stylus in all four corners.
+// 240-3800 in Y) are the starting point; apps/hello/data/config.json
+// overrides them, and ticker's three-point calibration (settings page)
+// measures them and keeps the result in NVS. A range may run backwards
+// (mirrored axis) and `swap` says the chip's X lies along the screen's Y --
+// which axis the film calls X is a wiring fact, not a convention.
 struct TouchCal {
-  uint16_t xMin = 200, xMax = 3700, yMin = 240, yMax = 3800;
+  int16_t xMin = 200, xMax = 3700, yMin = 240, yMax = 3800;
+  bool swap = false;
 };
 inline TouchCal touchCal;
 
@@ -142,10 +146,15 @@ inline bool touchRaw(uint16_t *x, uint16_t *y) {
 
 // Pure, so the self-check can drive it. Raw -> screen for rotation 0.
 inline void touchMap(const TouchCal &c, uint16_t rx, uint16_t ry, int16_t *x, int16_t *y) {
-  long mx = map(constrain(rx, c.xMin, c.xMax), c.xMin, c.xMax, 0, LCD_W - 1);
-  long my = map(constrain(ry, c.yMin, c.yMax), c.yMin, c.yMax, 0, LCD_H - 1);
-  *x = (int16_t)mx;
-  *y = (int16_t)my;
+  if (c.swap) {
+    uint16_t t = rx;
+    rx = ry;
+    ry = t;
+  }
+  long mx = map((long)rx, c.xMin, c.xMax, 0, LCD_W - 1);  // map() is fine with a reversed range
+  long my = map((long)ry, c.yMin, c.yMax, 0, LCD_H - 1);
+  *x = (int16_t)constrain(mx, 0L, (long)LCD_W - 1);
+  *y = (int16_t)constrain(my, 0L, (long)LCD_H - 1);
 }
 
 // Screen coordinates for rotation 0 (portrait, 240x320).
@@ -165,4 +174,12 @@ inline void touchSelfCheck() {
   assert(x == LCD_W - 1 && y == LCD_H - 1);
   touchMap(c, 0, 4095, &x, &y);  // out of range clamps, never wraps
   assert(x == 0 && y == LCD_H - 1);
+  TouchCal m;  // mirrored X, swapped axes: chip Y drives screen X, backwards
+  m.swap = true;
+  m.xMin = 3700;
+  m.xMax = 200;
+  touchMap(m, /*chip x*/ 240, /*chip y*/ 3700, &x, &y);
+  assert(x == 0 && y == 0);
+  touchMap(m, 3800, 200, &x, &y);
+  assert(x == LCD_W - 1 && y == LCD_H - 1);
 }

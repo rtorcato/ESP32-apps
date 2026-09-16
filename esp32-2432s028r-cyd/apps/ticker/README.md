@@ -37,8 +37,23 @@ can send the two panel commands Arduino_GFX has no API for.
 
 **A finger drives it too.** Drag up or down and the list follows; the crawl
 pauses while a finger is down and for three seconds after, so a drag or a
-press is never fought. A **long press** (450ms, still) opens the stock -- a
-plain tap does not, so a drag can start anywhere on a row.
+press is never fought. A still finger highlights its row at once and **opens
+the stock when it lifts** -- touch-up, the way a phone list works, so it is
+as quick as the lift itself and a drag can still start anywhere on a row.
+
+**Touch calibration** is a settings row. Three targets (top-left, top-right,
+bottom-left); which chip axis moved between the first two says whether the
+panel's axes are swapped relative to the screen, the sign says whether one
+is mirrored, and extrapolating to the edges gives the ranges. Which axis the
+film calls X is a wiring fact, not a convention, and every "the swipe does
+nothing" report is consistent with getting it wrong -- so it is measured, and
+the result lives in NVS. Run it first if any gesture feels wrong.
+
+**Headlines, swipe up from a stock.** Yahoo's per-symbol RSS
+(`feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA`), keyless, ~12KB, parsed
+with `strstr` -- six titles with their age, word-wrapped to two measured
+lines. Cached ten minutes per symbol. Swipe left / right for the next /
+previous stock's headlines, down for the stock.
 
 ## Market sessions
 
@@ -214,11 +229,12 @@ the list. Settings: swipe left for the list. Info: left for the list, down
 for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
-**SETTINGS, swipe right from the list.** Six rows, tap to cycle: scroll
+**SETTINGS, swipe right from the list.** Seven rows, tap to cycle: scroll
 speed (slow / normal / fast), backlight (auto / bright / dim), tap sound,
 auto-return (15s / 60s / never), sleep (never / night / closed -- backlight
 off, nothing drawn or fetched, a touch wakes it for a minute; the night
-window is `sleep.from` / `.to` in config.json), and Info. The four settings are kept in
+window is `sleep.from` / `.to` in config.json), Touch (the calibration
+above), and Info. The four settings are kept in
 **NVS and beat config.json**, the way the C6's layout choice does, or a
 config push would undo a tap on every boot; the boot log says which is in
 force. Everything that needs a keyboard stays in config.json. Swipe left or
@@ -230,8 +246,8 @@ and RSSI, heap, uptime, LDR reading and backlight level, symbol and logo
 counts, build date. Swipe down for settings, left for the list.
 
 **Gestures.** A finger that holds still for 100ms is a tap, fired then and
-there (firing on release felt a beat late; 100ms is below notice); still at
-450ms it is a long press. A finger that moves 24px with one axis clearly
+there (firing on release felt a beat late; 100ms is below notice); a still
+finger lifting is a tap-up, which is what opens a stock. A finger that moves 24px with one axis clearly
 winning locks to that axis and never becomes a tap: vertical is a drag,
 horizontal is a swipe if it goes 50px by release. Resistive panels jitter on
 first contact and drop contact for a poll or two mid-stroke, so a release
