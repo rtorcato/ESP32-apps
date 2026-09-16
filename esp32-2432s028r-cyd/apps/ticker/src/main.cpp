@@ -166,14 +166,34 @@ static bool loadConfig() {
 
 // ── layout (portrait 240x320, fixed) ─────────────────────────────────────
 // List: six 42px rows. Badge | symbol | sparkline | price over percent.
-static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 7, X_LBL = 32,
-                     X_SPK = 96, SPK_W = 50, SPK_H = 28, X_RIGHT = 234, Y_FOOT = 282, FOOT_STEP = 12;
+// Everything in a row is centred on y+16: badge 4..28, symbol 8..24, the
+// sparkline 2..30, price 2..18 over percent 22..30.
+static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
+                     X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234, Y_FOOT = 282, FOOT_STEP = 12;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
-// then chart, two range bars, three buttons.
+// then chart, a row of range chips beside the low label, two range bars,
+// three buttons.
 static const int16_t D_X_TXT = 108, D_Y_SYM = 6, D_Y_NAME = 34, D_Y_PRICE = 46, D_Y_CHG = 74, D_Y_PCT = 92,
-                     D_Y_HI = 112, CH_X = 6, CH_Y = 122, CH_W = 228, CH_H = 78, D_Y_LO = 202, D_Y_DAY = 218,
-                     D_Y_WK = 242, BAR_X = 40, BAR_W = 194, BAR_H = 6, D_Y_BTN = 282, BTN_H = 34,
-                     BTN_W = 76;
+                     D_Y_HI = 112, CH_X = 6, CH_Y = 122, CH_W = 228, CH_H = 74, D_Y_LO = 198, R_Y = 197,
+                     R_W = 34, R_STEP = 36, R_H = 12, D_Y_DAY = 218, D_Y_WK = 242, BAR_X = 40, BAR_W = 194,
+                     BAR_H = 6, D_Y_BTN = 282, BTN_H = 34, BTN_W = 76;
+
+// ── the detail chart's range ─────────────────────────────────────────────
+// 1D is the row's own sparkline series. The others are fetched on demand
+// into one buffer for whichever symbol the page is showing.
+struct RangeDef { const char *label, *range, *interval; };
+static const RangeDef RANGES[] = {{"1D", "1d", nullptr}, {"5D", "5d", "30m"}, {"1M", "1mo", "1d"},
+                                  {"6M", "6mo", "1d"}, {"1Y", "1y", "1wk"}};
+static const uint8_t N_RANGES = 5, SERIES_N = 130;  // 6mo of daily closes is ~126
+struct Series {
+  uint8_t idx, range, n;
+  bool valid;
+  float prev;
+  float close[SERIES_N];
+};
+static Series series;  // written by the fetch task, read by the UI, under mux
+static volatile int8_t seriesReq = -1;  // range to fetch for detailIdx, or -1
+static uint8_t rangeSel = 0;
 
 // ── pure helpers (what selfCheck covers) ─────────────────────────────────
 static void formatPrice(float v, char *out, size_t n) {
@@ -203,6 +223,13 @@ static int8_t hitButton(int16_t x, int16_t y) {
   if (y < D_Y_BTN) return -1;
   int8_t b = x / 80;
   return b > 2 ? 2 : b;
+}
+// Which range chip, or -1. The zone is the whole strip between the chart
+// and the day bar, taller than the drawn chip, because the chip is small.
+static int8_t hitRange(int16_t x, int16_t y) {
+  if (y < CH_Y + CH_H || y >= D_Y_DAY || x < X_SYM) return -1;
+  int8_t i = (x - X_SYM) / R_STEP;
+  return i >= N_RANGES ? -1 : i;
 }
 // Value to pixel row inside a box; a flat series sits mid-box, not on the floor.
 static int16_t sparkY(float v, float lo, float hi, int16_t y0, int16_t h) {
@@ -347,8 +374,8 @@ static void drawRows(bool cascade = false) {
     uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
     if (!blitLogo(X_SYM, y + Y_BADGE, LOGO_BADGE, r.label))
       gfx->fillRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, C_BG);  // the previous page's badge
-    field(X_LBL, y + 4, MAX_LABEL, 2, C_FG, r.label);
-    drawSpark(X_SPK, y + 4, SPK_W, SPK_H, r);
+    field(X_LBL, y + Y_LBL, MAX_LABEL, 2, C_FG, r.label);
+    drawSpark(X_SPK, y + Y_SPK, SPK_W, SPK_H, r);
     fieldRight(X_RIGHT, y + 2, 7, 2, fg, price);
     fieldRight(X_RIGHT, y + 22, 7, 1, fg, pct);
     if (cascade) delay(cascadeMs);
@@ -426,6 +453,43 @@ static void drawRange(int16_t y, const char *label, float lo, float hi, float v)
   fieldRight(BAR_X + BAR_W, y + 10, 7, 1, C_DIM, b);
 }
 
+static void drawRangeChips() {
+  for (uint8_t i = 0; i < N_RANGES; i++) {
+    int16_t x = X_SYM + i * R_STEP;
+    bool on = i == rangeSel;
+    gfx->fillRect(x, R_Y, R_W, R_H, on ? C_RULE : C_BG);
+    gfx->setTextSize(1);
+    gfx->setTextColor(on ? C_FG : C_DIM);
+    gfx->setCursor(x + (R_W - GW(1) * 2) / 2, R_Y + (R_H - GH(1)) / 2);
+    gfx->print(RANGES[i].label);
+  }
+}
+
+static void drawChart(const float *cl, uint8_t n, float prev, uint16_t fg) {
+  float lo = prev, hi = prev;
+  for (uint8_t i = 0; i < n; i++) {
+    lo = min(lo, cl[i]);
+    hi = max(hi, cl[i]);
+  }
+  gfx->drawRect(CH_X - 1, CH_Y - 1, CH_W + 2, CH_H + 2, C_RULE);
+  int16_t yp = sparkY(prev, lo, hi, CH_Y, CH_H);
+  for (int16_t x = CH_X; x < CH_X + CH_W; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
+  int16_t px = CH_X, py = sparkY(cl[0], lo, hi, CH_Y, CH_H);
+  for (uint8_t i = 1; i < n; i++) {
+    int16_t nx = CH_X + (int32_t)i * (CH_W - 1) / (n - 1);
+    int16_t ny = sparkY(cl[i], lo, hi, CH_Y, CH_H);
+    gfx->drawLine(px, py, nx, ny, fg);
+    px = nx;
+    py = ny;
+  }
+  char b[12];
+  formatPrice(hi, b, sizeof b);
+  fieldRight(X_RIGHT, D_Y_HI, 7, 1, C_DIM, b);
+  formatPrice(lo, b, sizeof b);
+  fieldRight(X_RIGHT, D_Y_LO, 7, 1, C_DIM, b);
+  field(X_SYM, D_Y_HI, 4, 1, C_DIM, "prev");
+}
+
 static void drawDetail(bool full) {
   Row r = rowCopy(detailIdx);
   if (full) {
@@ -435,7 +499,19 @@ static void drawDetail(bool full) {
     drawButton(0, "<PREV");
     drawButton(1, "LIST");
     drawButton(2, "NEXT>");
+    if (!r.coin) drawRangeChips();
   }
+  // The selected range's series: the row's own for 1D, else the shared
+  // buffer if it holds this symbol at this range.
+  Series sr;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  sr = series;
+  xSemaphoreGive(mux);
+  bool mine = rangeSel && sr.idx == detailIdx && sr.range == rangeSel;
+  const float *cl = rangeSel ? sr.close : r.close;
+  uint8_t n = rangeSel ? (mine ? sr.n : 0) : r.n;
+  float prev = rangeSel ? sr.prev : r.prev;
+
   char price[12], pct[12], key[48];
   if (r.valid) {
     formatPrice(r.price, price, sizeof price);
@@ -444,7 +520,7 @@ static void drawDetail(bool full) {
     snprintf(price, sizeof price, "--");
     pct[0] = '\0';
   }
-  snprintf(key, sizeof key, "%s|%s|%s|%u", r.label, price, pct, r.n);
+  snprintf(key, sizeof key, "%s|%s|%s|%u|%u|%u|%d", r.label, price, pct, r.n, rangeSel, n, mine && !sr.valid);
   if (strcmp(key, cDetail) == 0) return;
   strcpy(cDetail, key);
 
@@ -462,47 +538,39 @@ static void drawDetail(bool full) {
   // Chart: the sparkline's data with room to be a chart. The previous close
   // is a dashed reference line -- the percent is measured from it, so
   // without it the shape means nothing.
-  gfx->fillRect(0, D_Y_HI, 240, D_Y_LO + GH(1) - D_Y_HI, C_BG);
+  gfx->fillRect(0, D_Y_HI, 240, CH_Y + CH_H + 1 - D_Y_HI, C_BG);  // chips below are left alone
+  fieldRight(X_RIGHT, D_Y_LO, 7, 1, C_DIM, "");
   gfx->fillRect(0, D_Y_DAY, 240, D_Y_BTN - 2 - D_Y_DAY, C_BG);
   if (r.coin) {
     field(X_SYM, CH_Y + CH_H / 2 - 4, 30, 1, C_DIM, "no intraday series for coins");
     return;
   }
-  if (!r.valid || r.n < 2) {
+  if (rangeSel && mine && !sr.valid) {
+    char m[24];
+    snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
+    field(X_SYM, CH_Y + CH_H / 2 - 4, 20, 1, C_DIM, m);
+  } else if (rangeSel && n < 2) {
+    char m[24];
+    snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
+    field(X_SYM, CH_Y + CH_H / 2 - 4, 20, 1, C_DIM, m);
+  } else if (!r.valid || n < 2) {
     field(X_SYM, CH_Y + CH_H / 2 - 4, 20, 1, C_DIM, "no series yet");
-    return;
+  } else {
+    drawChart(cl, n, prev, fg);
   }
-  float lo = r.prev, hi = r.prev;
-  for (uint8_t i = 0; i < r.n; i++) {
-    lo = min(lo, r.close[i]);
-    hi = max(hi, r.close[i]);
-  }
-  gfx->drawRect(CH_X - 1, CH_Y - 1, CH_W + 2, CH_H + 2, C_RULE);
-  int16_t yp = sparkY(r.prev, lo, hi, CH_Y, CH_H);
-  for (int16_t x = CH_X; x < CH_X + CH_W; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
-  int16_t px = CH_X, py = sparkY(r.close[0], lo, hi, CH_Y, CH_H);
-  for (uint8_t i = 1; i < r.n; i++) {
-    int16_t nx = CH_X + (int32_t)i * (CH_W - 1) / (r.n - 1);
-    int16_t ny = sparkY(r.close[i], lo, hi, CH_Y, CH_H);
-    gfx->drawLine(px, py, nx, ny, fg);
-    px = nx;
-    py = ny;
-  }
-  char b[12];
-  formatPrice(hi, b, sizeof b);
-  fieldRight(X_RIGHT, D_Y_HI, 7, 1, C_DIM, b);
-  formatPrice(lo, b, sizeof b);
-  fieldRight(X_RIGHT, D_Y_LO, 7, 1, C_DIM, b);
-  field(X_SYM, D_Y_HI, 4, 1, C_DIM, "prev");
+  if (!r.valid) return;
   drawRange(D_Y_DAY, "day", r.dayLo, r.dayHi, r.price);
   drawRange(D_Y_WK, "52w", r.wkLo, r.wkHi, r.price);
 }
 
 // ── fetching (core 0 task) ───────────────────────────────────────────────
-static bool fetchStock(NetworkClientSecure &client, Row &r) {
+// Yahoo's v8 chart for one symbol at one range/interval, filtered down to the
+// meta fields used and the close array. False on any HTTP or parse failure.
+static bool fetchChart(NetworkClientSecure &client, const char *id, const char *range, const char *interval,
+                       JsonDocument &doc) {
   char url[180];
-  snprintf(url, sizeof url, "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=%s", r.id,
-           sparkInterval);
+  snprintf(url, sizeof url, "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=%s", id, range,
+           interval);
   HTTPClient http;
   http.setConnectTimeout(6000);
   http.setTimeout(6000);
@@ -510,7 +578,7 @@ static bool fetchStock(NetworkClientSecure &client, Row &r) {
   http.addHeader("User-Agent", UA);  // without this Yahoo answers 429
   int code = http.GET();
   if (code != 200) {
-    Serial.printf("%s http %d%s\n", r.id, code, code == 429 ? " (rate limited)" : "");
+    Serial.printf("%s http %d%s\n", id, code, code == 429 ? " (rate limited)" : "");
     http.end();
     return false;
   }
@@ -526,14 +594,36 @@ static bool fetchStock(NetworkClientSecure &client, Row &r) {
                         "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow"})
     fm[k] = true;
   filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
-  JsonDocument doc;
   if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return false;
-  JsonVariant res = doc["chart"]["result"][0];
-  JsonVariant m = res["meta"];
-  if (!m["regularMarketPrice"].is<float>()) {
-    Serial.printf("%s: no price in payload (bad symbol?)\n", r.id);
+  if (!doc["chart"]["result"][0]["meta"]["regularMarketPrice"].is<float>()) {
+    Serial.printf("%s: no price in payload (bad symbol?)\n", id);
     return false;
   }
+  return true;
+}
+
+// The close array contains null for gaps and halts. Skip them rather than
+// parsing to 0.0, which would drop the line to the floor; keep the LAST cap
+// values if there are more.
+// ponytail: the line is drawn through a gap; break it there if it matters.
+static uint8_t pullCloses(JsonVariant res, float *out, uint8_t cap) {
+  uint8_t n = 0;
+  for (JsonVariant v : res["indicators"]["quote"][0]["close"].as<JsonArray>()) {
+    if (!v.is<float>()) continue;
+    if (n == cap) {
+      memmove(out, out + 1, (cap - 1) * sizeof(float));
+      n--;
+    }
+    out[n++] = v.as<float>();
+  }
+  return n;
+}
+
+static bool fetchStock(NetworkClientSecure &client, Row &r) {
+  JsonDocument doc;
+  if (!fetchChart(client, r.id, "1d", sparkInterval, doc)) return false;
+  JsonVariant res = doc["chart"]["result"][0];
+  JsonVariant m = res["meta"];
   r.price = m["regularMarketPrice"] | 0.0f;
   r.prev = m["chartPreviousClose"] | 0.0f;
   r.pct = r.prev > 0 ? (r.price - r.prev) / r.prev * 100.0f : 0.0f;
@@ -543,20 +633,34 @@ static bool fetchStock(NetworkClientSecure &client, Row &r) {
   r.wkHi = m["fiftyTwoWeekHigh"] | 0.0f;
   const char *nm = m["longName"] | (m["shortName"] | "");
   snprintf(r.name, sizeof r.name, "%s", nm);
-  // The close array contains null for gaps and halts. Skip them rather than
-  // parsing to 0.0, which would drop the line to the floor.
-  // ponytail: the line is drawn through a gap; break it there if it matters.
-  r.n = 0;
-  for (JsonVariant v : res["indicators"]["quote"][0]["close"].as<JsonArray>()) {
-    if (!v.is<float>()) continue;
-    if (r.n == SPARK_N) {
-      memmove(r.close, r.close + 1, (SPARK_N - 1) * sizeof(float));
-      r.n--;
-    }
-    r.close[r.n++] = v.as<float>();
-  }
+  r.n = pullCloses(res, r.close, SPARK_N);
   r.valid = true;
   return true;
+}
+
+// The detail page's range series. A failed fetch still lands (valid=false)
+// so the page says "no 1M series" instead of "loading" forever.
+static void doSeries(uint8_t idx, uint8_t range) {
+  Row r = rowCopy(idx);
+  Series s = {};
+  s.idx = idx;
+  s.range = range;
+  if (!r.coin) {
+    NetworkClientSecure client;
+    client.setInsecure();
+    JsonDocument doc;
+    if (fetchChart(client, r.id, RANGES[range].range, RANGES[range].interval, doc)) {
+      JsonVariant res = doc["chart"]["result"][0];
+      s.prev = res["meta"]["chartPreviousClose"] | 0.0f;
+      s.n = pullCloses(res, s.close, SERIES_N);
+      s.valid = s.n >= 2;
+    }
+  }
+  xSemaphoreTake(mux, portMAX_DELAY);
+  series = s;
+  xSemaphoreGive(mux);
+  Serial.printf("series %s %s: %u points%s (heap %u)\n", r.label, RANGES[range].label, s.n, s.valid ? "" : " FAILED",
+                ESP.getFreeHeap());
 }
 
 static bool fetchCoins(NetworkClientSecure &client) {
@@ -632,6 +736,12 @@ static void fetchTask(void *) {
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(250));
     if (WiFi.status() != WL_CONNECTED) continue;
+    int8_t sr = seriesReq;
+    if (sr > 0) {  // the page is waiting on this; it jumps even the tapped symbol
+      seriesReq = -1;
+      doSeries(detailIdx, (uint8_t)sr);
+      continue;
+    }
     int8_t pri = priority;
     if (pri >= 0) {
       priority = -1;
@@ -749,16 +859,19 @@ static void selfCheck() {
   assert(hitSlot(Y_ROW0 + ROW_H * ROWS - 1) == ROWS - 1 && hitSlot(Y_ROW0 + ROW_H * ROWS) == -1);
   assert(hitButton(0, D_Y_BTN - 1) == -1 && hitButton(0, D_Y_BTN) == 0);
   assert(hitButton(120, 319) == 1 && hitButton(239, 319) == 2);
+  assert(hitRange(X_SYM, CH_Y + CH_H) == 0 && hitRange(X_SYM + R_STEP * 4, D_Y_DAY - 1) == 4);
+  assert(hitRange(X_SYM, CH_Y + CH_H - 1) == -1 && hitRange(X_SYM, D_Y_DAY) == -1);
+  assert(hitRange(X_SYM - 1, R_Y) == -1 && hitRange(X_SYM + R_STEP * 5, R_Y) == -1);
   // Sparkline scaling: extremes hit the box edges, a flat series sits mid-box.
   assert(sparkY(10, 10, 20, 100, 28) == 127 && sparkY(20, 10, 20, 100, 28) == 100);
   assert(sparkY(5, 5, 5, 100, 28) == 114);
 
   // Geometry: badge, symbol, sparkline and price never overlap; rows clear the footer.
   assert(X_SYM + LOGO_BADGE <= X_LBL);
-  assert(Y_BADGE + LOGO_BADGE <= ROW_H - 4);
+  assert(Y_BADGE + LOGO_BADGE <= ROW_H - 4 && Y_LBL + GH(2) <= ROW_H - 4);
   assert(X_LBL + GW(2) * MAX_LABEL <= X_SPK);
   assert(X_SPK + SPK_W <= X_RIGHT - GW(2) * 7);
-  assert(4 + SPK_H <= ROW_H - 4);
+  assert(Y_SPK + SPK_H <= ROW_H - 4);
   assert(Y_ROW0 + ROW_H * ROWS <= Y_FOOT);
   assert(Y_FOOT + FOOT_STEP * 2 + GH(1) <= 320);
   // Detail: the logo and the text column beside it, then the chart labels
@@ -768,6 +881,9 @@ static void selfCheck() {
   assert(D_Y_SYM + GH(3) <= D_Y_NAME && D_Y_NAME + GH(1) <= D_Y_PRICE);
   assert(D_Y_PRICE + GH(3) <= D_Y_CHG && D_Y_CHG + GH(2) <= D_Y_PCT && D_Y_PCT + GH(2) <= D_Y_HI);
   assert(D_Y_HI + GH(1) <= CH_Y && CH_Y + CH_H <= D_Y_LO && D_Y_LO + GH(1) <= D_Y_DAY);
+  // Range chips sit left of the low label, between the chart and the day bar.
+  assert(CH_Y + CH_H <= R_Y && R_Y + R_H <= D_Y_DAY && R_W <= R_STEP);
+  assert(X_SYM + R_STEP * (N_RANGES - 1) + R_W <= X_RIGHT - GW(1) * 7);
   assert(D_Y_DAY + 10 + GH(1) <= D_Y_WK && D_Y_WK + 10 + GH(1) <= D_Y_BTN);
   assert(D_Y_BTN + BTN_H <= 320 && 2 + 2 * 80 + BTN_W <= 240);
   assert(sizeof logoBuf >= (size_t)LOGO_BADGE * LOGO_BADGE * 2);
@@ -844,6 +960,7 @@ static void openDetail(uint8_t idx) {
   detailIdx = idx;
   detailOpenedAt = millis();
   if (refreshOnOpen) priority = idx;
+  if (rangeSel && !rows[idx].coin) seriesReq = rangeSel;  // the range sticks across PREV/NEXT
   drawDetail(true);
 }
 
@@ -912,10 +1029,16 @@ void loop() {
       uint8_t idx = page * ROWS + (slot < 0 ? 0 : slot);
       if (slot >= 0 && idx < nRows) openDetail(idx);
     } else {
-      int8_t b = hitButton(tx, ty);
+      int8_t b = hitButton(tx, ty), rg = hitRange(tx, ty);
       if (b == 0) openDetail((detailIdx + nRows - 1) % nRows);
       else if (b == 2) openDetail((detailIdx + 1) % nRows);
-      else backToList();
+      else if (b == 1) backToList();
+      else if (rg >= 0 && !rows[detailIdx].coin && rg != rangeSel) {
+        rangeSel = (uint8_t)rg;
+        if (rg) seriesReq = rg;
+        drawRangeChips();
+        cDetail[0] = '\0';  // the chart must redraw for the new range
+      }
     }
     Serial.printf("tap %d,%d -> %s %s\n", tx, ty, view == View::List ? "list" : "detail",
                   view == View::Detail ? rows[detailIdx].label : "");

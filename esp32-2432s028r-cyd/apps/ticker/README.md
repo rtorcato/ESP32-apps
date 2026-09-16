@@ -3,7 +3,8 @@
 Built 2026-09-15, first version: the LIST layout with a sparkline on every
 row, tap a row for the stock's own page (chart with previous-close line, day
 and 52-week range bars, PREV / LIST / NEXT buttons), fetches on core 0,
-brightness from the LDR. 2026-09-16: logos, at two sizes, from LittleFS.
+brightness from the LDR. 2026-09-16: logos, at two sizes, from LittleFS, and
+a range selector (1D / 5D / 1M / 6M / 1Y) under the detail chart.
 **Not built yet:** the SD card, the HEATMAP layout, and the NVS layout memory
 -- the design below is the roadmap for those.
 
@@ -109,7 +110,13 @@ and it needed no SD card driver. `// ponytail:` in `main.cpp` marks it: when
 the SD card lands, the ceiling goes and 128 is one constant and one rerun.
 
 `tools/make-logos.py` is the C6's converter reached by symlink, with an `--out`
-so one script writes both sizes into this app's `data/`. The firmware reads
+so one script writes both sizes into this app's `data/`. It now **crops each
+logo to its visible mark** before scaling, so every badge fills 88% of its box
+and the detail logo sits flush with the text beside it -- sources arrive with
+anything from no padding to half the image, and at 24px that difference was
+the whole picture. The crop follows what will be visible on black, not the
+alpha channel: many sources carry an opaque black backing square that is
+"glyph" by alpha and invisible on screen. The firmware reads
 `/logo/<size>/<LABEL>.565` into one static 18KB buffer and blits it; the boot
 log inventories both sizes (`logos 24px: 26/26 present`).
 
@@ -138,6 +145,15 @@ that passes comfortably at 128px can fall under the 6% threshold at 24px — and
 that is precisely the signal that this symbol should be text-only in the row.
 
 ## Tap a stock, get its page
+
+**Range selector, built 2026-09-16.** Five chips under the chart: 1D is the
+row's own sparkline series; 5D (30m), 1M (1d), 6M (1d) and 1Y (1wk) are
+fetched on demand by the core-0 task into one shared buffer (130 closes,
+~26KB heap during the fetch) and the chart says "loading 1M..." until they
+land. The previous-close line follows the range -- Yahoo's `chartPreviousClose`
+is the close before the range start. The selection sticks across PREV / NEXT.
+Coins have no series and show no chips. The tap zone is the whole strip
+between the chart and the day bar, taller than the drawn chip.
 
 Tap a LIST row or a HEATMAP tile — same gesture, same result in both layouts, no
 modes to learn. **The page is free**, for the same reason the sparkline is: the

@@ -50,6 +50,14 @@ COIN_URL = "https://assets.coincap.io/assets/icons/{}@2x.png"
 DARK_LUMA = 70
 WHITE_BG = 200
 
+# Logos arrive with any amount of padding around the mark, so the same nominal
+# size draws NVDA's wordmark tiny and AMD's square huge, and none of them sit
+# flush with the text beside them. Decode at WORK px, crop to the mark's
+# bounding box, then fit that square into the target with FILL of the box
+# used. Same treatment for every logo, so a row of badges reads as a row.
+WORK = 256
+FILL = 0.88
+
 UA = {"User-Agent": "Mozilla/5.0 (esp32-ticker logo fetch)"}
 
 
@@ -198,6 +206,80 @@ def classify(px, w, h):
     return mode, mean < DARK_LUMA
 
 
+def rendered(p, mode: str, invert_glyph: bool):
+    """The rgb this pixel becomes on the black screen: the one truth that both
+    the packer and the crop use, so the crop follows what will be VISIBLE.
+    Cropping on is_glyph() alone was wrong: many source PNGs carry an opaque
+    black backing square, which is "glyph" by alpha and invisible on black."""
+    r, g, b, a = p
+    if not is_glyph(p, mode):
+        return 0, 0, 0
+    if invert_glyph:
+        r, g, b = 255 - r, 255 - g, 255 - b
+    # Alpha onto black, last, so a part-transparent edge fades to the
+    # background rather than to a bright fringe.
+    return r * a // 255, g * a // 255, b * a // 255
+
+
+def bbox(px, w, h, mode: str, invert_glyph: bool):
+    """Bounding box of the visible mark, (x0, y0, x1, y1) inclusive. None if empty."""
+    x0 = y0 = 1 << 30
+    x1 = y1 = -1
+    for y in range(h):
+        row = y * w
+        for x in range(w):
+            if max(rendered(px[row + x], mode, invert_glyph)) >= 40:
+                if x < x0: x0 = x
+                if x > x1: x1 = x
+                if y < y0: y0 = y
+                if y > y1: y1 = y
+    return None if x1 < 0 else (x0, y0, x1, y1)
+
+
+def bg_pixel(mode: str):
+    return (255, 255, 255, 255) if mode == "white" else (0, 0, 0, 255 if mode == "opaque" else 0)
+
+
+def crop_fit(px, w, h, mode: str, invert_glyph: bool, size: int):
+    """Crop to the mark, centre it in a square, box-filter down to size x size.
+
+    The square's side is the mark's longer side / FILL, so the mark fills FILL
+    of the box in that direction and is centred in the other. Anything the
+    square reaches outside the image is background. Alpha is averaged
+    premultiplied so a transparent edge fades rather than smearing colour.
+    """
+    box = bbox(px, w, h, mode, invert_glyph)
+    if box is None:
+        return [bg_pixel(mode)] * (size * size), 0
+    x0, y0, x1, y1 = box
+    bw, bh = x1 - x0 + 1, y1 - y0 + 1
+    side = max(1, int(round(max(bw, bh) / FILL)))
+    ox = (x0 + x1 + 1) // 2 - side // 2
+    oy = (y0 + y1 + 1) // 2 - side // 2
+    bg = bg_pixel(mode)
+    acc = [[0, 0, 0, 0, 0] for _ in range(size * size)]  # r*a, g*a, b*a, a, count
+    for sy in range(side):
+        yy = oy + sy
+        dy = sy * size // side
+        inrow = 0 <= yy < h
+        for sx in range(side):
+            xx = ox + sx
+            p = px[yy * w + xx] if inrow and 0 <= xx < w else bg
+            a = acc[dy * size + sx * size // side]
+            a[0] += p[0] * p[3]
+            a[1] += p[1] * p[3]
+            a[2] += p[2] * p[3]
+            a[3] += p[3]
+            a[4] += 1
+    out = []
+    for r, g, b, a, n in acc:
+        if a == 0:
+            out.append((0, 0, 0, 0))
+        else:
+            out.append((r // a, g // a, b // a, a // n))
+    return out, max(bw, bh) * 100 // max(w, h)
+
+
 def to_rgb565(px, w, h, mode: str, invert_glyph: bool) -> bytes:
     """Flatten to a black background and pack little-endian RGB565.
 
@@ -210,15 +292,7 @@ def to_rgb565(px, w, h, mode: str, invert_glyph: bool) -> bytes:
     """
     out = bytearray(w * h * 2)
     for i, p in enumerate(px):
-        r, g, b, a = p
-        if not is_glyph(p, mode):
-            r = g = b = 0  # background becomes the black screen
-            a = 255
-        elif invert_glyph:
-            r, g, b = 255 - r, 255 - g, 255 - b
-        # Alpha onto black, last, so a part-transparent edge fades to the
-        # background rather than to a bright fringe.
-        r, g, b = r * a // 255, g * a // 255, b * a // 255
+        r, g, b = rendered(p, mode, invert_glyph)
         v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
         struct.pack_into("<H", out, i * 2, v)
     return bytes(out)
@@ -252,13 +326,17 @@ def main() -> int:
             skipped += 1
             continue
         try:
-            w, h, px = bmp_to_rgba(to_bmp(png, args.size, tmp))
+            w, h, px = bmp_to_rgba(to_bmp(png, WORK, tmp))
         except (subprocess.CalledProcessError, ValueError) as e:
             print(f"    convert failed: {e}")
             skipped += 1
             continue
 
+        # Classify on the full decode, where the border is the real border;
+        # then crop, and pack with the same decision.
         mode, invert = classify(px, w, h)
+        px, mark_pct = crop_fit(px, w, h, mode, invert, args.size)
+        w = h = args.size
         dest = outdir / f"{label}.565"
         data = to_rgb565(px, w, h, mode, invert)
         dest.write_bytes(data)
@@ -270,7 +348,7 @@ def main() -> int:
         vis = sum(1 for i in range(0, len(data), 2)
                   if max(_unpack565(data, i)) >= 40) * 100 // (w * h)
         warn = "  <-- WARNING: nearly invisible on black" if vis < 6 else ""
-        print(f"    {w}x{h}  bg={mode}{', mark inverted' if invert else ''}"
+        print(f"    {w}x{h}  bg={mode}{', mark inverted' if invert else ''}  mark was {mark_pct}% of source"
               f"  {vis}% visible  -> {dest}{warn}")
         ok += 1
         if vis < 6:
