@@ -1,0 +1,1 @@
+../../../../esp32-c6-lcd-1.47/apps/ticker/tools/make-logos.py

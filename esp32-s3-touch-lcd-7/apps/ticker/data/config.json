@@ -1,0 +1,121 @@
+{
+  "_readme": [
+    "Every setting for the CYD ticker app. Edit, then push it WITHOUT a rebuild:",
+    "  ./push-config ticker",
+    "",
+    "Read through the shared appcfg.h loader. Any key may be left out -- the",
+    "firmware default applies. A value outside its allowed range is REJECTED and",
+    "named on the serial log, not silently clamped.",
+    "",
+    "Wi-Fi credentials are not here, deliberately -- this file is plain text on",
+    "a filesystem anyone holding the board can dump. See SECURITY.md."
+  ],
+
+  "_brightness": [
+    "This board has an LDR, so brightness tracks the ROOM rather than the clock.",
+    "auto         follow the LDR. false pins the backlight at 'max'.",
+    "min, max     the range the LDR maps between, 8-255.",
+    "ldrDark      raw LDR reading (0-4095) treated as a fully dark room. The",
+    "             sensor reads near 0 in room light; raise this if the panel",
+    "             never dims, lower it if it dims too early.",
+    "closedScale  percent of the computed level while the market is shut, 10-100."
+  ],
+  "brightness": { "auto": true, "min": 20, "max": 220, "ldrDark": 3000, "closedScale": 60 },
+
+  "_timing": [
+    "pageSeconds  the list scrolls continuously; this is how long one screen",
+    "             of rows takes to pass, 2-600. 10 is a readable crawl.",
+    "The scroll is frozen while a finger is down, so a tap lands on the row",
+    "it was aimed at. Swipe right on the list for the SETTINGS page: scroll",
+    "speed, backlight, tap sound and auto-return changed there are kept in",
+    "NVS and WIN over this file, like the C6's layout choice. The boot log",
+    "says which is in force."
+  ],
+  "timing": { "pageSeconds": 10 },
+
+  "_sparkline": [
+    "Yahoo's granularity for the intraday series -- the same request the price",
+    "comes from, so the series is free but the payload is not.",
+    "  5m  ~79 points, ~8-15KB per response. The default.",
+    "  15m ~26 points.   30m ~13 points, for long lists on a tight heap."
+  ],
+  "sparkline": { "interval": "5m" },
+
+  "_sleep": [
+    "The night window for the SETTINGS page's sleep=night option, hours 0-23,",
+    "may wrap midnight. Asleep means DEEP sleep: panel and radio off, the chip",
+    "drawing microamps, woken by a touch (for a minute, showing the prices it",
+    "went to sleep with) or when the window ends. sleep=closed follows the",
+    "market instead: asleep until the next weekday's pre-market."
+  ],
+  "sleep": { "from": 23, "to": 7 },
+
+  "_alerts": [
+    "A three-note chime (and two white blinks of the LED) when a price crosses",
+    "a line. movePct: any stock moving that far in a day, 0-100, 0 = off; once",
+    "per symbol, re-armed when it comes back inside half of it. levels: a line",
+    "per symbol, 'above' and/or 'below', once per crossing, re-armed 1% back:",
+    "  \"levels\": [ { \"symbol\": \"NVDA\", \"above\": 250 }, { \"symbol\": \"TSLA\", \"below\": 300 } ]",
+    "The Sound and LED rows on the SETTINGS page say whether alerts chime and blink."
+  ],
+  "alerts": { "movePct": 5, "levels": [] },
+
+  "_detail": [
+    "The per-stock page, reached by tapping a row.",
+    "returnSeconds  auto-return to the list after this long, 0-3600; 0 never.",
+    "refreshOnOpen  fetch the tapped symbol next, ahead of the sweep."
+  ],
+  "detail": { "returnSeconds": 60, "refreshOnOpen": true },
+
+  "_refresh": [
+    "Minutes between price refreshes. Stocks cost one HTTPS request EACH; coins",
+    "all travel in one CoinGecko request. Fetches run on core 0 and stay",
+    "strictly sequential: each TLS session is ~40KB of a 320KB heap.",
+    "openMinutes      in the regular session, 1-240.",
+    "extendedMinutes  in pre-market and after hours, 1-1440. The detail page",
+    "                 shows the extended-hours price then.",
+    "coinMinutes      crypto never closes, 1-240.",
+    "While the market is CLOSED (weekends, and nights between the post and",
+    "pre sessions) stocks are swept once after the close and then not at all."
+  ],
+  "refresh": { "openMinutes": 5, "extendedMinutes": 15, "coinMinutes": 5 },
+
+  "_timezone": ["POSIX TZ string, for the clock AND the market window below."],
+  "timezone": "EST5EDT,M3.2.0/2,M11.1.0/2",
+
+  "_market": [
+    "The trading day as HH:MM in the timezone above, Mon-Fri: pre-market from",
+    "'pre', regular 'open'-'close', after hours until 'post', closed otherwise.",
+    "Drives the refresh policy, brightness.closedScale and the CLOSED /",
+    "PRE-MKT / AFTER HRS tag. pre <= open < close <= post or all four reset."
+  ],
+  "market": { "pre": "04:00", "open": "09:30", "close": "16:00", "post": "20:00" },
+
+  "_symbols": [
+    "40 rows maximum across the four lists, labels capped at 5 characters. A",
+    "tap on the list header cycles ALL / STOCKS / INDICES / CRYPTO / CURRENCIES.",
+    "stocks      Yahoo symbols.",
+    "indices     Yahoo ids (^GSPC, ^IXIC, ^DJI, ^GSPTSE, ^VIX...) with a label.",
+    "currencies  ISO codes; a row is how many of it one US dollar buys, and",
+    "            the SETTINGS page's Currency row can show every price in it.",
+    "coins       CoinGecko ids, with a label to show."
+  ],
+  "stocks": [
+    "AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD",
+    "UI", "RKLB", "SPCX", "ABNB", "LUNR", "PLTR", "PEP", "BNS",
+    "SNOW", "HOOD", "SOFI", "JOBY", "ARM", "NET"
+  ],
+  "indices": [
+    { "id": "^GSPC", "label": "S&P" },
+    { "id": "^IXIC", "label": "NDQ" },
+    { "id": "^DJI", "label": "DOW" },
+    { "id": "^GSPTSE", "label": "TSX" }
+  ],
+  "currencies": [ "CAD", "EUR", "GBP", "JPY" ],
+  "coins": [
+    { "id": "bitcoin", "label": "BTC" },
+    { "id": "ethereum", "label": "ETH" },
+    { "id": "solana", "label": "SOL" },
+    { "id": "cardano", "label": "ADA" }
+  ]
+}

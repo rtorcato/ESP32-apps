@@ -1,8 +1,15 @@
 # Waveshare ESP32-S3-Touch-LCD-7 — 7" 800×480
 
-**Status: wishlist.** No verified pinout here — the panel uses ~20 GPIOs plus an
-I/O expander, so copy Waveshare's own board config rather than typing pins by
-hand.
+**Status: board layer and a first app built, 2026-09-16.** `lib/board/board.h`
+carries the pinout from Espressif's ESP32_Display_Panel board file and the
+ESPHome package for this device (they agree on every GPIO); `apps/hello`
+lit the panel and found the touch controller on the first try, and
+[`apps/ticker`](apps/ticker/) is the CYD ticker ported. Nothing has been
+checked by eye yet. Three things learned the hard way: the USB-C is a CH343
+UART bridge, not the chip's USB (no CDC flags, and never toggle DTR/RTS on
+it -- that is download mode); the CH422G's EXIO5 must stay low or the
+connector switches to the CAN side; and the module is the same N16R8 as
+the rotary, so its board manifest carries over.
 
 **Buy:** [amazon.ca (search)](https://www.amazon.ca/s?k=Waveshare+ESP32-S3+7inch+Capacitive+Touch+LCD) ·
 [amazon.com (search)](https://www.amazon.com/s?k=Waveshare+ESP32-S3+7inch+Capacitive+Touch+LCD) ·
