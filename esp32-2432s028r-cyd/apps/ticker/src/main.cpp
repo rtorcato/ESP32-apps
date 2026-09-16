@@ -21,6 +21,7 @@
 #include <NetworkClientSecure.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_sleep.h>
 #include <assert.h>
 #include <time.h>
 
@@ -80,8 +81,24 @@ static const char *const RET_NAMES[] = {"15s", "60s", "never"};
 static const uint32_t RET_MS[] = {15000, 60000, 0};
 static const char *const SLEEP_NAMES[] = {"never", "night", "closed"};
 static uint8_t sSpeed = 1, sBl = 0, sRet = 1, sSleep = 0;
+static bool sLed = true;  // the RGB LED glows with the watchlist's day
+
+// ── alerts: a chime (and a white blink) when a price crosses a line ──────
+// alerts.movePct: any stock moving that far in a day, once, re-armed when
+// it comes back inside half of it. alerts.levels: a price line per symbol,
+// above or below, once per crossing, re-armed 1% back across it.
+struct Alert {
+  char sym[MAX_LABEL + 1];
+  float above, below;
+  bool fired;
+};
+static const uint8_t MAX_ALERTS = 16;
+static Alert alerts[MAX_ALERTS];
+static uint8_t nAlerts = 0;
+static float movePct = 5.0f;
+static uint32_t moveFired = 0;  // bit per row
 static uint8_t sleepFrom = 23, sleepTo = 7;  // the night window, config.json
-static volatile bool asleep = false;         // backlight off, nothing drawn, nothing fetched
+static uint32_t awakeUntil = 60000;          // no sleeping before this; a touch pushes it out a minute
 static bool sSound = true;
 static Preferences prefs;
 static int blApplied = -1, ldrRaw = 0;  // brightnessTick's last reading and level, for the info page
@@ -170,6 +187,20 @@ static bool loadConfig() {
   refreshOnOpen = cfgBool("detail.refreshOnOpen", refreshOnOpen);
   sleepFrom = (uint8_t)cfgInt("sleep.from", sleepFrom, 0, 23);
   sleepTo = (uint8_t)cfgInt("sleep.to", sleepTo, 0, 23);
+  movePct = (float)cfgInt("alerts.movePct", (long)movePct, 0, 100);  // 0 = off
+  for (JsonObject o : cfgArr("alerts.levels")) {
+    const char *sym = o["symbol"];
+    if (!sym || strlen(sym) > MAX_LABEL || nAlerts >= MAX_ALERTS) {
+      Serial.printf("skipped alert '%s' (bad symbol or list full)\n", sym ? sym : "?");
+      continue;
+    }
+    Alert &a = alerts[nAlerts++];
+    snprintf(a.sym, sizeof a.sym, "%s", sym);
+    a.above = o["above"] | 0.0f;
+    a.below = o["below"] | 0.0f;
+    a.fired = false;
+  }
+  if (nAlerts || movePct > 0) Serial.printf("alerts: %u price lines, move %.0f%%\n", nAlerts, movePct);
   stockOpenMs = (uint32_t)cfgInt("refresh.openMinutes", stockOpenMs / 60000, 1, 240) * 60000UL;
   stockExtMs = (uint32_t)cfgInt("refresh.extendedMinutes", stockExtMs / 60000, 1, 1440) * 60000UL;
   coinMs = (uint32_t)cfgInt("refresh.coinMinutes", coinMs / 60000, 1, 240) * 60000UL;
@@ -211,7 +242,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 64, S_H = 34, S_N = 7;
+static const int16_t S_Y0 = 64, S_H = 30, S_N = 8;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -430,6 +461,118 @@ static void drawSpark(int16_t x, int16_t y, int16_t w, int16_t h, const Row &r) 
   }
 }
 
+// ── deep sleep ───────────────────────────────────────────────────────────
+// Sleep is real sleep: the panel to SLPIN, Wi-Fi off, the chip in deep
+// sleep, woken by the touch pen-down line (GPIO36 is RTC-capable) or a
+// timer set for the end of the sleep window. Deep sleep is a reboot, so
+// the watchlist's prices go into RTC slow memory first: a touch at 3am
+// shows last night's numbers the instant the panel lights, before Wi-Fi
+// has even started joining. The system clock survives deep sleep on its
+// own. ponytail: the CYD's CH340 and regulator keep drawing regardless;
+// this cuts the ESP32 and the backlight, which is where the current went.
+struct RtcRow {
+  float price, pct, prev, last;
+  float close[16];
+  uint8_t n;
+  bool valid;
+};
+static const uint32_t RTC_MAGIC = 0x7469636B;  // "tick"
+RTC_DATA_ATTR static uint32_t rtcMagic = 0, rtcLabelHash = 0;
+RTC_DATA_ATTR static time_t rtcLastOk = 0;
+RTC_DATA_ATTR static int32_t rtcPos = 0;
+RTC_DATA_ATTR static RtcRow rtcRows[MAX_SYMBOLS];
+static int32_t pos;  // defined with the list below; the snapshot needs it here
+
+static uint32_t labelHash() {
+  uint32_t h = nRows;
+  for (uint8_t i = 0; i < nRows; i++)
+    for (const char *c = rows[i].label; *c; c++) h = h * 31 + (uint8_t)*c;
+  return h;
+}
+static void snapshotToRtc() {
+  for (uint8_t i = 0; i < nRows; i++) {
+    const Row &r = rows[i];  // the fetch task is not running any more
+    RtcRow &o = rtcRows[i];
+    o.price = r.price;
+    o.pct = r.pct;
+    o.prev = r.prev;
+    o.last = r.last;
+    o.valid = r.valid;
+    o.n = r.n < 16 ? r.n : 16;
+    for (uint8_t j = 0; j < o.n; j++) o.close[j] = r.close[r.n < 16 ? j : (uint32_t)j * (r.n - 1) / 15];
+  }
+  rtcLabelHash = labelHash();
+  rtcLastOk = lastOk ? time(nullptr) - (millis() - lastOk) / 1000 : 0;
+  rtcPos = pos;
+  rtcMagic = RTC_MAGIC;
+}
+// True if the snapshot matched this watchlist and the rows were restored.
+static bool restoreFromRtc() {
+  if (rtcMagic != RTC_MAGIC || rtcLabelHash != labelHash()) return false;
+  for (uint8_t i = 0; i < nRows; i++) {
+    Row &r = rows[i];
+    const RtcRow &o = rtcRows[i];
+    r.price = o.price;
+    r.pct = o.pct;
+    r.prev = o.prev;
+    r.last = o.last;
+    r.valid = o.valid;
+    r.n = o.n;
+    memcpy(r.close, o.close, o.n * sizeof(float));
+  }
+  pos = rtcPos;
+  if (rtcLastOk) {
+    time_t age = time(nullptr) - rtcLastOk;
+    lastOk = age > 0 && (uint32_t)age * 1000 < millis() ? millis() - age * 1000 : 1;
+  }
+  return true;
+}
+// The sleep condition, pure in t. Closed follows the market; night the window.
+static bool sleepDue(const struct tm &t) {
+  return (sSleep == 1 && inNight(t.tm_hour, sleepFrom, sleepTo)) || (sSleep == 2 && session(t) == Session::Closed);
+}
+// Seconds until the sleep window ends: the night's `to` hour, or the next
+// weekday's pre-market. Capped at six hours so a long weekend still gets a
+// look at the clock now and then.
+static uint32_t secondsUntilWake(const struct tm &t) {
+  int32_t now = t.tm_hour * 60 + t.tm_min;
+  int32_t mins;
+  if (sSleep == 1) {
+    mins = (sleepTo * 60 - now + 1440) % 1440;
+    if (mins == 0) mins = 1440;
+  } else {
+    int wday = t.tm_wday, days = 0;
+    if (!(wday >= 1 && wday <= 5 && now < mktPreMin)) {
+      do {
+        wday = (wday + 1) % 7;
+        days++;
+      } while (wday == 0 || wday == 6);
+    }
+    mins = days * 1440 + mktPreMin - now;
+  }
+  uint32_t secs = (uint32_t)mins * 60 - t.tm_sec + 5;
+  return secs > 6UL * 3600 ? 6UL * 3600 : secs;
+}
+static void goToSleep(uint32_t secs) {
+  Serial.printf("deep sleep for up to %lus, or a touch\n", (unsigned long)secs);
+  snapshotToRtc();
+  backlight(0);
+  ledGlow(0, 0, 0);
+  if (gfx) {  // a timer wake goes back to sleep before the bus exists; the panel is still asleep then
+    Arduino_DataBus *bus = boardBus();
+    bus->beginWrite();
+    bus->writeCommand(0x28);  // DISPOFF
+    bus->writeCommand(0x10);  // SLPIN
+    bus->endWrite();
+  }
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);  // TP_IRQ: low while a finger is down
+  esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
 // ── the list: a scrolling ring ───────────────────────────────────────────
 // The panel scrolls in hardware. VSCRDEF (0x33) fences the seven row slots
 // under the fixed header, VSCRSADD (0x37) says which line of that region
@@ -444,7 +587,7 @@ static void drawSpark(int16_t x, int16_t y, int16_t w, int16_t h, const Row &r) 
 // canvas holds whichever one the direction needs and is repainted on a
 // reversal.
 static Arduino_Canvas *rowCanvas;
-static int32_t pos = 0;                 // pixels scrolled; row 0 sat at the top at 0
+// pos: pixels scrolled; row 0 sat at the top at 0. Declared with the sleep code above.
 static int32_t canvasV = INT32_MIN;     // the virtual row in the canvas
 static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
 static char cRow[ROWS][48], cCanvas[48], cHead[24];
@@ -784,6 +927,7 @@ static void loadSettings() {
     sRet = prefs.getUChar("ret", sRet) % 3;
     sSound = prefs.getBool("snd", sSound);
     sSleep = prefs.getUChar("slp", sSleep) % 3;
+    sLed = prefs.getBool("led", sLed);
   }
   if (prefs.isKey("tx0")) {
     touchCal.swap = prefs.getBool("tsw", false);
@@ -814,17 +958,19 @@ static void saveSettings() {
   prefs.putUChar("ret", sRet);
   prefs.putBool("snd", sSound);
   prefs.putUChar("slp", sSleep);
+  prefs.putBool("led", sLed);
   prefs.end();
   applySettings();
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Sleep", "Touch", "Info"};
+  static const char *const labels[] = {"Scroll", "Backlight", "Tap sound", "Auto return", "Sleep", "LED", "Touch", "Info"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? (sSound ? "on" : "off")
-                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? "calibrate" : ">";
+                : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? (sLed ? "on" : "off")
+                : i == 6 ? "calibrate" : ">";
   int16_t y = S_Y0 + i * S_H;
-  field(8, y + 8, 11, 2, C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 8, 9, 2, C_FG, v);
+  field(8, y + 6, 11, 2, C_MUTED, labels[i]);
+  fieldRight(X_RIGHT, y + 6, 9, 2, C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
 }
 static void drawSettings() {
@@ -834,13 +980,14 @@ static void drawSettings() {
 }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info), 2 (touch calibration).
 static uint8_t tapSetting(uint8_t i) {
-  if (i == 6) return 1;
-  if (i == 5) return 2;
+  if (i == 7) return 1;
+  if (i == 6) return 2;
   if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
   else if (i == 2) sSound = !sSound;
   else if (i == 3) sRet = (sRet + 1) % 3;
-  else sSleep = (sSleep + 1) % 3;
+  else if (i == 4) sSleep = (sSleep + 1) % 3;
+  else sLed = !sLed;
   saveSettings();
   drawSettingRow(i);
   return 0;
@@ -1323,7 +1470,7 @@ static void fetchTask(void *) {
   uint8_t sweepIdx = 0;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(250));
-    if (WiFi.status() != WL_CONNECTED || asleep) continue;
+    if (WiFi.status() != WL_CONNECTED) continue;
     int16_t nw = newsWant;
     if (nw >= 0) {  // the news page is waiting
       newsWant = -1;
@@ -1456,6 +1603,81 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
   return g;
 }
 
+// ── the LED glows with the day; the speaker chimes on a crossing ─────────
+// Green or red by the average move of the valid stocks, brighter for a
+// bigger move (3% is full), scaled with the backlight so it fades with the
+// room, off when the market is closed or the LED is off in settings.
+static void ledTick(Session ses) {
+  static uint32_t last = 0;
+  if (millis() - last < 1000) return;
+  last = millis();
+  if (!sLed || ses == Session::Closed || blApplied < 0) {
+    ledGlow(0, 0, 0);
+    return;
+  }
+  float sum = 0;
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < nRows; i++)
+    if (rows[i].valid && !rows[i].coin) {  // a float read; no lock needed
+      sum += rows[i].pct;
+      n++;
+    }
+  if (!n) {
+    ledGlow(0, 0, 0);
+    return;
+  }
+  float avg = sum / n, mag = min(fabsf(avg) / 3.0f, 1.0f);
+  uint8_t v = (uint8_t)((16 + 160 * mag) * blApplied / 255);
+  if (avg >= 0) ledGlow(0, v, 0);
+  else ledGlow(v, 0, 0);
+}
+// Three rising notes and two white blinks. Blocking for ~0.6s, which is
+// fine for something that happens a few times a day.
+static void chime(const char *why) {
+  Serial.printf("alert: %s\n", why);
+  static const uint16_t notes[] = {880, 1109, 1319};
+  for (uint8_t i = 0; i < 3; i++) {
+    if (sSound) tone(SPK, notes[i], 120);
+    ledGlow(i & 1 ? 0 : 255, i & 1 ? 0 : 255, i & 1 ? 0 : 255);
+    delay(150);
+  }
+  ledGlow(0, 0, 0);
+}
+static void alertTick() {
+  static uint32_t last = 0;
+  if (millis() - last < 5000) return;
+  last = millis();
+  char why[48];
+  for (uint8_t i = 0; i < nRows; i++) {
+    Row r = rowCopy(i);
+    if (!r.valid) continue;
+    if (movePct > 0 && !r.coin) {
+      uint32_t bit = 1UL << i;
+      if (fabsf(r.pct) >= movePct && !(moveFired & bit)) {
+        moveFired |= bit;
+        snprintf(why, sizeof why, "%s moved %+.1f%% today", r.label, r.pct);
+        chime(why);
+      } else if (fabsf(r.pct) < movePct / 2) {
+        moveFired &= ~bit;
+      }
+    }
+    for (uint8_t a = 0; a < nAlerts; a++) {
+      Alert &al = alerts[a];
+      if (strcmp(al.sym, r.label) != 0) continue;
+      bool hit = (al.above > 0 && r.price >= al.above) || (al.below > 0 && r.price <= al.below);
+      bool back = !((al.above > 0 && r.price >= al.above * 0.99f) || (al.below > 0 && r.price <= al.below * 1.01f));
+      if (hit && !al.fired) {
+        al.fired = true;
+        snprintf(why, sizeof why, "%s at %.2f, %s %.2f", r.label, r.price, al.above > 0 && r.price >= al.above ? "above" : "below",
+                 al.above > 0 && r.price >= al.above ? al.above : al.below);
+        chime(why);
+      } else if (back) {
+        al.fired = false;
+      }
+    }
+  }
+}
+
 // ── brightness from the LDR ──────────────────────────────────────────────
 // Calibration knob: ldrDark is the raw reading treated as fully dark. The
 // sensor read ~0 in room light on this unit; if the panel dims in a bright
@@ -1511,6 +1733,15 @@ static void selfCheck() {
   t.tm_hour = 12; t.tm_wday = 6;                assert(session(t) == Session::Closed);
   assert(inNight(23, 23, 7) && inNight(3, 23, 7) && !inNight(7, 23, 7) && !inNight(12, 23, 7));
   assert(inNight(1, 0, 6) && !inNight(6, 0, 6) && !inNight(5, 23, 23));
+  {  // wake timer: night ends at 07:00; closed ends at the next weekday's 04:00; six-hour cap
+    struct tm w = {};
+    w.tm_wday = 3; w.tm_hour = 23; w.tm_min = 30;
+    sSleep = 1;  assert(secondsUntilWake(w) == 6UL * 3600);  // 7.5h away, capped
+    w.tm_hour = 5; w.tm_min = 0;  assert(secondsUntilWake(w) == 2UL * 3600 + 5);  // 05:00 -> 07:00
+    sSleep = 2;  w.tm_hour = 2;  assert(secondsUntilWake(w) == 2UL * 3600 + 5);  // Wed 02:00 -> 04:00
+    w.tm_wday = 6; w.tm_hour = 12;  assert(secondsUntilWake(w) == 6UL * 3600);   // Sat -> Mon, capped
+    sSleep = 0;
+  }
   {  // calibration: a plain panel, a swapped-and-mirrored one, and two taps in one place
     TouchCal c;
     uint16_t plain[3][2] = {{500, 500}, {3400, 520}, {480, 3500}};
@@ -1590,10 +1821,35 @@ static State state = State::Boot;
 static View view = View::List;
 
 void setup() {
+  pinMode(LCD_BL, OUTPUT);
+  digitalWrite(LCD_BL, LOW);  // dark until there is something to show; matters after a sleep wake
   Serial.begin(115200);
   delay(300);
   boardBegin();
   selfCheck();
+
+  // What woke us. A timer wake inside the sleep window goes straight back
+  // to sleep without touching the panel or the radio.
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  bool fromSleep = cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_TIMER;
+  if (fromSleep) Serial.printf("woke by %s\n", cause == ESP_SLEEP_WAKEUP_EXT0 ? "touch" : "timer");
+
+  if (!loadConfig()) {
+    Serial.printf("config error: %s\n", cfgErr);
+    gfx = boardDisplay();
+    gfx->begin();
+    gfx->setTextWrap(false);
+    backlight(blMax);
+    return;  // loop() draws the panel
+  }
+  cfgRelease();
+  loadSettings();
+  setenv("TZ", tzString, 1);  // the clock survives deep sleep; the zone must be set before it is read
+  tzset();
+  struct tm t;
+  bool haveTime = getLocalTime(&t, 0);
+  if (cause == ESP_SLEEP_WAKEUP_TIMER && haveTime && sleepDue(t)) goToSleep(secondsUntilWake(t));
+  awakeUntil = millis() + 60000;
 
   gfx = boardDisplay();
   gfx->begin();
@@ -1602,18 +1858,19 @@ void setup() {
   rowCanvas = new Arduino_Canvas(LCD_W, ROW_H, nullptr);
   if (!rowCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) Serial.println("row canvas: alloc failed");  // 20KB
   rowCanvas->setTextWrap(false);
-  backlight(blMax);
-
-  if (!loadConfig()) {
-    Serial.printf("config error: %s\n", cfgErr);
-    return;  // loop() draws the panel
-  }
-  cfgRelease();
   logoInventory();
-  loadSettings();
+  mux = xSemaphoreCreateMutex();
 
-  const char *boot[] = {"connecting to wifi", WIFI_SSID};
-  drawPanel("STARTING", C_MUTED, boot, 2);
+  // Back from sleep with the snapshot intact: show it now, join later.
+  bool restored = fromSleep && restoreFromRtc();
+  if (restored) {
+    Serial.println("prices restored from RTC memory");
+    listStart();
+  } else {
+    const char *boot[] = {"connecting to wifi", WIFI_SSID};
+    drawPanel("STARTING", C_MUTED, boot, 2);
+  }
+  backlight(blMax);
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
@@ -1627,7 +1884,6 @@ void setup() {
     for (int i = 0; i < 40 && !getLocalTime(&t, 250); i++) {}
   }
 
-  mux = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(fetchTask, "fetch", 12288, nullptr, 1, nullptr, 0);
 }
 
@@ -1693,32 +1949,12 @@ void loop() {
   bool open = haveTime && marketOpen(t);
   Session ses = haveTime ? session(t) : Session::Regular;
 
-  // Sleep: backlight off, nothing drawn, nothing fetched, once the chosen
-  // condition holds and nobody has touched the panel for a minute. Any
-  // touch wakes it for a minute and is otherwise swallowed.
-  static uint32_t awakeUntil = 60000;
+  // Sleep: once the chosen condition holds and nobody has touched the panel
+  // for a minute, the chip deep-sleeps (see goToSleep). Not from a
+  // calibration or a fail panel: those need the screen.
   if (touchHeld) awakeUntil = millis() + 60000;
-  bool wantSleep = state == State::Running && haveTime && millis() > awakeUntil &&
-                   ((sSleep == 1 && inNight(t.tm_hour, sleepFrom, sleepTo)) || (sSleep == 2 && ses == Session::Closed));
-  if (wantSleep && !asleep) {
-    asleep = true;
-    backlight(0);
-    Serial.println("sleep");
-  } else if (asleep && !wantSleep) {
-    asleep = false;
-    blApplied = -1;  // brightnessTick re-applies
-    invalidateCache();
-    if (view == View::List) listStart();
-    else if (view == View::Settings || view == View::Calib) { view = View::Settings; drawSettings(); }
-    else if (view == View::Info) drawInfo(true);
-    else if (view == View::News) drawNews(true);
-    else drawDetail(true);
-    Serial.println("wake");
-  }
-  if (asleep) {
-    delay(50);
-    return;
-  }
+  if (state == State::Running && view != View::Calib && haveTime && millis() > awakeUntil && sleepDue(t))
+    goToSleep(secondsUntilWake(t));
 
   bool anyValid = false;
   for (uint8_t i = 0; i < nRows; i++) anyValid |= rows[i].valid;  // a bool read; no lock needed
@@ -1877,6 +2113,8 @@ void loop() {
     backToList();
 
   brightnessTick(open);
+  ledTick(ses);
+  alertTick();
 
   static uint32_t lastLog = 0;
   if (millis() - lastLog > LOG_MS) {

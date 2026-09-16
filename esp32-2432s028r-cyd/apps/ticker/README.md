@@ -229,12 +229,44 @@ the list. Settings: swipe left for the list. Info: left for the list, down
 for settings. Each page carries one dim hint line at its foot saying so; the
 gestures work anywhere on the page. The button bar's 40px went to the chart.
 
-**SETTINGS, swipe right from the list.** Seven rows, tap to cycle: scroll
+**SETTINGS, swipe right from the list.** Eight rows, tap to cycle: scroll
 speed (slow / normal / fast), backlight (auto / bright / dim), tap sound,
-auto-return (15s / 60s / never), sleep (never / night / closed -- backlight
-off, nothing drawn or fetched, a touch wakes it for a minute; the night
-window is `sleep.from` / `.to` in config.json), Touch (the calibration
-above), and Info. The four settings are kept in
+auto-return (15s / 60s / never), sleep (never / night / closed -- see below;
+the night window is `sleep.from` / `.to` in config.json), LED (on / off), Touch (the
+calibration above), and Info.
+
+**The LED glows with the day.** Green or red by the average move of the
+valid stocks, brighter for a bigger move (3% is full), scaled with the
+backlight so it fades with the room, off when the market is closed. It is
+a glance from across the room; the numbers are on the panel.
+
+**Alerts chime.** `alerts.movePct` (default 5): any stock moving that far in
+a day gets three rising notes and two white blinks, once, re-armed when it
+comes back inside half of it. `alerts.levels`: a price line per symbol,
+above or below, once per crossing, re-armed 1% back across it. The
+tap-sound setting silences the chime; the blink stays. Checked every five
+seconds against whatever the last fetch brought, so an alert is at most one
+refresh interval late.
+
+**Sleep is deep sleep.** When the condition holds and nobody has touched the
+panel for a minute: the watchlist's prices go into RTC slow memory (16
+sparkline points each, ~3KB), the panel gets DISPOFF + SLPIN, Wi-Fi goes
+off, and the chip deep-sleeps with two wake sources -- the touch pen-down
+line (GPIO36 is RTC-capable) and a timer set for the end of the window,
+capped at six hours. Deep sleep is a reboot, so a touch wake **restores the
+prices and draws the list before Wi-Fi starts joining**: the glance is
+instant, the numbers are the ones it went to sleep with, and the fetch task
+brings them up to date once the radio is up (or not, if the market is still
+closed). A timer wake inside the window goes straight back to sleep without
+lighting anything. The system clock survives deep sleep on its own; the
+zone is re-set from `timezone` before it is read. The CYD's CH340 and
+regulator keep drawing regardless; this cuts the ESP32 and the backlight,
+which is where the current went. Not measured.
+
+**Touch X runs backwards on this unit** -- a rightward swipe read as
+leftward and the range chips selected their neighbours until the default
+range in `board.h` was reversed. Y was right as it came. The calibration row
+measures the panel if a unit differs. The four settings are kept in
 **NVS and beat config.json**, the way the C6's layout choice does, or a
 config push would undo a tap on every boot; the boot log says which is in
 force. Everything that needs a keyboard stays in config.json. Swipe left or

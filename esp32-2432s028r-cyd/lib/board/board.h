@@ -93,6 +93,20 @@ inline void led(bool r, bool g, bool b) {
   digitalWrite(LED_G, !g);
   digitalWrite(LED_B, !b);
 }
+// A soft glow: PWM on the three pins, 0-255 each. Active low, so the duty
+// is inverted. Once called, led() should not be used on the same pins.
+inline void ledGlow(uint8_t r, uint8_t g, uint8_t b) {
+  static bool attached = false;
+  if (!attached) {
+    ledcAttach(LED_R, 5000, 8);
+    ledcAttach(LED_G, 5000, 8);
+    ledcAttach(LED_B, 5000, 8);
+    attached = true;
+  }
+  ledcWrite(LED_R, 255 - r);
+  ledcWrite(LED_G, 255 - g);
+  ledcWrite(LED_B, 255 - b);
+}
 
 inline bool bootPressed() { return digitalRead(BTN_BOOT) == LOW; }
 
@@ -107,8 +121,11 @@ inline bool bootPressed() { return digitalRead(BTN_BOOT) == LOW; }
 // measures them and keeps the result in NVS. A range may run backwards
 // (mirrored axis) and `swap` says the chip's X lies along the screen's Y --
 // which axis the film calls X is a wiring fact, not a convention.
+// X runs BACKWARDS on this unit: a rightward swipe read as leftward and the
+// range chips selected their neighbours until the range was reversed
+// (2026-09-16). Y was right as it came.
 struct TouchCal {
-  int16_t xMin = 200, xMax = 3700, yMin = 240, yMax = 3800;
+  int16_t xMin = 3700, xMax = 200, yMin = 240, yMax = 3800;
   bool swap = false;
 };
 inline TouchCal touchCal;
@@ -172,7 +189,7 @@ inline void touchSelfCheck() {
   assert(x == 0 && y == 0);
   touchMap(c, c.xMax, c.yMax, &x, &y);
   assert(x == LCD_W - 1 && y == LCD_H - 1);
-  touchMap(c, 0, 4095, &x, &y);  // out of range clamps, never wraps
+  touchMap(c, 4095, 4095, &x, &y);  // out of range clamps, never wraps (X is reversed: 4095 is left of xMin)
   assert(x == 0 && y == LCD_H - 1);
   TouchCal m;  // mirrored X, swapped axes: chip Y drives screen X, backwards
   m.swap = true;

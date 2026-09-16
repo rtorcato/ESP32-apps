@@ -43,10 +43,22 @@
 
   "_sleep": [
     "The night window for the SETTINGS page's sleep=night option, hours 0-23,",
-    "may wrap midnight. Asleep: backlight off, nothing drawn, nothing fetched;",
-    "a touch wakes it for a minute. sleep=closed follows the market instead."
+    "may wrap midnight. Asleep means DEEP sleep: panel and radio off, the chip",
+    "drawing microamps, woken by a touch (for a minute, showing the prices it",
+    "went to sleep with) or when the window ends. sleep=closed follows the",
+    "market instead: asleep until the next weekday's pre-market."
   ],
   "sleep": { "from": 23, "to": 7 },
+
+  "_alerts": [
+    "A three-note chime (and two white blinks of the LED) when a price crosses",
+    "a line. movePct: any stock moving that far in a day, 0-100, 0 = off; once",
+    "per symbol, re-armed when it comes back inside half of it. levels: a line",
+    "per symbol, 'above' and/or 'below', once per crossing, re-armed 1% back:",
+    "  \"levels\": [ { \"symbol\": \"NVDA\", \"above\": 250 }, { \"symbol\": \"TSLA\", \"below\": 300 } ]",
+    "The tap-sound setting silences the chime too; the blink stays."
+  ],
+  "alerts": { "movePct": 5, "levels": [] },
 
   "_detail": [
     "The per-stock page, reached by tapping a row.",
