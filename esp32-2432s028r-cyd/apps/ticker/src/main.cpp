@@ -141,6 +141,135 @@ static volatile int8_t priority = -1;  // symbol to fetch next, ahead of the swe
 static volatile uint32_t lastOk = 0, lastStock = 0, lastCoin = 0;
 static volatile uint16_t failures = 0;
 
+// ── on-device edits to the watchlist ─────────────────────────────────────
+// config.json stays the source; what the finger adds or removes is an
+// overlay in NVS (two comma lists, "add" and "del") applied after the file
+// loads, so a config push never undoes a tap. Adding a symbol the file
+// lists takes it off "del"; removing an added one takes it off "add".
+// Stocks stay ahead of coins in rows[] because the sweep counts on it, so
+// an insert goes at nStocks. listVersion lets an in-flight fetch notice
+// the rows moved under it and drop its result.
+static char ovAdd[200] = "", ovDel[200] = "";
+static uint32_t listVersion = 0;
+static bool listHas(const char *list, const char *sym) {
+  char pat[MAX_LABEL + 3];
+  snprintf(pat, sizeof pat, ",%s,", sym);
+  char wrapped[204];
+  snprintf(wrapped, sizeof wrapped, ",%s,", list);
+  return strstr(wrapped, pat) != nullptr;
+}
+static void listAppend(char *list, size_t n, const char *sym) {
+  if (listHas(list, sym)) return;
+  if (list[0]) strlcat(list, ",", n);
+  strlcat(list, sym, n);
+}
+static void listRemove(char *list, const char *sym) {
+  char out[200] = "";
+  char copy[200];
+  strlcpy(copy, list, sizeof copy);
+  for (char *tok = strtok(copy, ","); tok; tok = strtok(nullptr, ","))
+    if (strcmp(tok, sym) != 0) listAppend(out, sizeof out, tok);
+  strcpy(list, out);
+}
+static int8_t findRow(const char *label) {
+  for (uint8_t i = 0; i < nRows; i++)
+    if (strcmp(rows[i].label, label) == 0) return (int8_t)i;
+  return -1;
+}
+static void rebuildCoinIds() {
+  coinIds[0] = '\0';
+  for (uint8_t i = 0; i < nRows; i++) {
+    if (!rows[i].coin) continue;
+    if (coinIds[0]) strlcat(coinIds, ",", sizeof coinIds);
+    strlcat(coinIds, rows[i].id, sizeof coinIds);
+  }
+}
+// The label a Yahoo symbol gets: "-USD" dropped (BTC-USD -> BTC), then cut
+// to the five the row can show.
+static void labelFor(const char *sym, char *out, size_t n) {
+  char full[32];
+  snprintf(full, sizeof full, "%s", sym);
+  size_t l = strlen(full);
+  if (l > 4 && strcmp(full + l - 4, "-USD") == 0) full[l - 4] = '\0';  // strip first, THEN cut
+  snprintf(out, n, "%.*s", MAX_LABEL, full);
+}
+static int8_t insertStock(const char *label, const char *id) {
+  if (nRows >= MAX_SYMBOLS || !*label || strlen(label) > MAX_LABEL || findRow(label) >= 0) return -1;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  memmove(rows + nStocks + 1, rows + nStocks, (nRows - nStocks) * sizeof(Row));
+  Row &r = rows[nStocks];
+  memset(&r, 0, sizeof r);
+  snprintf(r.label, sizeof r.label, "%s", label);
+  snprintf(r.id, sizeof r.id, "%s", id);
+  uint8_t at = nStocks++;
+  nRows++;
+  listVersion++;
+  xSemaphoreGive(mux);
+  return (int8_t)at;
+}
+static void removeRow(uint8_t i) {
+  xSemaphoreTake(mux, portMAX_DELAY);
+  bool coin = rows[i].coin;
+  memmove(rows + i, rows + i + 1, (nRows - i - 1) * sizeof(Row));
+  nRows--;
+  if (coin) nCoins--;
+  else nStocks--;
+  rebuildCoinIds();
+  listVersion++;
+  xSemaphoreGive(mux);
+}
+static void saveOverlay() {
+  prefs.begin("ticker", false);
+  prefs.putString("add", ovAdd);
+  prefs.putString("del", ovDel);
+  prefs.end();
+}
+static void applyOverlay() {
+  prefs.begin("ticker", true);
+  prefs.getString("add", ovAdd, sizeof ovAdd);
+  prefs.getString("del", ovDel, sizeof ovDel);
+  prefs.end();
+  char copy[200];
+  strlcpy(copy, ovDel, sizeof copy);
+  for (char *tok = strtok(copy, ","); tok; tok = strtok(nullptr, ",")) {
+    int8_t i = findRow(tok);
+    if (i >= 0) removeRow((uint8_t)i);
+  }
+  strlcpy(copy, ovAdd, sizeof copy);
+  for (char *tok = strtok(copy, ","); tok; tok = strtok(nullptr, ",")) {
+    char label[MAX_LABEL + 1];
+    labelFor(tok, label, sizeof label);
+    insertStock(label, tok);
+  }
+  rebuildCoinIds();
+  if (ovAdd[0] || ovDel[0]) Serial.printf("watchlist edits from NVS: added [%s] removed [%s]\n", ovAdd, ovDel);
+  if (nRows == 0) cfgErr = "every symbol removed; swipe left to add one";
+}
+// The finger adds symbol `sym` (a Yahoo symbol): row index, or -1.
+static int8_t userAdd(const char *sym) {
+  char label[MAX_LABEL + 1];
+  labelFor(sym, label, sizeof label);
+  int8_t i = findRow(label);
+  if (i >= 0) return i;
+  i = insertStock(label, sym);
+  if (i < 0) return -1;
+  if (listHas(ovDel, label)) listRemove(ovDel, label);
+  else listAppend(ovAdd, sizeof ovAdd, sym);
+  saveOverlay();
+  Serial.printf("added %s as %s\n", sym, label);
+  return i;
+}
+static void userRemove(uint8_t i) {
+  char label[MAX_LABEL + 1], id[28];
+  strcpy(label, rows[i].label);
+  strcpy(id, rows[i].id);
+  removeRow(i);
+  if (listHas(ovAdd, id)) listRemove(ovAdd, id);
+  else listAppend(ovDel, sizeof ovDel, label);
+  saveOverlay();
+  Serial.printf("removed %s\n", label);
+}
+
 static bool addRow(const char *label, const char *id, bool coin) {
   if (nRows >= MAX_SYMBOLS) return false;
   if (!label || !*label || strlen(label) > MAX_LABEL) return false;
@@ -228,12 +357,7 @@ static bool loadConfig() {
                 (unsigned long)(coinMs / 60000), mktPreMin / 60, mktPreMin % 60, mktOpenMin / 60, mktOpenMin % 60,
                 mktCloseMin / 60, mktCloseMin % 60, mktPostMin / 60, mktPostMin % 60, tzString);
 
-  coinIds[0] = '\0';
-  for (uint8_t i = 0; i < nRows; i++) {
-    if (!rows[i].coin) continue;
-    if (coinIds[0]) strlcat(coinIds, ",", sizeof coinIds);
-    strlcat(coinIds, rows[i].id, sizeof coinIds);
-  }
+  rebuildCoinIds();
   Serial.printf("watchlist: %u stocks + %u coins\n", nStocks, nCoins);
   return true;
 }
@@ -273,6 +397,18 @@ static Series series[N_RANGES];  // [0] unused; written by the fetch task, read 
 static volatile uint8_t seriesWant = 0;  // bitmask of ranges still to fetch for seriesIdx
 static volatile uint8_t seriesIdx = 0;
 static uint8_t rangeSel = 0;
+
+// ── search: Yahoo's symbol lookup, keyless ───────────────────────────────
+struct Hit {
+  char sym[12], name[30], exch[6];
+};
+static const uint8_t MAX_HITS = 6;
+static Hit hits[MAX_HITS];  // fetch task writes, UI reads, under mux
+static uint8_t nHits = 0;
+static bool searchDone = false, searchFailed = false;
+static volatile bool searchWant = false;
+static char query[9] = "", searchQ[9] = "";
+static uint8_t searchMode = 0;  // 0 the keyboard, 1 the results
 
 // ── news: Yahoo's per-symbol headline RSS, keyless ───────────────────────
 struct NewsItem {
@@ -640,8 +776,12 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
   rowKey(r, key, sizeof key, price, pct);
   uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
   gfx->drawFastHLine(0, y, LCD_W, rule ? C_RULE : C_BG);
-  if (!blitLogo(X_SYM, y + Y_BADGE, LOGO_BADGE, r.label))
-    gfx->fillRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, C_BG);  // the previous occupant's badge
+  if (!blitLogo(X_SYM, y + Y_BADGE, LOGO_BADGE, r.label)) {  // no file: a tile with the initial
+    gfx->fillRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, C_BG);
+    gfx->fillRoundRect(X_SYM, y + Y_BADGE, LOGO_BADGE, LOGO_BADGE, 5, C_RULE);
+    char c[2] = {r.label[0], 0};
+    textAt(X_SYM + (LOGO_BADGE - textWidth(2, c)) / 2, y + Y_BADGE + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
+  }
   field(X_LBL, y + Y_LBL, MAX_LABEL, 2, C_FG, r.label);
   drawSpark(X_SPK, y + Y_SPK, SPK_W, SPK_H, r);
   fieldRight(X_RIGHT, y + 2, 7, 2, fg, price);
@@ -815,7 +955,7 @@ static char cDetail[48];
 
 // One dim line at the foot of a page saying which swipes it takes. Not a
 // control: the gestures work anywhere on the page.
-static void drawHint(const char *s) { fieldCentre(LCD_W / 2, Y_HINT, 38, 1, C_DIM, s); }
+static void drawHint(const char *s, uint16_t c = C_DIM) { fieldCentre(LCD_W / 2, Y_HINT, 38, 1, c, s); }
 
 static void drawRange(int16_t y, const char *label, float lo, float hi, float v) {
   char b[12];
@@ -873,7 +1013,10 @@ static void drawDetail(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
     cDetail[0] = '\0';
-    blitLogo(X_SYM, D_Y_SYM, LOGO_BIG, r.label);  // missing: the square stays black
+    if (!blitLogo(X_SYM, D_Y_SYM, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
+      gfx->fillRoundRect(X_SYM, D_Y_SYM, LOGO_BIG, LOGO_BIG, 14, C_RULE);
+      textAt(X_SYM + (LOGO_BIG - textWidth(3, r.label)) / 2, D_Y_SYM + (LOGO_BIG - FACES[2].cap) / 2, 3, C_MUTED, r.label);
+    }
     drawHint("< next    ^ news    v list    prev >");
     if (!r.coin) drawRangeChips();
   }
@@ -1155,6 +1298,92 @@ static void drawInfo(bool full) {
   for (uint8_t i = 0; i < n; i++) field(8, 62 + i * 11, 38, 1, i == 0 ? C_FG : C_MUTED, l[i]);
 }
 
+// ── search page: swipe left from the list ────────────────────────────────
+// Symbols are short and upper-case, so the keyboard is a 6x5 grid of 40px
+// keys, finger-sized on a resistive panel: A-X, then Y Z . - backspace GO.
+static const char *const KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-";  // + backspace + GO
+static const int16_t K_Y0 = 120, K_W = 40, K_H = 40, Q_Y = 44, RES_Y0 = 48, RES_H = 40;
+static int8_t hitKey(int16_t x, int16_t y) {
+  if (y < K_Y0 || y >= K_Y0 + 5 * K_H) return -1;
+  int8_t i = (y - K_Y0) / K_H * 6 + x / K_W;
+  return i < 30 ? i : -1;
+}
+static int8_t hitResult(int16_t y) {
+  if (y < RES_Y0 || y >= RES_Y0 + RES_H * nHits) return -1;
+  return (y - RES_Y0) / RES_H;
+}
+static void drawQuery() {
+  gfx->fillRoundRect(8, Q_Y, 224, 40, 8, C_RULE);
+  if (query[0]) textAt(20, Q_Y + 10, 3, C_FG, query);
+  else textAt(20, Q_Y + 16, 1, C_DIM, "symbol or company name");
+}
+static void drawKeyboard() {
+  for (uint8_t i = 0; i < 30; i++) {
+    int16_t x = (i % 6) * K_W, y = K_Y0 + (i / 6) * K_H;
+    gfx->drawRoundRect(x + 2, y + 2, K_W - 4, K_H - 4, 6, C_RULE);
+    char k[3] = {0, 0, 0};
+    const char *lab = k;
+    uint16_t c = C_FG;
+    if (i < 28) k[0] = KEYS[i];
+    else if (i == 28) lab = "<";
+    else {
+      lab = "GO";
+      c = C_GOOD;
+    }
+    textAt(x + (K_W - textWidth(2, lab)) / 2, y + (K_H - FACES[1].cap) / 2, 2, c, lab);
+  }
+}
+static void drawSearch(bool full) {
+  static char cSearch[16];
+  if (searchMode == 0) {
+    if (!full) return;
+    gfx->fillScreen(C_BG);
+    textAt(8, 8, 2, C_MUTED, "SEARCH");
+    textAt(LCD_W - 8 - textWidth(1, "v list"), 14, 1, C_DIM, "v list");
+    drawQuery();
+    textAt(8, 96, 1, C_DIM, "type a few letters, tap GO");
+    drawKeyboard();
+    return;
+  }
+  Hit h[MAX_HITS];
+  uint8_t n;
+  bool done, failed;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  n = nHits;
+  done = searchDone;
+  failed = searchFailed;
+  memcpy(h, hits, sizeof h);
+  xSemaphoreGive(mux);
+  if (full) {
+    gfx->fillScreen(C_BG);
+    textAt(8, 8, 2, C_MUTED, searchQ);
+    textAt(LCD_W - 8 - textWidth(1, "v back"), 14, 1, C_DIM, "v back");
+    gfx->drawFastHLine(8, 40, 224, C_RULE);
+    cSearch[0] = '\0';
+  }
+  char key[16];
+  snprintf(key, sizeof key, "%u|%d|%d", n, done, failed);
+  if (strcmp(key, cSearch) == 0) return;
+  strcpy(cSearch, key);
+  gfx->fillRect(0, RES_Y0, LCD_W, Y_HINT - RES_Y0, C_BG);
+  if (!done) {
+    field(8, 150, 20, 1, C_DIM, "searching...");
+    return;
+  }
+  if (failed || !n) {
+    field(8, 150, 20, 1, C_DIM, failed ? "search failed" : "nothing found");
+    return;
+  }
+  for (uint8_t i = 0; i < n; i++) {
+    int16_t y = RES_Y0 + i * RES_H;
+    bool listed = findRow(h[i].sym) >= 0;
+    textAt(8, y + 4, 2, C_FG, h[i].sym);
+    fieldRight(X_RIGHT, y + 8, 8, 1, listed ? C_GOOD : C_DIM, listed ? "on list" : h[i].exch);
+    textAt(8, y + 24, 1, C_MUTED, h[i].name);
+    gfx->drawFastHLine(8, y + RES_H - 1, 224, C_RULE);
+  }
+  drawHint("tap one to add it and open it");
+}
 // ── news page: swipe up from a stock ─────────────────────────────────────
 static char cNews[24];
 // Greedy word wrap by measured width into at most `lines` lines of `w` px.
@@ -1389,6 +1618,56 @@ static const char *xmlText(const char *from, const char *end, const char *tag, c
   out[l] = '\0';
   return b;
 }
+static void doSearch() {
+  char url[200];
+  snprintf(url, sizeof url,
+           "https://query1.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=10&newsCount=0&listsCount=0", searchQ);
+  NetworkClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setConnectTimeout(6000);
+  http.setTimeout(6000);
+  Hit got[MAX_HITS];
+  uint8_t n = 0;
+  bool ok = false;
+  if (http.begin(client, url)) {
+    http.addHeader("User-Agent", UA);
+    int code = http.GET();
+    if (code == 200) {
+      String body = http.getString();  // ~2-4KB
+      JsonDocument filter;
+      JsonObject q = filter["quotes"][0].to<JsonObject>();
+      for (const char *k : {"symbol", "shortname", "longname", "exchange", "quoteType"}) q[k] = true;
+      JsonDocument doc;
+      if (!deserializeJson(doc, body, DeserializationOption::Filter(filter))) {
+        ok = true;
+        for (JsonObject o : doc["quotes"].as<JsonArray>()) {
+          const char *type = o["quoteType"] | "";
+          if (strcmp(type, "EQUITY") && strcmp(type, "ETF") && strcmp(type, "CRYPTOCURRENCY") && strcmp(type, "INDEX") &&
+              strcmp(type, "MUTUALFUND"))
+            continue;  // futures and options are not for this panel
+          const char *sym = o["symbol"] | "";
+          if (!*sym || strlen(sym) >= sizeof got[n].sym || n >= MAX_HITS) continue;
+          strcpy(got[n].sym, sym);
+          snprintf(got[n].name, sizeof got[n].name, "%s", o["shortname"] | (o["longname"] | ""));
+          snprintf(got[n].exch, sizeof got[n].exch, "%s", o["exchange"] | "");
+          n++;
+        }
+      }
+    } else {
+      Serial.printf("search http %d\n", code);
+    }
+    http.end();
+  }
+  xSemaphoreTake(mux, portMAX_DELAY);
+  nHits = n;
+  searchDone = true;
+  searchFailed = !ok;
+  memcpy(hits, got, sizeof hits);
+  xSemaphoreGive(mux);
+  Serial.printf("search '%s': %u hits%s (heap %u)\n", searchQ, n, ok ? "" : " FAILED", ESP.getFreeHeap());
+}
+
 static void doNews(uint8_t idx) {
   Row r = rowCopy(idx);
   char url[160];
@@ -1477,10 +1756,15 @@ static bool fetchCoins(NetworkClientSecure &client) {
 }
 
 static void fetchOne(uint8_t i) {
+  uint32_t ver = listVersion;
   Row r = rowCopy(i);
   NetworkClientSecure client;
   client.setInsecure();  // public read-only quotes; pinning buys nothing
   bool ok = fetchStock(client, r);
+  if (ok && ver != listVersion) {
+    Serial.printf("%s: rows changed during the fetch, dropped\n", r.label);
+    return;
+  }
   if (ok) {
     rowStore(i, r);
     lastOk = millis();
@@ -1510,6 +1794,11 @@ static void fetchTask(void *) {
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(250));
     if (WiFi.status() != WL_CONNECTED) continue;
+    if (searchWant) {
+      searchWant = false;
+      doSearch();
+      continue;
+    }
     int16_t nw = newsWant;
     if (nw >= 0) {  // the news page is waiting
       newsWant = -1;
@@ -1580,15 +1869,15 @@ static void fetchTask(void *) {
 // release. Resistive panels jitter on first contact and drop contact for a
 // poll or two mid-stroke, so a release counts only after three polls
 // without contact. Every stroke is traced on serial.
-enum class Gesture : uint8_t { None, Tap, TapUp, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
-static const uint32_t TAP_MS = 100;
+enum class Gesture : uint8_t { None, Tap, TapUp, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
+static const uint32_t TAP_MS = 100, LONG_MS = 700;  // a still finger at 700ms is a long press (removal asks for one)
 static const int16_t AXIS_PX = 24, SWIPE_PX = 50;
 static bool tapUpQuick = false;
 static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
   static int16_t x0 = 0, y0 = 0, lx = 0, ly = 0;
   static uint32_t t0 = 0, lastTap = 0;
   static uint8_t axis = 0, gap = 0;  // axis: 0 undecided, 1 horizontal, 2 vertical
-  static bool tapped = false;
+  static bool tapped = false, longed = false;
   int16_t cx, cy;
   bool contact = touchRead(&cx, &cy);
   if (contact) gap = 0;
@@ -1600,7 +1889,7 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
     y0 = ly = cy;
     t0 = millis();
     axis = 0;
-    tapped = false;
+    tapped = longed = false;
   } else if (now) {
     int16_t ddx = cx - x0, ddy = cy - y0;
     if (!axis && (abs(ddx) >= AXIS_PX || abs(ddy) >= AXIS_PX)) {
@@ -1616,6 +1905,11 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
       *x = x0;
       *y = y0;
       g = Gesture::Tap;
+    } else if (!axis && tapped && !longed && millis() - t0 >= LONG_MS) {
+      longed = true;
+      *x = x0;
+      *y = y0;
+      g = Gesture::LongPress;
     }
     lx = cx;
     ly = cy;
@@ -1634,7 +1928,7 @@ static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
       *y = y0;
       g = Gesture::TapUp;
     }
-    static const char *const names[] = {"none", "tap", "tap-up", "drag", "swipe right", "swipe left", "swipe up", "swipe down"};
+    static const char *const names[] = {"none", "tap", "tap-up", "long", "drag", "swipe right", "swipe left", "swipe up", "swipe down"};
     Serial.printf("touch: %d,%d -> %d,%d  %lums  axis %c  %s\n", x0, y0, lx, ly, (unsigned long)(millis() - t0),
                   axis == 1 ? 'h' : axis == 2 ? 'v' : '-', names[(uint8_t)g]);
   }
@@ -1804,6 +2098,20 @@ static void selfCheck() {
   t.tm_wday = 5; t.tm_hour = 17;  nextOpen(t, nx, sizeof nx);  assert(strcmp(nx, "Mon 09:30") == 0);
   t.tm_wday = 2; t.tm_hour = 5;   nextOpen(t, nx, sizeof nx);  assert(strcmp(nx, "09:30") == 0);
 
+  {
+    char l[40] = "";
+    listAppend(l, sizeof l, "AAPL");
+    listAppend(l, sizeof l, "BTC-USD");
+    listAppend(l, sizeof l, "AAPL");
+    assert(strcmp(l, "AAPL,BTC-USD") == 0 && listHas(l, "AAPL") && listHas(l, "BTC-USD") && !listHas(l, "BTC"));
+    listRemove(l, "AAPL");
+    assert(strcmp(l, "BTC-USD") == 0);
+    char lab[MAX_LABEL + 1];
+    labelFor("BTC-USD", lab, sizeof lab);  assert(strcmp(lab, "BTC") == 0);
+    labelFor("GOOGL", lab, sizeof lab);    assert(strcmp(lab, "GOOGL") == 0);
+    labelFor("BRK-B", lab, sizeof lab);    assert(strcmp(lab, "BRK-B") == 0);
+    assert(hitKey(0, K_Y0 - 1) == -1 && hitKey(0, K_Y0) == 0 && hitKey(239, K_Y0 + 4 * K_H) == 29);
+  }
   assert(nRows == 0);
   assert(!addRow("TOOLONG", "TOOLONG", false));
   assert(!addRow("", "X", false));
@@ -1855,7 +2163,8 @@ static void selfCheck() {
 
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
-enum class View { List, Detail, Settings, Info, Calib, News };
+enum class View { List, Detail, Settings, Info, Calib, News, Search };
+static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
 
@@ -1873,7 +2182,9 @@ void setup() {
   bool fromSleep = cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_TIMER;
   if (fromSleep) Serial.printf("woke by %s\n", cause == ESP_SLEEP_WAKEUP_EXT0 ? "touch" : "timer");
 
-  if (!loadConfig()) {
+  mux = xSemaphoreCreateMutex();
+  if (loadConfig()) applyOverlay();
+  if (cfgErr) {
     Serial.printf("config error: %s\n", cfgErr);
     gfx = boardDisplay();
     gfx->begin();
@@ -1898,7 +2209,6 @@ void setup() {
   if (!rowCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) Serial.println("row canvas: alloc failed");  // 20KB
   rowCanvas->setTextWrap(false);
   logoInventory();
-  mux = xSemaphoreCreateMutex();
 
   // Back from sleep with the snapshot intact: show it now, join later.
   bool restored = fromSleep && restoreFromRtc();
@@ -1935,8 +2245,8 @@ static void drawFailPanel() {
   if (strcmp(k, key) == 0) return;
   strcpy(key, k);
   if (state == State::NoConfig) {
-    const char *l[] = {cfgErr, "", "upload the watchlist:", "  ./push-config ticker"};
-    drawPanel("NO LIST", C_WARN, l, 4);
+    const char *l[] = {cfgErr, "", "upload the watchlist:", "  ./push-config ticker", "", "or swipe left to search"};
+    drawPanel("NO LIST", C_WARN, l, 6);
   } else if (state == State::NoWifi) {
     static char ssid[40];
     snprintf(ssid, sizeof ssid, "SSID %s", WIFI_SSID);
@@ -1979,6 +2289,50 @@ static void openNews(uint8_t idx) {
   panelScroll(0);
   drawNews(true);
 }
+static void openSearch() {
+  view = View::Search;
+  searchMode = 0;
+  pageOpenedAt = millis();
+  panelScroll(0);
+  drawSearch(true);
+}
+static void searchKey(int8_t k) {
+  size_t l = strlen(query);
+  if (k == 28) {
+    if (l) query[l - 1] = '\0';
+  } else if (k == 29) {
+    if (!l) return;
+    strcpy(searchQ, query);
+    xSemaphoreTake(mux, portMAX_DELAY);
+    nHits = 0;
+    searchDone = searchFailed = false;
+    xSemaphoreGive(mux);
+    searchWant = true;
+    searchMode = 1;
+    drawSearch(true);
+    return;
+  } else if (l < sizeof query - 1) {
+    query[l] = KEYS[k];
+    query[l + 1] = '\0';
+  }
+  drawQuery();
+}
+// A result was tapped: on the list already, or added now; either way its page opens.
+static void chooseHit(uint8_t i) {
+  Hit h;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  h = hits[i];
+  xSemaphoreGive(mux);
+  int8_t idx = userAdd(h.sym);
+  if (idx < 0) {
+    drawHint("list is full (32)");
+    return;
+  }
+  rows[idx].valid = false;
+  priority = idx;  // a fresh row needs its first fetch whatever the session
+  openDetail((uint8_t)idx);
+}
+
 
 void loop() {
   int16_t tx, ty;
@@ -2012,11 +2366,18 @@ void loop() {
       else if (view == View::Settings || view == View::Calib) { view = View::Settings; drawSettings(); }
       else if (view == View::Info) drawInfo(true);
       else if (view == View::News) drawNews(true);
+      else if (view == View::Search) drawSearch(true);
       else drawDetail(true);
     }
   }
   if (state == State::NoConfig) {
-    drawFailPanel();
+    if (g == Gesture::SwipeLeft && WiFi.status() == WL_CONNECTED && nRows < MAX_SYMBOLS) {
+      cfgErr = nullptr;  // the search page will add one; the panel comes back if it does not
+      openSearch();
+      state = State::Running;
+    } else {
+      drawFailPanel();
+    }
     delay(50);
     return;
   }
@@ -2046,6 +2407,8 @@ void loop() {
     drawDetail(false);
   } else if (view == View::News) {
     drawNews(false);
+  } else if (view == View::Search) {
+    drawSearch(false);
   } else if (view == View::Calib) {
     if (calibTick()) {
       view = View::Settings;
@@ -2089,9 +2452,10 @@ void loop() {
   // Settings: left is the list. Info: left the list, down settings.
   bool swipe = g == Gesture::SwipeLeft || g == Gesture::SwipeRight || g == Gesture::SwipeDown || g == Gesture::SwipeUp;
   if (swipe && state == State::Running) {
-    bool acts = (view == View::List && g == Gesture::SwipeRight) || view == View::Detail ||
+    bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) ||
+                (view == View::Search && g == Gesture::SwipeDown) ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown));
     if (acts && (sSound & 1)) tone(SPK, 1200, 15);
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -2099,6 +2463,16 @@ void loop() {
       pageOpenedAt = millis();
       panelScroll(0);
       drawSettings();
+    } else if (view == View::List && g == Gesture::SwipeLeft) {
+      openSearch();
+    } else if (view == View::Search && g == Gesture::SwipeDown) {
+      if (searchMode == 1) {
+        searchMode = 0;
+        pageOpenedAt = millis();
+        drawSearch(true);
+      } else {
+        backToList();
+      }
     } else if (view == View::Detail) {
       if (g == Gesture::SwipeLeft) openDetail((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openDetail((detailIdx + nRows - 1) % nRows);
@@ -2120,9 +2494,44 @@ void loop() {
     }
   }
 
+  // A long press on a stock's page arms removal; a tap on the hint line
+  // within five seconds does it. Anything else lets it lapse.
+  if (view == View::Detail && g == Gesture::LongPress && state == State::Running) {
+    removeArmedUntil = millis() + 5000;
+    char m[40];
+    snprintf(m, sizeof m, "tap here to remove %s", rows[detailIdx].label);
+    drawHint(m, C_WARN);
+    if (sSound & 1) tone(SPK, 600, 40);
+  }
+  if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
+    removeArmedUntil = 0;
+    drawHint("< next    ^ news    v list    prev >");
+  }
+  if (tap && state == State::Running && view == View::Detail && removeArmedUntil && ty > D_Y_WK) {
+    removeArmedUntil = 0;
+    userRemove(detailIdx);
+    if (sSound & 1) tone(SPK, 500, 120);
+    if (nRows == 0) {
+      cfgErr = "every symbol removed; swipe left to add one";
+      state = State::Boot;  // the loop routes to the panel
+    } else {
+      backToList();
+    }
+    tap = false;
+  }
+
   if (tap && state == State::Running && view != View::List) {
     if (sSound & 1) tone(SPK, 1200, 15);
-    if (view == View::Settings) {
+    if (view == View::Search) {
+      pageOpenedAt = millis();
+      if (searchMode == 0) {
+        int8_t k = hitKey(tx, ty);
+        if (k >= 0) searchKey(k);
+      } else {
+        int8_t i = hitResult(ty);
+        if (i >= 0) chooseHit((uint8_t)i);
+      }
+    } else if (view == View::Settings) {
       int8_t i = hitSetting(ty);
       pageOpenedAt = millis();
       uint8_t r = i >= 0 ? tapSetting((uint8_t)i) : 0;
@@ -2150,7 +2559,8 @@ void loop() {
 
   if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
     backToList();
-  if ((view == View::Info || view == View::Settings) && returnMs && !touchHeld && millis() - pageOpenedAt > returnMs)
+  if ((view == View::Info || view == View::Settings || view == View::Search) && returnMs && !touchHeld &&
+      millis() - pageOpenedAt > returnMs)
     backToList();
 
   brightnessTick(open);

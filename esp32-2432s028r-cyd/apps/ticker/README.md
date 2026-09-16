@@ -49,6 +49,30 @@ film calls X is a wiring fact, not a convention, and every "the swipe does
 nothing" report is consistent with getting it wrong -- so it is measured, and
 the result lives in NVS. Run it first if any gesture feels wrong.
 
+**Search and add, swipe left from the list.** Symbols are short and
+upper-case, so the keyboard is a 6×5 grid of 40px keys: A–X, then Y Z . -
+backspace GO. Type a few letters (symbol or company name), tap GO, and
+Yahoo's keyless lookup (`query1.finance.yahoo.com/v1/finance/search`) returns
+up to six matches, futures and options filtered out. Tap one and it is
+**added to the list and its page opens** -- there is no "just look" mode,
+because a look you don't keep is one long press away from gone. Added
+symbols are Yahoo symbols and travel the stock path (BTC-USD included; its
+label drops the `-USD`). They have no logo file, so the badge and the big
+square draw a tile with the initial instead; run `make-logos.py` after
+adding them to `config.json` if you want the real mark.
+
+**Remove, long press on a stock's page.** The hint line turns amber -- "tap
+here to remove NVDA" -- and a tap on it within five seconds does it. Anything
+else lets it lapse.
+
+**Edits live in NVS, over config.json.** Two comma lists, `add` and `del`,
+applied after the file loads, so a config push never undoes a tap. Adding a
+symbol the file lists takes it off `del`; removing an added one takes it off
+`add`. Stocks stay ahead of coins in memory because the sweep counts on it,
+and an in-flight fetch that finds the rows moved under it drops its result
+rather than storing a price on the wrong row. Remove the last symbol and the
+NO LIST panel offers the search.
+
 **Headlines, swipe up from a stock.** Yahoo's per-symbol RSS
 (`feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA`), keyless, ~12KB, parsed
 with `strstr` -- six titles with their age, word-wrapped to two measured
