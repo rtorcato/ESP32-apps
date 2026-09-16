@@ -1413,11 +1413,21 @@ static void nextCurrency() {
   (void)cur;
   (void)codes;
 }
+// A scroll step redraws the rows in place -- each field clears its own box,
+// so there is no blanket clear and nothing to flicker -- and the hint only
+// when it changes.
+static void drawSettingRows() {
+  for (uint8_t i = setTop; i < setTop + S_N && i < S_ROWS; i++) drawSettingRow(i);
+  static int8_t lastEnd = -1;
+  int8_t end = setTop + S_N >= S_ROWS;
+  if (end != lastEnd) {
+    lastEnd = end;
+    drawHint(end ? "drag down for the rest     < list" : "drag up for more     < list");
+  }
+}
 static void drawSettings() {
   drawPanel("SETTINGS", C_MUTED, nullptr, 0);
-  gfx->fillRect(0, S_Y0, LCD_W, S_H * S_N, C_BG);
-  for (uint8_t i = 0; i < S_ROWS; i++) drawSettingRow(i);
-  drawHint(setTop + S_N < S_ROWS ? "drag up for more     < list" : "drag down for the rest     < list");
+  drawSettingRows();
 }
 // The confirm screen for the two rows that cannot be undone.
 static void drawConfirm() {
@@ -2997,8 +3007,8 @@ void loop() {
   if (view == View::Settings && g == Gesture::Drag && ddy) {
     static int16_t acc = 0;
     acc += ddy;
-    while (acc <= -S_H && setTop + S_N < S_ROWS) { acc += S_H; setTop++; drawSettings(); }
-    while (acc >= S_H && setTop > 0) { acc -= S_H; setTop--; drawSettings(); }
+    while (acc <= -S_H && setTop + S_N < S_ROWS) { acc += S_H; setTop++; drawSettingRows(); }
+    while (acc >= S_H && setTop > 0) { acc -= S_H; setTop--; drawSettingRows(); }
     if (setTop == 0 && acc > 0) acc = 0;
     if (setTop + S_N >= S_ROWS && acc < 0) acc = 0;
   }
