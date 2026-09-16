@@ -625,8 +625,11 @@ static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg
   textAt(x, y, size, fg, s);
 }
 static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
+  // The last glyph's edge reaches a few px past `right` (the measured width
+  // is the ink, not the advance), so the clear runs to the panel edge or
+  // those pixels outlive the text -- the dots after every settings value.
   int16_t w = GW(size) * chars;
-  gfx->fillRect(right - w, y, w, GH(size), C_BG);
+  gfx->fillRect(right - w, y, min<int16_t>(w + 6, LCD_W - (right - w)), GH(size), C_BG);
   textAt(right - textWidth(size, s), y, size, fg, s);
 }
 static void fieldCentre(int16_t cx, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
@@ -1391,7 +1394,7 @@ static void drawSettingRow(uint8_t i) {
                 : i == 7 ? sCur : i == 8 ? ">" : i == 9 ? ssid : i == 10 ? "calibrate" : ">";
   if (i < setTop || i >= setTop + S_N) return;
   int16_t y = S_Y0 + (i - setTop) * S_H;
-  gfx->fillRect(8, y + 4, 224, GH(2) + 4, C_BG);  // the whole strip: a long value must not outlive its row
+  gfx->fillRect(8, y + 4, LCD_W - 8, GH(2) + 4, C_BG);  // the whole strip, to the panel edge
   textAt(8, y + 6, 2, i == 11 ? C_BAD : C_MUTED, labels[i]);
   textAt(X_RIGHT - textWidth(2, v), y + 6, 2, C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
