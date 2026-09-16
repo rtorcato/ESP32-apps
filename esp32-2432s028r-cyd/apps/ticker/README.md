@@ -49,7 +49,22 @@ film calls X is a wiring fact, not a convention, and every "the swipe does
 nothing" report is consistent with getting it wrong -- so it is measured, and
 the result lives in NVS. Run it first if any gesture feels wrong.
 
-**Search and add, swipe left from the list.** Symbols are short and
+**Four kinds of row.** `stocks`, `indices` (Yahoo ids like `^GSPC` with a
+label of your own: S&P, NDQ, DOW, TSX), `currencies` (ISO codes; a row is
+how many of it one US dollar buys, `CAD=X` underneath) and `coins`. The
+first three go through Yahoo and share the sweep; the sparkline, the chart
+and the headlines work for all of them. Forty rows across the four.
+
+**A display currency.** The Currency row in settings cycles USD and every
+code the `currencies` list carries. Every price -- list, tile, page, ranges,
+chart labels -- converts through those rows' live rates: native to USD by
+the quote's own currency (Yahoo says which; BNS.TO is CAD), USD to the
+display currency. The page prints the code beside the price whenever it is
+not plain USD. A row whose rate is missing shows its own currency and says
+so. FX rates themselves never convert. Alert lines stay in the quote's
+native currency.
+
+**Search and add, swipe left from the heatmap.** Symbols are short and
 upper-case, so the keyboard is a 6×5 grid of 40px keys: A–X, then Y Z . -
 backspace GO. Type a few letters (symbol or company name), tap GO, and
 Yahoo's keyless lookup (`query1.finance.yahoo.com/v1/finance/search`) returns
@@ -185,9 +200,9 @@ colour-scheme gesture on layout switching just to fit.
 
 | Layout | What it shows |
 |---|---|
-| **LIST** | Six rows: symbol, intraday sparkline, price, signed change. Longer lists page every 8s. |
-| **HEATMAP** | 3×4 grid of 76×64 tiles, each tinted by the size of its move. Twelve symbols at once — **the layout the C6 physically cannot hold.** |
-| **DETAIL** | One stock's own page — logo, chart, ranges. Reached by **tapping it**, not by waiting for it to come round. |
+| **LIST** | A scrolling ring of seven rows: badge, symbol, intraday sparkline, price, signed change. One SECTION at a time -- all, stocks, indices, crypto, currencies -- a tap on the header cycles them. |
+| **HEATMAP** | Swipe left. 3×4 grid of 78×62 tiles of the current section, each tinted by the size of its move, pages of twelve. Tap a tile for the stock. Swipe left again for search. |
+| **DETAIL** | One stock's own page — logo, chart, ranges, headlines a swipe up. Reached by lifting a finger off its row. |
 
 Heatmap tint is **intensity, not just sign** — a 0.2% drift and a 9% drop must
 not look the same. Bucket the magnitude and keep the signed percentage printed on

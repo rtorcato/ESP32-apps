@@ -22,6 +22,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
+#include <algorithm>
 #include <assert.h>
 #include <time.h>
 
@@ -44,7 +45,7 @@ static uint32_t stockOpenMs = 5UL * 60 * 1000, stockExtMs = 15UL * 60 * 1000, co
 static const uint32_t WIFI_RETRY_MS = 20UL * 1000, LOG_MS = 60UL * 1000;
 static const char *UA = "Mozilla/5.0 (esp32-ticker)";
 
-static const uint8_t ROWS = 7, MAX_SYMBOLS = 32, MAX_LABEL = 5, SPARK_N = 200;  // 04:00-20:00 at 5m is 192
+static const uint8_t ROWS = 7, MAX_SYMBOLS = 40, MAX_LABEL = 5, SPARK_N = 200;  // 04:00-20:00 at 5m is 192
 // Two logo sizes, both pre-converted on the Mac (tools/make-logos.py --size N
 // --out data/logo/N) and read raw from /logo/<N>/<LABEL>.565. Must match.
 // ponytail: 96 on the detail page, not the README's 128 -- 26 x 32KB plus
@@ -81,6 +82,10 @@ static const char *const RET_NAMES[] = {"15s", "60s", "never"};
 static const uint32_t RET_MS[] = {15000, 60000, 0};
 static const char *const SLEEP_NAMES[] = {"never", "night", "closed"};
 static uint8_t sSpeed = 1, sBl = 0, sRet = 1, sSleep = 0;
+// Prices show in this currency, converted through the CURRENCIES rows
+// (how many of X one USD buys). USD, or any code the config lists. A row
+// whose rate is missing shows its own currency, and the page says which.
+static char sCur[4] = "USD";
 // Sound and LED are each two bits: bit 0 the everyday use (tap clicks /
 // the day's glow), bit 1 the alerts (chime / white blinks).
 static const char *const TWO_NAMES[][4] = {{"off", "taps", "alerts", "both"}, {"off", "glow", "alerts", "both"}};
@@ -99,7 +104,7 @@ static const uint8_t MAX_ALERTS = 16;
 static Alert alerts[MAX_ALERTS];
 static uint8_t nAlerts = 0;
 static float movePct = 5.0f;
-static uint32_t moveFired = 0;  // bit per row
+static uint64_t moveFired = 0;  // bit per row
 static uint8_t sleepFrom = 23, sleepTo = 7;  // the night window, config.json
 static uint32_t awakeUntil = 60000;          // no sleeping before this; a touch pushes it out a minute
 static uint8_t sSound = 3;
@@ -112,6 +117,8 @@ struct Row {
   char id[28];
   char name[32];
   bool coin, valid;
+  uint8_t kind;  // K_STOCK, K_INDEX, K_FX (all Yahoo), K_COIN (CoinGecko); coin == (kind == K_COIN)
+  char cur[4];   // the quote's own currency, from Yahoo's meta; coins are USD
   float price, pct, prev, dayLo, dayHi, wkLo, wkHi;
   float last;     // the newest bar, extended hours included; == price in the regular session
   time_t traded;  // Yahoo's regularMarketTime: the last regular-session trade
@@ -119,7 +126,25 @@ struct Row {
   float close[SPARK_N];
 };
 static Row rows[MAX_SYMBOLS];
-static uint8_t nRows = 0, nStocks = 0, nCoins = 0;
+static uint8_t nRows = 0, nStocks = 0, nIdx = 0, nFx = 0, nCoins = 0;
+enum : uint8_t { K_STOCK, K_INDEX, K_FX, K_COIN };
+static uint8_t nYahoo() { return nRows - nCoins; }  // rows[0..nYahoo) go through Yahoo, coins after
+// The list shows one SECTION at a time -- all, stocks, indices, crypto,
+// currencies -- cycled by a tap on the header and kept in NVS. order[]
+// is the rows of the current section; the ring and the heatmap draw from
+// it, so a row index in the UI is order[shown index].
+static const char *const SECT_NAMES[] = {"ALL", "STOCKS", "INDICES", "CRYPTO", "CURRENCIES"};
+static const uint8_t SECT_KIND[] = {255, K_STOCK, K_INDEX, K_COIN, K_FX};  // the screen order is not the kind order
+static uint8_t sect = 0, order[MAX_SYMBOLS], nShown = 0;
+static void buildOrder() {
+  nShown = 0;
+  for (uint8_t i = 0; i < nRows; i++)
+    if (sect == 0 || rows[i].kind == SECT_KIND[sect]) order[nShown++] = i;
+  if (!nShown && sect) {  // an emptied section: show everything
+    sect = 0;
+    buildOrder();
+  }
+}
 static char coinIds[MAX_SYMBOLS * 28];
 static const char *cfgErr = nullptr;
 
@@ -202,22 +227,27 @@ static int8_t insertStock(const char *label, const char *id) {
   memset(&r, 0, sizeof r);
   snprintf(r.label, sizeof r.label, "%s", label);
   snprintf(r.id, sizeof r.id, "%s", id);
+  strcpy(r.cur, "USD");
   uint8_t at = nStocks++;
   nRows++;
   listVersion++;
   xSemaphoreGive(mux);
+  buildOrder();
   return (int8_t)at;
 }
 static void removeRow(uint8_t i) {
   xSemaphoreTake(mux, portMAX_DELAY);
-  bool coin = rows[i].coin;
+  uint8_t kind = rows[i].kind;
   memmove(rows + i, rows + i + 1, (nRows - i - 1) * sizeof(Row));
   nRows--;
-  if (coin) nCoins--;
+  if (kind == K_COIN) nCoins--;
+  else if (kind == K_INDEX) nIdx--;
+  else if (kind == K_FX) nFx--;
   else nStocks--;
   rebuildCoinIds();
   listVersion++;
   xSemaphoreGive(mux);
+  buildOrder();
 }
 static void saveOverlay() {
   prefs.begin("ticker", false);
@@ -243,6 +273,7 @@ static void applyOverlay() {
     insertStock(label, tok);
   }
   rebuildCoinIds();
+  buildOrder();
   if (ovAdd[0] || ovDel[0]) Serial.printf("watchlist edits from NVS: added [%s] removed [%s]\n", ovAdd, ovDel);
   if (nRows == 0) cfgErr = "every symbol removed; swipe left to add one";
 }
@@ -271,7 +302,7 @@ static void userRemove(uint8_t i) {
   Serial.printf("removed %s\n", label);
 }
 
-static bool addRow(const char *label, const char *id, bool coin) {
+static bool addRow(const char *label, const char *id, bool coin, uint8_t kind = K_STOCK) {
   if (nRows >= MAX_SYMBOLS) return false;
   if (!label || !*label || strlen(label) > MAX_LABEL) return false;
   if (!id || !*id) return false;
@@ -280,6 +311,8 @@ static bool addRow(const char *label, const char *id, bool coin) {
   snprintf(r.label, sizeof r.label, "%s", label);
   snprintf(r.id, sizeof r.id, "%s", id);
   r.coin = coin;
+  r.kind = coin ? K_COIN : kind;
+  strcpy(r.cur, "USD");
   return true;
 }
 
@@ -293,6 +326,18 @@ static bool loadConfig() {
     const char *s = v.as<const char *>();
     if (addRow(s, s, false)) nStocks++;
     else Serial.printf("skipped stock '%s' (bad label or list full)\n", s ? s : "?");
+  }
+  for (JsonObject o : cfgArr("indices")) {  // Yahoo ids like ^GSPC, with a label of your own
+    const char *id = o["id"], *label = o["label"];
+    if (addRow(label ? label : id, id, false, K_INDEX)) nIdx++;
+    else Serial.printf("skipped index '%s' (bad label or list full)\n", id ? id : "?");
+  }
+  for (JsonVariant v : cfgArr("currencies")) {  // ISO codes; the row is how many of it one USD buys
+    const char *c = v.as<const char *>();
+    char id[12];
+    snprintf(id, sizeof id, "%s=X", c ? c : "");
+    if (c && strlen(c) == 3 && addRow(c, id, false, K_FX)) nFx++;
+    else Serial.printf("skipped currency '%s' (not a 3-letter code, or list full)\n", c ? c : "?");
   }
   for (JsonObject o : cfgArr("coins")) {
     const char *id = o["id"], *label = o["label"];
@@ -359,7 +404,7 @@ static bool loadConfig() {
                 mktCloseMin / 60, mktCloseMin % 60, mktPostMin / 60, mktPostMin % 60, tzString);
 
   rebuildCoinIds();
-  Serial.printf("watchlist: %u stocks + %u coins\n", nStocks, nCoins);
+  Serial.printf("watchlist: %u stocks, %u indices, %u currencies, %u coins\n", nStocks, nIdx, nFx, nCoins);
   return true;
 }
 
@@ -370,7 +415,7 @@ static bool loadConfig() {
 static const int16_t Y_HEAD = 4, Y_ROW0 = 22, ROW_H = 42, X_SYM = 6, Y_BADGE = 4, X_LBL = 34, Y_LBL = 8,
                      X_SPK = 98, Y_SPK = 2, SPK_W = 48, SPK_H = 28, X_RIGHT = 234;
 // Settings: title, five 40px rows, the LIST button.
-static const int16_t S_Y0 = 64, S_H = 30, S_N = 8;
+static const int16_t S_Y0 = 58, S_H = 27, S_N = 9;
 // Detail: 96px logo at the left with symbol, name, price, change beside it;
 // then the chart (high and low printed inside it), a row of five range
 // chips sized for a finger, two range bars, and a one-line gesture hint.
@@ -436,6 +481,28 @@ static void formatPct(float p, char *out, size_t n) {
   if (fabsf(p) >= 100.0f) snprintf(out, n, "%+.0f%%", p);
   else snprintf(out, n, "%+.1f%%", p);
 }
+static float fxRate(const char *code) {  // X per USD, 0 if unknown
+  if (strcmp(code, "USD") == 0) return 1.0f;
+  for (uint8_t i = 0; i < nRows; i++)
+    if (rows[i].kind == K_FX && rows[i].valid && strcmp(rows[i].label, code) == 0) return rows[i].price;
+  return 0;
+}
+// A native value of row r in the display currency. converted says whether
+// it could be; if not, the value comes back as it was.
+static float disp(const Row &r, float v, bool *converted = nullptr) {
+  bool can = r.kind != K_FX && strcmp(r.cur, sCur) != 0;
+  float from = can ? fxRate(r.cur) : 0, to = can ? fxRate(sCur) : 0;
+  can = can && from > 0 && to > 0;
+  if (converted) *converted = can;
+  return can ? v / from * to : v;
+}
+// A row's price as text: FX rates get four decimals, everything else the
+// usual, in the display currency.
+static void priceStr(const Row &r, float v, char *out, size_t n) {
+  if (r.kind == K_FX) snprintf(out, n, v < 100 ? "%.4f" : "%.2f", v);
+  else formatPrice(disp(r, v), out, n);
+}
+
 // The trading day in four parts. Closed is a weekend or the night between
 // the post session and the next pre session: nothing prints then, so
 // nothing is fetched. A holiday looks like a weekday here and costs a few
@@ -460,7 +527,7 @@ static bool holidayFrom(const struct tm &t) {
   if (t.tm_hour * 60 + t.tm_min < mktOpenMin + 15) return false;
   bool seen = false;
   for (uint8_t i = 0; i < nRows; i++) {
-    if (!rows[i].valid || rows[i].coin || !rows[i].traded) continue;  // plain reads; a torn one costs nothing
+    if (!rows[i].valid || rows[i].kind > K_INDEX || !rows[i].traded) continue;  // plain reads; a torn one costs nothing
     struct tm tt;
     time_t when = rows[i].traded;
     localtime_r(&when, &tt);
@@ -673,6 +740,7 @@ static bool restoreFromRtc() {
   for (uint8_t i = 0; i < nRows; i++) {
     Row &r = rows[i];
     const RtcRow &o = rtcRows[i];
+    if (!r.cur[0]) strcpy(r.cur, "USD");  // the quote's currency is not in the snapshot; the next fetch sets it
     r.price = o.price;
     r.pct = o.pct;
     r.prev = o.prev;
@@ -754,7 +822,7 @@ static uint32_t scrollLast = 0, scrollAcc = 0, holdUntil = 0;
 static char cRow[ROWS][48], cCanvas[48], cHead[24];
 
 static uint8_t slotOf(int32_t v) { return (uint8_t)modp(v, ROWS); }
-static uint16_t rowOf(int32_t v) { return (uint16_t)modp(v, nRows); }
+static uint16_t rowOf(int32_t v) { return order[modp(v, nShown)]; }
 static int32_t topV() { return floordiv(pos, ROW_H); }
 static uint8_t offPx() { return (uint8_t)modp(pos, ROW_H); }
 
@@ -782,13 +850,13 @@ static void invalidateCache() {
 
 static void rowKey(const Row &r, char *key, size_t n, char *price, char *pct) {
   if (r.valid) {
-    formatPrice(r.price, price, 12);
+    priceStr(r, r.price, price, 12);
     formatPct(r.pct, pct, 12);
   } else {
     snprintf(price, 12, "--");
     pct[0] = '\0';
   }
-  snprintf(key, n, "%s|%s|%s|%u|%.2f", r.label, price, pct, r.n, r.n ? r.close[r.n - 1] : 0.0f);
+  snprintf(key, n, "%s|%s|%s|%u|%.2f|%s", r.label, price, pct, r.n, r.n ? r.close[r.n - 1] : 0.0f, sCur);
 }
 
 // Paint one row with its top at y on whatever gfx points at: the panel (a
@@ -809,7 +877,11 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
   fieldRight(X_RIGHT, y + 2, 7, 2, fg, price);
   fieldRight(X_RIGHT, y + 22, 7, 1, fg, pct);
 }
-static bool seam(uint16_t rowIdx) { return nStocks && nCoins && (rowIdx == 0 || rowIdx == nStocks); }
+// A rule where the kind changes, and at the wrap if there is more than one kind.
+static bool seamAt(int32_t v) {
+  uint16_t a = rowOf(v), b = rowOf(v - 1);
+  return rows[a].kind != rows[b].kind;
+}
 
 // A slot fully owned by virtual row v: repaint only if the row's key changed.
 static void paintSlot(int32_t v) {
@@ -818,7 +890,7 @@ static void paintSlot(int32_t v) {
   rowKey(r, key, sizeof key, price, pct);
   if (strcmp(key, cRow[slotOf(v)]) == 0) return;
   strcpy(cRow[slotOf(v)], key);
-  paintRow(Y_ROW0 + slotOf(v) * ROW_H, r, seam(rowOf(v)));
+  paintRow(Y_ROW0 + slotOf(v) * ROW_H, r, seamAt(v));
 }
 
 // The entering row, painted off-screen. ponytail: the drawing helpers all
@@ -833,7 +905,7 @@ static void paintCanvas(int32_t v) {
   Arduino_GFX *panel = gfx;
   gfx = rowCanvas;
   gfx->fillScreen(C_BG);
-  paintRow(0, r, seam(rowOf(v)));
+  paintRow(0, r, seamAt(v));
   gfx = panel;
 }
 // Canvas lines [from, to) into the slot of virtual row v.
@@ -878,7 +950,7 @@ static void listStart() {
   panelScroll(pos);
   invalidateCache();
   canvasV = INT32_MIN;
-  field(X_SYM, Y_HEAD, 9, 1, C_MUTED, "WATCHLIST");
+  field(X_SYM, Y_HEAD, 10, 1, C_MUTED, SECT_NAMES[sect]);
   int32_t v0 = topV();
   uint8_t off = offPx();
   for (uint8_t p = 0; p < ROWS; p++) paintSlot(v0 + p);
@@ -981,7 +1053,7 @@ static char cDetail[48];
 // control: the gestures work anywhere on the page.
 static void drawHint(const char *s, uint16_t c = C_DIM) { fieldCentre(LCD_W / 2, Y_HINT, 38, 1, c, s); }
 
-static void drawRange(int16_t y, const char *label, float lo, float hi, float v) {
+static void drawRange(const Row &r, int16_t y, const char *label, float lo, float hi, float v) {
   char b[12];
   field(X_SYM, y, 5, 1, C_MUTED, label);
   gfx->fillRect(BAR_X, y + 2, BAR_W, BAR_H, C_RULE);
@@ -989,9 +1061,9 @@ static void drawRange(int16_t y, const char *label, float lo, float hi, float v)
     float f = constrain((v - lo) / (hi - lo), 0.0f, 1.0f);
     gfx->fillRect(BAR_X + (int16_t)(f * (BAR_W - 3)), y + 1, 3, BAR_H + 2, C_FG);
   }
-  formatPrice(lo, b, sizeof b);
+  priceStr(r, lo, b, sizeof b);
   field(BAR_X, y + 10, 7, 1, C_DIM, b);
-  formatPrice(hi, b, sizeof b);
+  priceStr(r, hi, b, sizeof b);
   fieldRight(BAR_X + BAR_W, y + 10, 7, 1, C_DIM, b);
 }
 
@@ -1006,7 +1078,7 @@ static void drawRangeChips() {
   }
 }
 
-static void drawChart(const float *cl, uint8_t n, float prev, uint16_t fg) {
+static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint16_t fg) {
   float lo = prev, hi = prev;
   for (uint8_t i = 0; i < n; i++) {
     lo = min(lo, cl[i]);
@@ -1026,9 +1098,9 @@ static void drawChart(const float *cl, uint8_t n, float prev, uint16_t fg) {
   // High and low printed inside the box, top-left and bottom-left, over
   // whatever the line does there: the row of chips below wanted the space.
   char b[12];
-  formatPrice(hi, b, sizeof b);
+  priceStr(r, hi, b, sizeof b);
   field(CH_X + 2, CH_Y + 2, 7, 1, C_DIM, b);
-  formatPrice(lo, b, sizeof b);
+  priceStr(r, lo, b, sizeof b);
   field(CH_X + 2, CH_Y + CH_H - GH(1) - 2, 7, 1, C_DIM, b);
 }
 
@@ -1042,7 +1114,7 @@ static void drawDetail(bool full) {
       textAt(X_SYM + (LOGO_BIG - textWidth(3, r.label)) / 2, D_Y_SYM + (LOGO_BIG - FACES[2].cap) / 2, 3, C_MUTED, r.label);
     }
     drawHint("< next    ^ news    v list    prev >");
-    if (!r.coin) drawRangeChips();
+    if (!r.coin) drawRangeChips();  // indices and FX have Yahoo history too
   }
   // The selected range's series: the row's own for 1D, else that range's
   // buffer if it holds this symbol.
@@ -1066,25 +1138,33 @@ static void drawDetail(bool full) {
 
   char price[12], pct[12], key[48];
   if (r.valid) {
-    formatPrice(shown, price, sizeof price);
+    priceStr(r, shown, price, sizeof price);
     formatPct(pctv, pct, sizeof pct);
   } else {
     snprintf(price, sizeof price, "--");
     pct[0] = '\0';
   }
-  snprintf(key, sizeof key, "%s|%s|%s|%u|%u|%u|%d|%d", r.label, price, pct, r.n, rangeSel, n, mine && !sr.valid, ext);
+  uint8_t dots = r.valid ? 0 : 1 + (millis() / 400) % 3;  // a row with no price yet: an animated "fetching"
+  snprintf(key, sizeof key, "%s|%s|%s|%u|%u|%u|%d|%d|%s|%u", r.label, price, pct, r.n, rangeSel, n, mine && !sr.valid, ext,
+           sCur, dots);
   if (strcmp(key, cDetail) == 0) return;
   strcpy(cDetail, key);
 
   uint16_t fg = !r.valid ? C_DIM : pctv >= 0 ? C_GOOD : C_BAD;
   char name[22];  // what fits beside the logo; a long name is cut, not wrapped
-  if (ext) snprintf(name, sizeof name, "%s", ses == Session::Pre ? "pre-market" : "after hours");
-  else snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.name);
+  if (!r.valid) snprintf(name, sizeof name, "fetching %s%.*s", r.label, dots, "...");
+  else if (ext) snprintf(name, sizeof name, "%s", ses == Session::Pre ? "pre-market" : "after hours");
+  else snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.kind == K_FX ? "one US dollar buys" : r.name);
   field(D_X_TXT, D_Y_SYM, MAX_LABEL, 3, C_FG, r.label);
-  field(D_X_TXT, D_Y_NAME, 21, 1, ext ? C_WARN : C_MUTED, name);
+  field(D_X_TXT, D_Y_NAME, 21, 1, ext || !r.valid ? C_WARN : C_MUTED, name);
   field(D_X_TXT, D_Y_PRICE, 7, 3, fg, price);
+  bool conv = false;
+  disp(r, shown, &conv);  // which currency the number is in
+  const char *code = r.kind == K_FX ? "per USD" : conv ? sCur : r.cur;
+  if (r.valid && (r.kind == K_FX || strcmp(code, "USD") != 0 || strcmp(sCur, "USD") != 0))
+    textAt(D_X_TXT + textWidth(3, price) + 5, D_Y_PRICE + 9, 1, C_DIM, code);
   char chg[12] = "";
-  if (r.valid && base > 0) snprintf(chg, sizeof chg, "%+.2f", shown - base);
+  if (r.valid && base > 0) snprintf(chg, sizeof chg, "%+.2f", disp(r, shown) - disp(r, base));
   field(D_X_TXT, D_Y_CHG, 10, 2, fg, chg);
   field(D_X_TXT, D_Y_PCT, 7, 2, fg, pct);
 
@@ -1106,13 +1186,13 @@ static void drawDetail(bool full) {
     snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
     field(X_SYM, CH_Y + CH_H / 2 - 4, 20, 1, C_DIM, m);
   } else if (!r.valid || n < 2) {
-    field(X_SYM, CH_Y + CH_H / 2 - 4, 20, 1, C_DIM, "no series yet");
+    field(X_SYM, CH_Y + CH_H / 2 - 4, 20, 1, C_DIM, r.valid ? "no series" : "fetching...");
   } else {
-    drawChart(cl, n, prev, fg);
+    drawChart(r, cl, n, prev, fg);
   }
   if (!r.valid) return;
-  drawRange(D_Y_DAY, "day", r.dayLo, r.dayHi, r.price);
-  drawRange(D_Y_WK, "52w", r.wkLo, r.wkHi, r.price);
+  drawRange(r, D_Y_DAY, "day", r.dayLo, r.dayHi, r.price);
+  drawRange(r, D_Y_WK, "52w", r.wkLo, r.wkHi, r.price);
 }
 
 // ── settings page: swipe right from the list ─────────────────────────────
@@ -1134,6 +1214,9 @@ static void loadSettings() {
     sSound = prefs.getUChar("snd2", sSound) & 3;  // snd2: the old snd was a plain on/off
     sSleep = prefs.getUChar("slp", sSleep) % 3;
     sLed = prefs.getUChar("led2", sLed) & 3;
+    prefs.getString("cur", sCur, sizeof sCur);
+    sect = prefs.getUChar("sect", 0) % 5;
+    buildOrder();
   }
   if (prefs.isKey("tx0")) {
     touchCal.swap = prefs.getBool("tsw", false);
@@ -1156,6 +1239,7 @@ static void loadSettings() {
   Serial.printf("settings from %s: speed %s, backlight %s, sound %s, return %s, sleep %s\n",
                 any ? "NVS (beats config.json)" : "config.json", SPEED_NAMES[sSpeed], BL_NAMES[sBl], TWO_NAMES[0][sSound],
                 RET_NAMES[sRet], SLEEP_NAMES[sSleep]);
+  Serial.printf("settings: currency %s, section %s\n", sCur, SECT_NAMES[sect]);
 }
 static void saveSettings() {
   prefs.begin("ticker", false);
@@ -1165,19 +1249,40 @@ static void saveSettings() {
   prefs.putUChar("snd2", sSound);
   prefs.putUChar("slp", sSleep);
   prefs.putUChar("led2", sLed);
+  prefs.putString("cur", sCur);
+  prefs.putUChar("sect", sect);
   prefs.end();
   applySettings();
 }
 
 static void drawSettingRow(uint8_t i) {
-  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Touch", "Info"};
+  static const char *const labels[] = {"Scroll", "Backlight", "Sound", "Auto return", "Sleep", "LED", "Currency", "Touch", "Info"};
   const char *v = i == 0 ? SPEED_NAMES[sSpeed] : i == 1 ? BL_NAMES[sBl] : i == 2 ? TWO_NAMES[0][sSound]
                 : i == 3 ? RET_NAMES[sRet] : i == 4 ? SLEEP_NAMES[sSleep] : i == 5 ? TWO_NAMES[1][sLed]
-                : i == 6 ? "calibrate" : ">";
+                : i == 6 ? sCur : i == 7 ? "calibrate" : ">";
   int16_t y = S_Y0 + i * S_H;
-  field(8, y + 6, 11, 2, C_MUTED, labels[i]);
-  fieldRight(X_RIGHT, y + 6, 9, 2, C_FG, v);
+  field(8, y + 4, 11, 2, C_MUTED, labels[i]);
+  fieldRight(X_RIGHT, y + 4, 9, 2, C_FG, v);
   gfx->drawFastHLine(8, y + S_H - 1, 224, C_RULE);
+}
+// The next display currency: USD, then each CURRENCIES row, round again.
+static void nextCurrency() {
+  int8_t cur = -1;
+  uint8_t codes = 0;
+  const char *first = "USD";
+  bool takeNext = strcmp(sCur, "USD") == 0;
+  for (uint8_t i = 0; i < nRows; i++) {
+    if (rows[i].kind != K_FX) continue;
+    codes++;
+    if (takeNext) {
+      strcpy(sCur, rows[i].label);
+      return;
+    }
+    if (strcmp(rows[i].label, sCur) == 0) takeNext = true;
+  }
+  strcpy(sCur, first);  // past the last code, or no codes at all
+  (void)cur;
+  (void)codes;
 }
 static void drawSettings() {
   drawPanel("SETTINGS", C_MUTED, nullptr, 0);
@@ -1186,9 +1291,10 @@ static void drawSettings() {
 }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info), 2 (touch calibration).
 static uint8_t tapSetting(uint8_t i) {
-  if (i == 7) return 1;
-  if (i == 6) return 2;
-  if (i == 0) sSpeed = (sSpeed + 1) % 3;
+  if (i == 8) return 1;
+  if (i == 7) return 2;
+  if (i == 6) nextCurrency();
+  else if (i == 0) sSpeed = (sSpeed + 1) % 3;
   else if (i == 1) sBl = (sBl + 1) % 3;
   else if (i == 2) sSound = (sSound + 1) & 3;
   else if (i == 3) sRet = (sRet + 1) % 3;
@@ -1316,7 +1422,7 @@ static void drawInfo(bool full) {
   snprintf(l[n++], 40, "up %luh %02lum", (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60));
   snprintf(l[n++], 40, "ldr %d  backlight %d", ldrRaw, blApplied);
   l[n++][0] = '\0';
-  snprintf(l[n++], 40, "%u symbols: %u stocks, %u coins", nRows, nStocks, nCoins);
+  snprintf(l[n++], 40, "%u rows: %u stocks %u idx %u fx %u coins", nRows, nStocks, nIdx, nFx, nCoins);
   snprintf(l[n++], 40, "logos %u/%u badges, %u/%u large", haveLogo[0], nRows, haveLogo[1], nRows);
   snprintf(l[n++], 40, "built " __DATE__ " " __TIME__);
   l[n++][0] = '\0';
@@ -1324,7 +1430,75 @@ static void drawInfo(bool full) {
   for (uint8_t i = 0; i < n; i++) field(8, 62 + i * 11, 38, 1, i == 0 ? C_FG : C_MUTED, l[i]);
 }
 
-// ── search page: swipe left from the list ────────────────────────────────
+// ── heatmap: swipe left from the list ────────────────────────────────────
+// Twelve tiles of the current section, tinted by the size of the move,
+// not just its sign: a 0.2% drift and a 7% drop must not look the same.
+// The signed percent is printed on every tile, because colour is never
+// the only cue. Pages of twelve; swipe up and down between them.
+static const int16_t H_Y0 = 24, H_W = 78, H_H = 62, H_COLS = 3, H_ROWS = 4;
+static uint8_t heatPage = 0;
+static char cHeat[64];
+static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
+static uint16_t heatColour(float pct, bool valid) {
+  if (!valid) return C_RULE;
+  static const float steps[] = {0.3f, 1.0f, 2.0f, 4.0f, 7.0f};
+  uint8_t lvl = 0;
+  for (float st : steps) lvl += fabsf(pct) >= st;
+  if (!lvl) return rgb(40, 44, 48);
+  static const uint8_t up[5][3] = {{0, 60, 30}, {0, 95, 40}, {0, 135, 50}, {0, 175, 60}, {0, 215, 70}};
+  static const uint8_t dn[5][3] = {{70, 20, 20}, {110, 25, 25}, {150, 30, 30}, {190, 35, 35}, {230, 40, 40}};
+  const uint8_t *c = pct >= 0 ? up[lvl - 1] : dn[lvl - 1];
+  return rgb(c[0], c[1], c[2]);
+}
+static uint8_t heatPages() { return (nShown + 11) / 12; }
+static int8_t hitTile(int16_t x, int16_t y) {
+  if (y < H_Y0 || y >= H_Y0 + H_ROWS * (H_H + 2)) return -1;
+  int8_t t = (y - H_Y0) / (H_H + 2) * H_COLS + x / (H_W + 2);
+  return heatPage * 12 + t < nShown ? t : -1;
+}
+static void drawHeat(bool full) {
+  if (full) {
+    gfx->fillScreen(C_BG);
+    char h[24];
+    snprintf(h, sizeof h, "HEATMAP  %s", SECT_NAMES[sect]);
+    field(X_SYM, Y_HEAD, 20, 1, C_MUTED, h);
+    if (heatPages() > 1) {
+      snprintf(h, sizeof h, "%u/%u", heatPage + 1, heatPages());
+      fieldRight(X_RIGHT, Y_HEAD, 5, 1, C_DIM, h);
+    }
+    drawHint("^ v pages    < search    list >");
+    cHeat[0] = '\0';
+  }
+  char key[64] = "";
+  for (uint8_t t = 0; t < 12 && heatPage * 12 + t < nShown; t++) {
+    const Row &r = rows[order[heatPage * 12 + t]];
+    char k[8];
+    snprintf(k, sizeof k, "%d,", r.valid ? (int)(r.pct * 10) : -9999);
+    strlcat(key, k, sizeof key);
+  }
+  if (strcmp(key, cHeat) == 0) return;
+  strcpy(cHeat, key);
+  for (uint8_t t = 0; t < 12; t++) {
+    int16_t x = (t % H_COLS) * (H_W + 2), y = H_Y0 + (t / H_COLS) * (H_H + 2);
+    if (heatPage * 12 + t >= nShown) {
+      gfx->fillRect(x, y, H_W, H_H, C_BG);
+      continue;
+    }
+    Row r = rowCopy(order[heatPage * 12 + t]);
+    gfx->fillRoundRect(x, y, H_W, H_H, 6, heatColour(r.pct, r.valid));
+    textAt(x + 6, y + 7, 2, C_FG, r.label);
+    char b[12];
+    if (r.valid) formatPct(r.pct, b, sizeof b);
+    else strcpy(b, "--");
+    textAt(x + 6, y + 27, 2, C_FG, b);
+    if (r.valid) {
+      priceStr(r, r.price, b, sizeof b);
+      textAt(x + 6, y + 48, 1, rgb(220, 224, 228), b);
+    }
+  }
+}
+
+// ── search page: swipe left from the heatmap ─────────────────────────────
 // Symbols are short and upper-case, so the keyboard is a 6x5 grid of 40px
 // keys, finger-sized on a resistive panel: A-X, then Y Z . - backspace GO.
 static const char *const KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-";  // + backspace + GO
@@ -1510,7 +1684,7 @@ static bool fetchChart(NetworkClientSecure &client, const char *id, const char *
   JsonDocument filter;
   JsonObject fm = filter["chart"]["result"][0]["meta"].to<JsonObject>();
   for (const char *k : {"regularMarketPrice", "chartPreviousClose", "longName", "shortName", "regularMarketDayHigh",
-                        "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "regularMarketTime"})
+                        "regularMarketDayLow", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "regularMarketTime", "currency"})
     fm[k] = true;
   filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
   if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) return false;
@@ -1551,6 +1725,7 @@ static bool fetchStock(NetworkClientSecure &client, Row &r) {
   r.dayHi = m["regularMarketDayHigh"] | 0.0f;
   r.wkLo = m["fiftyTwoWeekLow"] | 0.0f;
   r.wkHi = m["fiftyTwoWeekHigh"] | 0.0f;
+  snprintf(r.cur, sizeof r.cur, "%s", m["currency"] | "USD");
   const char *nm = m["longName"] | (m["shortName"] | "");
   snprintf(r.name, sizeof r.name, "%s", nm);
   r.n = pullCloses(res, r.close, SPARK_N);
@@ -1699,7 +1874,7 @@ static void doNews(uint8_t idx) {
   Row r = rowCopy(idx);
   char url[160];
   snprintf(url, sizeof url, "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s%s&region=US&lang=en-US", r.label,
-           r.coin ? "-USD" : "");
+           r.coin ? "-USD" : "");  // ^GSPC and CAD=X have feeds of their own
   NetworkClientSecure client;
   client.setInsecure();
   HTTPClient http;
@@ -1821,6 +1996,17 @@ static void fetchTask(void *) {
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(250));
     if (WiFi.status() != WL_CONNECTED) continue;
+    // Order of service: the tapped symbol's own price (a fresh row has
+    // nothing else to show), a search, headlines, the range charts, coins,
+    // the sweep. The charts used to go first and a new symbol's page sat
+    // blank for six seconds.
+    int8_t pri = priority;
+    if (pri >= 0) {
+      priority = -1;
+      if (rows[pri].coin) doCoins();
+      else fetchOne(pri);
+      continue;
+    }
     if (searchWant) {
       searchWant = false;
       doSearch();
@@ -1837,13 +2023,6 @@ static void fetchTask(void *) {
       uint8_t rg = (want >> rangeSel) & 1 ? rangeSel : (uint8_t)__builtin_ctz(want);
       seriesWant = want & ~(1 << rg);
       doSeries(seriesIdx, rg);
-      continue;
-    }
-    int8_t pri = priority;
-    if (pri >= 0) {
-      priority = -1;
-      if (rows[pri].coin) doCoins();
-      else fetchOne(pri);
       continue;
     }
     if (nCoins && (lastCoin == 0 || millis() - lastCoin > coinMs)) {
@@ -1866,18 +2045,18 @@ static void fetchTask(void *) {
       Serial.printf("session: %s\n", sessionWord(ses));
     }
     uint32_t stockEvery = ses == Session::Regular ? stockOpenMs : stockExtMs;
-    if (stockEvery < nStocks * 5000UL) stockEvery = nStocks * 5000UL;  // rate floor
+    if (stockEvery < nYahoo() * 5000UL) stockEvery = nYahoo() * 5000UL;  // rate floor
     bool due = lastStock == 0 || millis() - lastStock > stockEvery;
     if (ses == Session::Closed) due = lastStock == 0 || (closedAt && lastStock < closedAt);
-    if (!sweeping && nStocks && due) {
+    if (!sweeping && nYahoo() && due) {
       sweeping = true;
       sweepIdx = 0;
     }
     if (!sweeping) continue;
-    if (sweepIdx >= nStocks) {
+    if (sweepIdx >= nYahoo()) {
       sweeping = false;
       lastStock = millis();
-      Serial.printf("sweep done (%u stocks, heap %u)\n", nStocks, ESP.getFreeHeap());
+      Serial.printf("sweep done (%u symbols, heap %u)\n", nYahoo(), ESP.getFreeHeap());
     } else {
       fetchOne(sweepIdx++);
     }
@@ -1978,7 +2157,7 @@ static void ledTick(Session ses) {
   float sum = 0;
   uint8_t n = 0;
   for (uint8_t i = 0; i < nRows; i++)
-    if (rows[i].valid && !rows[i].coin) {  // a float read; no lock needed
+    if (rows[i].valid && rows[i].kind == K_STOCK) {  // a float read; no lock needed
       sum += rows[i].pct;
       n++;
     }
@@ -2011,8 +2190,8 @@ static void alertTick() {
   for (uint8_t i = 0; i < nRows; i++) {
     Row r = rowCopy(i);
     if (!r.valid) continue;
-    if (movePct > 0 && !r.coin) {
-      uint32_t bit = 1UL << i;
+    if (movePct > 0 && r.kind == K_STOCK) {
+      uint64_t bit = 1ULL << i;
       if (fabsf(r.pct) >= movePct && !(moveFired & bit)) {
         moveFired |= bit;
         snprintf(why, sizeof why, "%s moved %+.1f%% today", r.label, r.pct);
@@ -2157,6 +2336,23 @@ static void selfCheck() {
     assert(!holidayFrom(w));  // before open + 15: yesterday's trade is normal
     nRows = 0;
   }
+  {  // sections and currency
+    assert(addRow("AAA", "aaa", false) && addRow("CAD", "CAD=X", false, K_FX) && addRow("BTC", "bitcoin", true));
+    rows[1].valid = true; rows[1].price = 1.36f; rows[0].valid = true; rows[0].price = 100; strcpy(rows[0].cur, "USD");
+    sect = 0; buildOrder(); assert(nShown == 3 && order[1] == 1);
+    sect = 4; buildOrder(); assert(nShown == 1 && order[0] == 1 && rowOf(5) == 1);
+    sect = 2; buildOrder(); assert(sect == 0 && nShown == 3);  // no indices: falls back to all
+    strcpy(sCur, "CAD");
+    bool conv;
+    assert(fabsf(disp(rows[0], 100, &conv) - 136) < 0.01f && conv);
+    assert(fabsf(disp(rows[1], 1.36f, &conv) - 1.36f) < 0.001f && !conv);  // the rate itself never converts
+    strcpy(sCur, "USD");
+    char b[12];
+    priceStr(rows[1], 1.3652f, b, sizeof b); assert(strcmp(b, "1.3652") == 0);
+    assert(fabsf(disp(rows[0], 100, &conv) - 100) < 0.01f && !conv);
+    assert(heatColour(0.1f, true) != heatColour(5, true) && heatColour(-5, true) != heatColour(5, true));
+    nRows = 0; nShown = 0;
+  }
   assert(nRows == 0);
   assert(!addRow("TOOLONG", "TOOLONG", false));
   assert(!addRow("", "X", false));
@@ -2209,7 +2405,7 @@ static void selfCheck() {
 // ── main ─────────────────────────────────────────────────────────────────
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
-enum class View { List, Detail, Settings, Info, Calib, News, Search, Splash };
+enum class View { List, Detail, Settings, Info, Calib, News, Search, Splash, Heat };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -2349,6 +2545,13 @@ static void backToList() {
   view = View::List;
   listStart();
 }
+static void openHeat() {
+  view = View::Heat;
+  pageOpenedAt = millis();
+  if (heatPage >= heatPages()) heatPage = 0;
+  panelScroll(0);
+  drawHeat(true);
+}
 // Headlines for symbol idx; the fetch is skipped if they are under 10 min old.
 static void openNews(uint8_t idx) {
   view = View::News;
@@ -2392,13 +2595,17 @@ static void chooseHit(uint8_t i) {
   xSemaphoreTake(mux, portMAX_DELAY);
   h = hits[i];
   xSemaphoreGive(mux);
+  char m[40];
+  snprintf(m, sizeof m, "adding %s...", h.sym);
+  drawHint(m, C_WARN);  // at once; the NVS write and the page draw follow
   int8_t idx = userAdd(h.sym);
   if (idx < 0) {
-    drawHint("list is full (32)");
+    drawHint("list is full (40)");
     return;
   }
-  rows[idx].valid = false;
-  priority = idx;  // a fresh row needs its first fetch whatever the session
+  if (!rows[idx].valid) priority = idx;  // a fresh row needs its first fetch whatever the session
+  for (uint8_t k = 0; k < nShown; k++)  // the list opens on it when the page is left
+    if (order[k] == idx) pos = (int32_t)k * ROW_H;
   openDetail((uint8_t)idx);
 }
 
@@ -2450,6 +2657,7 @@ void loop() {
       else if (view == View::News) drawNews(true);
       else if (view == View::Search) drawSearch(true);
       else if (view == View::Splash) drawSplash("tap to return");
+      else if (view == View::Heat) drawHeat(true);
       else drawDetail(true);
     }
   }
@@ -2488,6 +2696,8 @@ void loop() {
     drawNews(false);
   } else if (view == View::Search) {
     drawSearch(false);
+  } else if (view == View::Heat) {
+    drawHeat(false);
   } else if (view == View::Calib) {
     if (calibTick()) {
       view = View::Settings;
@@ -2510,7 +2720,7 @@ void loop() {
     if (touchHeld) holdUntil = millis() + 3000;
     if (g == Gesture::Drag && ddy) scrollBy(-ddy);
     if (g == Gesture::Tap && hilite < 0) {
-      int16_t r = hitRow(ty, pos, nRows);
+      int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) {
         hilite = slotOf(floordiv(pos + ty - Y_ROW0, ROW_H));
         gfx->fillRect(0, Y_ROW0 + hilite * ROW_H + 2, 3, ROW_H - 4, C_FG);
@@ -2522,8 +2732,17 @@ void loop() {
       hilite = -1;
     }
     if (g == Gesture::TapUp) {
-      int16_t r = hitRow(ty, pos, nRows);
-      if (r >= 0) openDetail((uint8_t)r);
+      int16_t r = hitRow(ty, pos, nShown);
+      if (r >= 0) openDetail(order[r]);
+      else if (ty < Y_ROW0) {  // the header: the next section
+        if (sSound & 1) tone(SPK, 1200, 15);
+        do sect = (sect + 1) % 5;
+        while (sect && !std::any_of(rows, rows + nRows, [](const Row &x) { return x.kind == SECT_KIND[sect]; }));
+        buildOrder();
+        saveSettings();
+        pos = 0;
+        listStart();
+      }
     }
   }
   // Swipes are the navigation, phone style. List: right opens settings.
@@ -2534,7 +2753,7 @@ void loop() {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) ||
-                (view == View::Search && g == Gesture::SwipeDown) ||
+                (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (acts && (sSound & 1)) tone(SPK, 1200, 15);
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -2543,7 +2762,14 @@ void loop() {
       panelScroll(0);
       drawSettings();
     } else if (view == View::List && g == Gesture::SwipeLeft) {
-      openSearch();
+      openHeat();
+    } else if (view == View::Heat) {
+      if (g == Gesture::SwipeRight) backToList();
+      else if (g == Gesture::SwipeLeft) openSearch();
+      else if (g == Gesture::SwipeUp && heatPages() > 1) { heatPage = (heatPage + 1) % heatPages(); drawHeat(true); }
+      else if (g == Gesture::SwipeDown && heatPages() > 1) { heatPage = (heatPage + heatPages() - 1) % heatPages(); drawHeat(true); }
+    } else if (view == View::Search && g == Gesture::SwipeRight) {
+      openHeat();
     } else if (view == View::Search && g == Gesture::SwipeDown) {
       if (searchMode == 1) {
         searchMode = 0;
@@ -2605,7 +2831,10 @@ void loop() {
 
   if (tap && state == State::Running && view != View::List) {
     if (sSound & 1) tone(SPK, 1200, 15);
-    if (view == View::Search) {
+    if (view == View::Heat) {
+      int8_t t = hitTile(tx, ty);
+      if (t >= 0) openDetail(order[heatPage * 12 + t]);
+    } else if (view == View::Search) {
       pageOpenedAt = millis();
       if (searchMode == 0) {
         int8_t k = hitKey(tx, ty);
@@ -2648,7 +2877,8 @@ void loop() {
 
   if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
     backToList();
-  if ((view == View::Info || view == View::Settings || view == View::Search || view == View::Splash) && returnMs && !touchHeld &&
+  if ((view == View::Info || view == View::Settings || view == View::Search || view == View::Splash || view == View::Heat) &&
+      returnMs && !touchHeld &&
       millis() - pageOpenedAt > returnMs)
     backToList();
 

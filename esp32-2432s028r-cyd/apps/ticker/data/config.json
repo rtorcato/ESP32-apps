@@ -92,14 +92,26 @@
   "market": { "pre": "04:00", "open": "09:30", "close": "16:00", "post": "20:00" },
 
   "_symbols": [
-    "Six rows per page, 32 symbols maximum, labels capped at 5 characters.",
-    "stocks  Yahoo symbols.   coins  CoinGecko ids, with a label to show."
+    "40 rows maximum across the four lists, labels capped at 5 characters. A",
+    "tap on the list header cycles ALL / STOCKS / INDICES / CRYPTO / CURRENCIES.",
+    "stocks      Yahoo symbols.",
+    "indices     Yahoo ids (^GSPC, ^IXIC, ^DJI, ^GSPTSE, ^VIX...) with a label.",
+    "currencies  ISO codes; a row is how many of it one US dollar buys, and",
+    "            the SETTINGS page's Currency row can show every price in it.",
+    "coins       CoinGecko ids, with a label to show."
   ],
   "stocks": [
     "AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD",
     "UI", "RKLB", "SPCX", "ABNB", "LUNR", "PLTR", "PEP", "BNS",
     "SNOW", "HOOD", "SOFI", "JOBY", "ARM", "NET"
   ],
+  "indices": [
+    { "id": "^GSPC", "label": "S&P" },
+    { "id": "^IXIC", "label": "NDQ" },
+    { "id": "^DJI", "label": "DOW" },
+    { "id": "^GSPTSE", "label": "TSX" }
+  ],
+  "currencies": [ "CAD", "EUR", "GBP", "JPY" ],
   "coins": [
     { "id": "bitcoin", "label": "BTC" },
     { "id": "ethereum", "label": "ETH" },
