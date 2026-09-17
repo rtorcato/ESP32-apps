@@ -2587,7 +2587,7 @@ static void drawNews(bool full) {
   // the age under that. Pictures land after the text and are blitted in
   // place as they do, without repainting the page.
   const uint8_t per = 4, cols = L.w >= 800 ? 2 : 1;
-  const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 36;
+  const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 28, clip = L.yHint - 4;
   char key[24];
   snprintf(key, sizeof key, "%u|%u|%d|%lu|%u", detailIdx, n, failed, (unsigned long)newsAt, newsTop);
   bool fresh = strcmp(key, cNews) != 0;
@@ -2607,21 +2607,31 @@ static void drawNews(bool full) {
     }
   }
   if (!mine || !n) return;
-  for (uint8_t k = 0; k < per; k++) {
+  // One row more than fits, cut at the page's edge: the top of a picture
+  // and a headline's first line say there is more to drag to.
+  for (uint8_t k = 0; k < per + cols; k++) {
     uint8_t i = newsTop * cols + k;
     if (i >= n) break;
     int16_t x = 20 + (k % cols) * (cw + 16), y = 52 + (k / cols) * ch;
+    if (y >= clip) break;
+    int16_t avail = clip - y, ih = min<int16_t>(THUMB, avail);
     if (fresh) {
-      if (!ok[i]) gfx->fillRoundRect(x, y, THUMB, THUMB, 8, C_RULE);
+      if (!ok[i]) {
+        if (ih == THUMB) gfx->fillRoundRect(x, y, THUMB, THUMB, 8, C_RULE);
+        else gfx->fillRect(x, y, THUMB, ih, C_RULE);
+      }
       char lines[4][64];
       uint8_t l = wrapText(items[i].title, cw - THUMB - 16, lines, 4);
-      for (uint8_t j = 0; j < l; j++) textAt(x + THUMB + 16, y + 2 + j * 20, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
-      char who[32];
-      snprintf(who, sizeof who, "%.20s%s%s", items[i].pub, items[i].age[0] ? "  ·  " : "", items[i].age);
-      textAt(x + THUMB + 16, y + THUMB - GH(1), 1, C_DIM, who);
+      for (uint8_t j = 0; j < l && y + 2 + j * 20 + GH(1) <= clip; j++)
+        textAt(x + THUMB + 16, y + 2 + j * 20, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
+      if (ih == THUMB) {
+        char who[32];
+        snprintf(who, sizeof who, "%.20s%s%s", items[i].pub, items[i].age[0] ? "  ·  " : "", items[i].age);
+        textAt(x + THUMB + 16, y + THUMB - GH(1), 1, C_DIM, who);
+      }
     }
     if (ok[i] && !(cDrawn & (1 << k)) && newsImg[i]) {
-      gfx->draw16bitRGBBitmap(x, y, newsImg[i], THUMB, THUMB);
+      gfx->draw16bitRGBBitmap(x, y, newsImg[i], THUMB, ih);  // the first ih lines: the rows are contiguous
       cDrawn |= 1 << k;
     }
   }
@@ -2898,7 +2908,7 @@ static void doSearch() {
 // article, a phone can. Tap a card on the headlines page to get here.
 static int8_t hitCard(int16_t x, int16_t y) {
   const uint8_t cols = L.w >= 800 ? 2 : 1;
-  const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 36;
+  const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 28;
   if (x < 20 || y < 52) return -1;
   int16_t c = (x - 20) / (cw + 16), rw = (y - 52) / ch;
   if (c >= cols || rw >= 4 / cols) return -1;
@@ -4063,7 +4073,7 @@ void loop() {
   if (view == View::News && g == Gesture::Drag && ddy) {
     static int16_t acc = 0;
     const uint8_t cols = L.w >= 800 ? 2 : 1, vis = 4 / cols, rowsAll = (newsN + cols - 1) / cols;
-    const int16_t step = (THUMB + 36) / 2;
+    const int16_t step = (THUMB + 28) / 2;
     uint8_t maxTop = rowsAll > vis ? rowsAll - vis : 0;
     acc += ddy;
     while (acc <= -step && newsTop < maxTop) { acc += step; newsTop++; drawNews(false); }
