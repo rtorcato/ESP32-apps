@@ -44,7 +44,7 @@ draws for a symbol without a logo file.
 | Detail page stacked | Two columns: logo, name, the big price, the day's change and (outside the session) the after-hours print under it, the range bars on the left; chart, chips and three headlines on the right | The full headline list is still a swipe up. Headlines are a magazine page (picture, headline, source, age) from Yahoo's search endpoint; a tap opens the story's page with a QR code of its link, since the panel cannot show the article and a phone can. |
 | 3×4 heatmap | 6×4, 24 tiles a page | |
 | 6×5 letter grid | 10×3, 80px keys | |
-| Settings scroll | Thirteen rows, every one a page | Shutdown, Scroll, Columns, News (the headline sources, on or off; three built in, more from config.json `news`), Orientation (four tiles), Clock, Theme (twelve colour tiles), Auto return, Sleep, Currency, Info, Wi-Fi, Clear device. |
+| Settings scroll | Thirteen rows; the pickers (Scroll, Clock, Auto return, Sleep, Currency) and the two confirms are sheets over the page, the rest open pages | Shutdown, Scroll, Columns, News (the headline sources, on or off; three built in, more from config.json `news`), Orientation (four tiles), Clock, Theme (twelve colour tiles), Auto return, Sleep, Currency, Info, Wi-Fi, Clear device. |
 | Touch wake on GPIO36 low | GT911 INT on GPIO4, level high | The controller pulses INT on every report and keeps running through deep sleep. **Unverified.** |
 | Native USB CDC | UART0 through the board's CH343 bridge | The USB-C is a bridge here; with the CDC flags the monitor saw only the ROM. |
 

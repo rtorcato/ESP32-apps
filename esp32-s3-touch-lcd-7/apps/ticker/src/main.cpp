@@ -1187,8 +1187,8 @@ static void listTick() {
 // The header, left to right: five section tabs (tap one), the CLOSED tag,
 // three icons (search, heatmap, settings), the clock. The tabs and icons
 // are drawn once by listStart; this keeps the clock and the tag current.
-static const char *const TAB_NAMES[] = {"ALL", "STOCKS", "INDICES", "CRYPTO", "FX"};
-static int16_t tabX[5], tabW[5];  // each tab as wide as its word, laid out left to right
+static const char *const TAB_NAMES[] = {"ALL", "STOCKS", "INDICES", "CRYPTO", "FX", "NEWS"};  // NEWS is a page, not a section
+static int16_t tabX[6], tabW[6];  // each tab as wide as its word, laid out left to right
 static uint8_t litIcon = 0;       // 1 search, 2 heatmap, 3 headlines, 4 settings: the page that is open
 static bool tabsShown = false;    // the section tabs are only on the list; other pages put their name there
 static void drawTabsAndIcons() {
@@ -1196,13 +1196,13 @@ static void drawTabsAndIcons() {
   gfx->fillRect(0, 0, L.tagX > 0 ? L.tagX : L.iconX - 8, L.yRow0 - 1, C_BG);
   if (tabsShown) {
     int16_t sum = 0;
-    for (uint8_t i = 0; i < 5; i++) sum += textWidth(1, TAB_NAMES[i]);
+    for (uint8_t i = 0; i < 6; i++) sum += textWidth(1, TAB_NAMES[i]);
     // The air around a name; less on the narrow screen. The tabs stop 12px
     // short of the tag, whose field clears from tagX: at 28px of air the
     // names ran to 440 and the tag took the right half of FX.
     int16_t edge = L.tagX > 0 ? L.tagX - 12 : L.iconX - 8;
-    int16_t pad = min<int16_t>(28, (edge - L.tabX - sum) / 5);
-    for (uint8_t i = 0; i < 5; i++) {
+    int16_t pad = min<int16_t>(28, (edge - L.tabX - sum) / 6);
+    for (uint8_t i = 0; i < 6; i++) {
       tabX[i] = x;
       tabW[i] = textWidth(1, TAB_NAMES[i]) + pad;
       bool on = i == sect;
@@ -1261,10 +1261,10 @@ static void drawHeader(uint8_t lit, const char *title, const char *note) {
   }
   cHead[0] = '\0';
 }
-// Which header thing a tap at x lands on: 0-4 a tab, 10 search, 11 heatmap, 12 settings, -1 nothing.
+// Which header thing a tap at x lands on: 0-4 a section tab, 5 the NEWS tab, 10 search, 11 heatmap, 12 headlines, 13 settings, -1 nothing.
 static int8_t hitHeader(int16_t x) {
   if (tabsShown)
-    for (uint8_t i = 0; i < 5; i++)
+    for (uint8_t i = 0; i < 6; i++)
       if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
   if (x >= L.iconX - 8 && x < L.iconX + 4 * L.iconStep) return 10 + (x - (L.iconX - 8)) / L.iconStep;
   return -1;
@@ -1987,17 +1987,50 @@ static void checkMark(int16_t right, int16_t cy, uint16_t c) {  // two strokes, 
     gfx->drawLine(right - 10, cy + 6 + d, right, cy - 6 + d, c);
   }
 }
+// ── the sheet: a panel over the page, the way a phone asks ───────────────
+// The page under it is saved (768KB, in PSRAM) and put back when the sheet
+// closes, so it needs no repaint; meanwhile it sits at half light. Sheets
+// open over Settings only, where the scan-out reads the buffer 1:1. The
+// value pickers and the two confirms are sheets.
+static uint16_t *sheetSave = nullptr;
+static int16_t shX, shY, shW, shH;
+static const int16_t SH_ROW = 44;
+static uint16_t sheetFill() { return towardsWhite(C_BG, 8); }
+static void sheetOpen(int16_t h) {
+  const size_t px = (size_t)LCD_W * LCD_H;
+  uint16_t *fb = boardFramebuffer();
+  if (!sheetSave) sheetSave = (uint16_t *)heap_caps_malloc(px * 2, MALLOC_CAP_SPIRAM);
+  if (sheetSave) memcpy(sheetSave, fb, px * 2);
+  for (size_t i = 0; i < px; i++) fb[i] = (fb[i] >> 1) & 0x7BEF;  // the page at half light
+  shW = min<int16_t>(L.w - 40, 560);
+  shH = h;
+  shX = (L.w - shW) / 2;
+  shY = L.h - shH - 20;
+  gfx->fillRoundRect(shX, shY, shW, shH, 18, sheetFill());
+  gfx->drawRoundRect(shX, shY, shW, shH, 18, C_RULE);
+}
+static void sheetClose() {  // the caller sets the view back
+  if (sheetSave) memcpy(boardFramebuffer(), sheetSave, (size_t)LCD_W * LCD_H * 2);
+}
+static bool inSheet(int16_t x, int16_t y) { return x >= shX && x < shX + shW && y >= shY && y < shY + shH; }
+static const uint8_t CH_ROW[] = {1, 5, 7, 8, 9};  // the settings row each picker belongs to
+static int16_t chY0() { return shY + SH_ROW; }
 static void drawChoiceRow(uint8_t i) {
-  int16_t y = L.sY0 + i * L.sH;
-  gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
-  textAt(20, y + 5, 2, i == chSel ? C_FG : C_MUTED, chNames[i]);
-  if (i == chSel) checkMark(L.w - 20, y + 5 + GH(2) / 2, C_GOOD);
-  gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
+  int16_t y = chY0() + i * SH_ROW, x = shX + 20, w = shW - 40;
+  gfx->fillRect(x, y, w, SH_ROW - 1, sheetFill());
+  textAt(x, y + (SH_ROW - GH(2)) / 2, 2, i == chSel ? C_FG : C_MUTED, chNames[i]);
+  if (i == chSel) checkMark(x + w, y + SH_ROW / 2, C_GOOD);
+  gfx->drawFastHLine(x, y + SH_ROW - 1, w, C_RULE);
 }
 static void drawChoice() {
-  drawPanel(chTitle + 2, C_MUTED, nullptr, 0, true, 4, chTitle, chNote);
+  sheetOpen(SH_ROW + chN * SH_ROW + 16);
+  textAt(shX + 20, shY + (SH_ROW - GH(2)) / 2, 2, C_MUTED, chTitle + 2);
+  if (chNote) textAt(shX + 20 + textWidth(2, chTitle + 2) + 14, shY + (SH_ROW - GH(1)) / 2 + 2, 1, C_DIM, chNote);
   for (uint8_t i = 0; i < chN; i++) drawChoiceRow(i);
-  drawHint("tap a value        < settings");
+}
+static int8_t hitChoice(int16_t x, int16_t y) {
+  if (x < shX || x >= shX + shW || y < chY0() || y >= chY0() + chN * SH_ROW) return -1;
+  return (y - chY0()) / SH_ROW;
 }
 // A scroll step redraws the rows in place -- each field clears its own box,
 // so there is no blanket clear and nothing to flicker -- and the hint only
@@ -2021,32 +2054,35 @@ static void powerGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
   }
   gfx->fillRect(cx - 2, cy - r - 4, 5, r + 2, c);
 }
+static int16_t cfX, cfY, cfW;  // the pill, for hitConfirm
 static void drawConfirm() {
-  gfx->fillScreen(C_BG);
-  drawHeader(4, "< SETTINGS");
   bool clear = confirmWhat == 2;
+  sheetOpen(336);
+  int16_t cx = L.w / 2, gy = shY + 60;
   if (clear) {  // a ring with a cross
-    for (int16_t k = 0; k < 4; k++) gfx->drawCircle(L.w / 2, L.cfGlyphY, 40 - k, C_BAD);
+    for (int16_t k = 0; k < 4; k++) gfx->drawCircle(cx, gy, 36 - k, C_BAD);
     for (int16_t k = -2; k <= 2; k++) {
-      gfx->drawLine(L.w / 2 - 16 + k, L.cfGlyphY - 16, L.w / 2 + 16 + k, L.cfGlyphY + 16, C_BAD);
-      gfx->drawLine(L.w / 2 + 16 + k, L.cfGlyphY - 16, L.w / 2 - 16 + k, L.cfGlyphY + 16, C_BAD);
+      gfx->drawLine(cx - 14 + k, gy - 14, cx + 14 + k, gy + 14, C_BAD);
+      gfx->drawLine(cx + 14 + k, gy - 14, cx - 14 + k, gy + 14, C_BAD);
     }
   } else {
-    powerGlyph(L.w / 2, L.cfGlyphY, 40, C_FG);
+    powerGlyph(cx, gy, 36, C_FG);
   }
   const char *title = clear ? "Clear Device" : "Shut Down";
-  textAt((L.w - textWidth(3, title)) / 2, L.cfTitleY, 3, C_FG, title);
+  textAt(cx - textWidth(3, title) / 2, shY + 110, 3, C_FG, title);
   const char *l1 = clear ? "Wipes the network, settings and edits." : "Everything goes dark and stays dark.";
   const char *l2 = clear ? "Restarts into setup, for someone else." : "The BOOT button on the back turns it on.";
-  uint8_t sz = L.w >= 800 ? 2 : 1;
-  textAt((L.w - textWidth(sz, l1)) / 2, L.cfL1Y, sz, C_MUTED, l1);
-  textAt((L.w - textWidth(sz, l2)) / 2, L.cfL2Y, sz, C_MUTED, l2);
-  gfx->fillRoundRect(L.cfX, L.cfY, L.cfW, L.cfH, L.cfH / 2, rgb(44, 48, 54));
-  textAt((L.w - textWidth(2, title)) / 2, L.cfY + (L.cfH - FACES[1].cap) / 2, 2, clear ? C_BAD : C_FG, title);
-  gfx->drawRoundRect(L.cfX, L.cfCancelY, L.cfW, 48, 24, C_RULE);
-  textAt((L.w - textWidth(2, "Cancel")) / 2, L.cfCancelY + (48 - FACES[1].cap) / 2, 2, C_MUTED, "Cancel");
+  textAt(cx - textWidth(1, l1) / 2, shY + 150, 1, C_MUTED, l1);
+  textAt(cx - textWidth(1, l2) / 2, shY + 172, 1, C_MUTED, l2);
+  cfX = shX + 40;
+  cfW = shW - 80;
+  cfY = shY + 208;
+  gfx->fillRoundRect(cfX, cfY, cfW, 48, 24, rgb(44, 48, 54));
+  textAt(cx - textWidth(2, title) / 2, cfY + (48 - FACES[1].cap) / 2, 2, clear ? C_BAD : C_FG, title);
+  gfx->drawRoundRect(cfX, shY + 268, cfW, 48, 24, C_RULE);
+  textAt(cx - textWidth(2, "Cancel") / 2, shY + 268 + (48 - FACES[1].cap) / 2, 2, C_MUTED, "Cancel");
 }
-static bool hitConfirm(int16_t x, int16_t y) { return y >= L.cfY && y < L.cfY + L.cfH && x >= L.cfX && x < L.cfX + L.cfW; }
+static bool hitConfirm(int16_t x, int16_t y) { return y >= cfY && y < cfY + 48 && x >= cfX && x < cfX + cfW; }
 // A tap on row i: cycle it, or open a page. Returns 0 (cycled), 1 (info),
 // 2 (touch calibration), 3 (confirm a shutdown), 4 (Wi-Fi setup), 5 (confirm
 // clearing the device).
@@ -3513,15 +3549,15 @@ static void headerTap(int16_t x) {
       }
     }
     backToList();
+  } else if (h == 5 || h == 12) {  // the NEWS tab and the headlines icon
+    if (view == View::News && detailIdx == NEWS_ALL) backToList();
+    else openNews(NEWS_ALL);
   } else if (h == 10) {
     if (view == View::Search) backToList();
     else openSearch();
   } else if (h == 11) {
     if (view == View::Heat) backToList();
     else openHeat();
-  } else if (h == 12) {
-    if (view == View::News && detailIdx == NEWS_ALL) backToList();
-    else openNews(NEWS_ALL);
   } else if (h == 13) {
     if (view == View::Settings) backToList();
     else {
@@ -3657,11 +3693,10 @@ void loop() {
       else if (view == View::Search) drawSearch(true);
       else if (view == View::Splash) drawSplash("tap to return");
       else if (view == View::Heat) drawHeat(true);
-      else if (view == View::Confirm) drawConfirm();
+      else if (view == View::Confirm || view == View::Choice) { view = View::Settings; drawSettings(); }
       else if (view == View::Columns) drawColumns();
       else if (view == View::Themes) drawThemes();
       else if (view == View::Orient) drawOrient();
-      else if (view == View::Choice) drawChoice();
       else if (view == View::NewsSrc) drawNewsSrc();
       else if (view == View::Story) drawStory();
       else drawDetail(true);
@@ -3790,15 +3825,15 @@ void loop() {
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
     } else if (view == View::Story && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       openNews(detailIdx);
-    } else if ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::NewsSrc) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+    } else if ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::NewsSrc) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       view = View::Settings;
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
-    } else if (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) {
+    } else if ((view == View::Confirm || view == View::Choice) && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) {
+      sheetClose();
       view = View::Settings;
       pageOpenedAt = millis();
-      drawSettings();
     } else if (view == View::Info) {  // a settings page: left or down is settings, like the others
       if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown) {
         view = View::Settings;
@@ -3848,7 +3883,8 @@ void loop() {
 
   // The header is on every page: a tab picks a section and returns to the
   // list; an icon opens its page, or closes it if it is the one open.
-  if (tap && state == State::Running && view != View::List && view != View::Splash && ty < L.yRow0) {
+  if (tap && state == State::Running && view != View::List && view != View::Splash && view != View::Confirm && view != View::Choice &&
+      ty < L.yRow0) {
     headerTap(tx);
     tap = false;
   }
@@ -3907,9 +3943,9 @@ void loop() {
           delay(600);
           goToSleep(0);  // no timer: a touch is the only way back
         }
-      } else {
+      } else {  // Cancel, or anywhere off the sheet
+        sheetClose();
         view = View::Settings;
-        drawSettings();
       }
     } else if (view == View::Columns) {
       int8_t i = hitSetting(ty);
@@ -3930,12 +3966,15 @@ void loop() {
       int8_t k = hitCard(tx, ty);
       if (k >= 0) openStory(newsPage * 4 + k);
     } else if (view == View::Choice) {
-      int8_t i = hitSetting(ty);
-      if (i >= 0 && i < chN && i != chSel) {
-        uint8_t was = chSel;
-        applyChoice((uint8_t)i);
-        drawChoiceRow(was);
-        drawChoiceRow((uint8_t)i);
+      int8_t i = hitChoice(tx, ty);
+      if (i >= 0) {  // a value: taken, and the sheet goes
+        if (i != chSel) applyChoice((uint8_t)i);
+        sheetClose();
+        view = View::Settings;
+        drawSettingRow(CH_ROW[chWhich]);
+      } else if (!inSheet(tx, ty)) {
+        sheetClose();
+        view = View::Settings;
       }
     } else if (view == View::Orient) {
       int8_t i = hitOrient(tx, ty);
