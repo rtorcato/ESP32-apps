@@ -1188,12 +1188,12 @@ static void listTick() {
 // The header, left to right: five section tabs (tap one), the CLOSED tag,
 // three icons (search, heatmap, settings), the clock. The tabs and icons
 // are drawn once by listStart; this keeps the clock and the tag current.
-static int16_t tabX[6], tabW[6];  // each tab as wide as its word, laid out left to right
+static int16_t tabX[7], tabW[7];  // each tab as wide as its word, laid out left to right
 static uint8_t litIcon = 0;       // 1 search, 2 heatmap, 3 headlines, 4 settings: the page that is open
 static bool tabsShown = false;    // the section tabs are only on the list; other pages put their name there
 // A section tab's glyph, 28x24 at x,y: a bulleted list (ALL), rising bars
 // (STOCKS), a line chart in a frame (INDICES), a coin (CRYPTO), two arrows
-// each way (FX), a newspaper (NEWS). Words got too busy across six tabs.
+// each way (FX), a newspaper (NEWS), a grid (HEATMAP). Words got too busy.
 static void tabIcon(uint8_t i, int16_t x, int16_t y, uint16_t c) {
   switch (i) {
     case 0:
@@ -1226,19 +1226,23 @@ static void tabIcon(uint8_t i, int16_t x, int16_t y, uint16_t c) {
       gfx->fillRect(x + 7, y + 16, 20, 3, c);
       gfx->fillTriangle(x + 8, y + 12, x + 1, y + 17, x + 8, y + 22, c);
       break;
-    default:
+    case 5:
       gfx->drawRect(x + 2, y, 24, 24, c);
       gfx->fillRect(x + 6, y + 4, 16, 5, c);
       gfx->fillRect(x + 6, y + 12, 16, 2, c);
       gfx->fillRect(x + 6, y + 16, 16, 2, c);
       gfx->fillRect(x + 6, y + 20, 10, 2, c);
+      break;
+    default:
+      for (uint8_t r = 0; r < 2; r++)
+        for (uint8_t cc = 0; cc < 2; cc++) gfx->fillRoundRect(x + 2 + cc * 13, y + r * 13, 11, 11, 2, c);
   }
 }
 static void drawTabsAndIcons() {
   int16_t x = L.tabX;
   gfx->fillRect(0, 0, L.tagX > 0 ? L.tagX : L.iconX - 8, L.yRow0 - 1, C_BG);
   if (tabsShown) {
-    for (uint8_t i = 0; i < 6; i++) {  // 52px each: the glyph, and air
+    for (uint8_t i = 0; i < 7; i++) {  // 52px each: the glyph, and air
       tabX[i] = x;
       tabW[i] = 52;
       bool on = i == sect;
@@ -1247,18 +1251,15 @@ static void drawTabsAndIcons() {
       x += 52;
     }
   }
-  // The icons on the right: search, heatmap, settings, in the three slots
-  // nearest the clock (headlines has its tab now).
-  x = L.iconX + L.iconStep;
-  uint16_t c1 = litIcon == 1 ? C_FG : C_MUTED, c2 = litIcon == 2 ? C_FG : C_MUTED, c4 = litIcon == 4 ? C_FG : C_MUTED;
-  gfx->fillRect(x - 8, 0, 3 * L.iconStep, L.yRow0 - 1, C_BG);
+  // The icons on the right: search and settings, in the two slots nearest
+  // the clock (headlines and the heatmap have tabs now).
+  x = L.iconX + 2 * L.iconStep;
+  uint16_t c1 = litIcon == 1 ? C_FG : C_MUTED, c4 = litIcon == 4 ? C_FG : C_MUTED;
+  gfx->fillRect(x - 8, 0, 2 * L.iconStep, L.yRow0 - 1, C_BG);
   gfx->drawCircle(x + 13, 17, 7, c1);  // a magnifier
   gfx->drawCircle(x + 13, 17, 6, c1);
   gfx->drawLine(x + 18, 22, x + 26, 30, c1);
   gfx->drawLine(x + 19, 21, x + 27, 29, c1);
-  x += L.iconStep;  // a grid
-  for (uint8_t r = 0; r < 2; r++)
-    for (uint8_t c = 0; c < 2; c++) gfx->fillRoundRect(x + 6 + c * 12, 9 + r * 12, 9, 9, 2, c2);
   x += L.iconStep;  // three sliders
   for (uint8_t r = 0; r < 3; r++) {
     gfx->drawFastHLine(x + 5, 12 + r * 8, 22, c4);
@@ -1296,13 +1297,13 @@ static void drawHeader(uint8_t lit, const char *title, const char *note) {
   }
   cHead[0] = '\0';
 }
-// Which header thing a tap at x lands on: 0-4 a section tab, 5 the NEWS tab, 10 search, 11 heatmap, 12 settings, -1 nothing.
+// Which header thing a tap at x lands on: 0-4 a section tab, 5 NEWS, 6 HEATMAP, 10 search, 11 settings, -1 nothing.
 static int8_t hitHeader(int16_t x) {
   if (tabsShown)
     for (uint8_t i = 0; i < 6; i++)
       if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
-  int16_t i0 = L.iconX + L.iconStep - 8;  // three icons in the slots nearest the clock
-  if (x >= i0 && x < i0 + 3 * L.iconStep) return 10 + (x - i0) / L.iconStep;
+  int16_t i0 = L.iconX + 2 * L.iconStep - 8;  // two icons in the slots nearest the clock
+  if (x >= i0 && x < i0 + 2 * L.iconStep) return 10 + (x - i0) / L.iconStep;
   return -1;
 }
 static void drawHead(const struct tm *t, bool haveTime) {
@@ -3362,7 +3363,7 @@ static void selfCheck() {
   assert(L.strip % 20 != 1 || true);  // (the bounce buffer is 20 lines; the ring maps per line, any height works)
   if (L.tagX >= 0) assert(L.tagX + GW(1) * 17 <= L.iconX - 8 && L.iconX + 4 * L.iconStep <= L.xRight - GW(1) * 8);
   else assert(L.iconX + 4 * L.iconStep <= L.w && GW(1) * (28 + 17 + 8) + 24 <= L.w);  // the footer holds the message, the tag and the clock
-  assert(hitHeader(L.iconX + L.iconStep) == 10 && hitHeader(L.iconX + 3 * L.iconStep + 10) == 12 && hitHeader(L.tagX + 20) == -1);
+  assert(hitHeader(L.iconX + 2 * L.iconStep) == 10 && hitHeader(L.iconX + 3 * L.iconStep + 10) == 11 && hitHeader(L.tagX + 20) == -1);
   assert(L.sY0 + L.sH * L.sN <= L.yHint && hitSetting(L.sY0 - 1) == -1 && hitSetting(L.sY0) == 0 && L.sN <= L.sRows);
   // Detail: two columns in landscape (text left, chart right), one in
   // portrait (the chart under the price, the bars under the chips, the
@@ -3591,10 +3592,10 @@ static void headerTap(int16_t x) {
   } else if (h == 10) {
     if (view == View::Search) backToList();
     else openSearch();
-  } else if (h == 11) {
+  } else if (h == 6) {  // the HEATMAP tab
     if (view == View::Heat) backToList();
     else openHeat();
-  } else if (h == 12) {
+  } else if (h == 11) {
     if (view == View::Settings) backToList();
     else {
       view = View::Settings;
