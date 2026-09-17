@@ -15,6 +15,21 @@ pio run -e ticker -t upload
 ./push-config ticker                                          # config + logos
 ```
 
+## Previews
+
+Wireframes at the panel's 800×480, drawn from the firmware's layout table
+(2026-09-17). No logos in them: the badges are the initial tiles the firmware
+draws for a symbol without a logo file.
+
+| | |
+|---|---|
+| [preview.svg](preview.svg) | The list: tabs, icons, nine rows with badge (a flag for a currency, none for an index), sparkline, price, percent |
+| [preview-splash.svg](preview-splash.svg) | Boot: TICKER over three bands of symbol chips |
+| [preview-detail.svg](preview-detail.svg) | A stock's page, two columns: price and ranges left, chart, range chips and headlines right |
+| [preview-settings.svg](preview-settings.svg) | Settings: label, value in grey, chevron; every row opens a page |
+| [preview-themes.svg](preview-themes.svg) | Themes: twelve tiles, each in its own colours, the chosen one outlined |
+| [preview-orientation.svg](preview-orientation.svg) | Orientation: four miniatures of the list, the cable edge marked |
+
 ## What changed for this board
 
 | CYD | 7" | Why |
