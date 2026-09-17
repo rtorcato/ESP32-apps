@@ -31,35 +31,45 @@
 #include <time.h>
 
 // ── one colour scheme: black, white symbols, green and red numbers ───────
-static const uint16_t C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
-                      C_DIM = 0x630C, C_MUTED = 0xA534, C_WARN = RGB565_YELLOW;
+static const uint16_t C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800, C_WARN = RGB565_YELLOW;
 static constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 // A theme is the background, the rule (also the tiles) and the accent;
-// text, green and red stay, so every background has to stay dark enough
-// for white, green and red to read on it -- the accent is where a theme
-// gets its character. Every clear in the app goes through C_BG, so a
-// theme is three assignments and a repaint. Picked on the Themes page
-// (Settings > Theme), kept in NVS.
+// white, green and red text stay, so every background has to stay dark
+// enough for them to read on it. No light themes: the logos are flattened
+// onto black by make-logos.py and would each sit in a black square. The
+// grey tones come from the background -- a brighter one gets brighter
+// greys -- so hints and muted text read on all of them. Every clear in
+// the app goes through C_BG, so a theme is a few assignments and a
+// repaint. Picked on the Themes page (Settings > Theme), kept in NVS.
 struct Theme { const char *name; uint16_t bg, rule, accent; };
 static const Theme THEMES[] = {
     {"black", rgb(0, 0, 0), rgb(32, 32, 32), rgb(248, 168, 0)},
-    {"midnight", rgb(0, 20, 48), rgb(24, 48, 88), rgb(80, 200, 255)},
-    {"ocean", rgb(0, 32, 52), rgb(0, 72, 104), rgb(0, 220, 200)},
-    {"forest", rgb(0, 36, 16), rgb(20, 72, 40), rgb(200, 255, 120)},
-    {"terminal", rgb(0, 12, 0), rgb(0, 56, 0), rgb(120, 255, 120)},
-    {"espresso", rgb(36, 20, 10), rgb(72, 44, 24), rgb(255, 180, 60)},
-    {"wine", rgb(48, 8, 20), rgb(96, 24, 44), rgb(255, 150, 170)},
-    {"plum", rgb(40, 0, 44), rgb(80, 24, 88), rgb(255, 120, 220)},
-    {"slate", rgb(24, 32, 44), rgb(52, 66, 88), rgb(120, 180, 255)},
-    {"charcoal", rgb(34, 34, 38), rgb(70, 70, 78), rgb(255, 140, 0)},
+    {"midnight", rgb(0, 24, 72), rgb(0, 56, 140), rgb(90, 200, 255)},
+    {"royal", rgb(24, 0, 120), rgb(64, 32, 180), rgb(255, 200, 80)},
+    {"ocean", rgb(0, 60, 80), rgb(0, 110, 140), rgb(0, 240, 220)},
+    {"forest", rgb(0, 56, 24), rgb(0, 110, 50), rgb(200, 255, 120)},
+    {"terminal", rgb(0, 16, 0), rgb(0, 80, 0), rgb(120, 255, 120)},
+    {"espresso", rgb(56, 28, 8), rgb(110, 60, 20), rgb(255, 180, 60)},
+    {"burgundy", rgb(96, 0, 32), rgb(160, 24, 64), rgb(255, 170, 190)},
+    {"purple", rgb(64, 0, 96), rgb(120, 30, 170), rgb(255, 120, 255)},
+    {"slate", rgb(36, 48, 68), rgb(72, 96, 130), rgb(140, 190, 255)},
+    {"graphite", rgb(64, 64, 70), rgb(110, 110, 120), rgb(255, 140, 0)},
+    {"olive", rgb(48, 56, 0), rgb(96, 110, 20), rgb(255, 230, 90)},
 };
 static const uint8_t N_THEMES = sizeof THEMES / sizeof THEMES[0];
 static uint8_t sTheme = 0;
-static uint16_t C_BG = THEMES[0].bg, C_RULE = THEMES[0].rule, C_GOLD = THEMES[0].accent;
+static uint16_t C_BG = THEMES[0].bg, C_RULE = THEMES[0].rule, C_GOLD = THEMES[0].accent, C_DIM = 0x630C, C_MUTED = 0xA534;
+// The colour pct of the way from c towards white.
+static uint16_t towardsWhite(uint16_t c, uint8_t pct) {
+  uint8_t r = (c >> 11) * 255 / 31, g = ((c >> 5) & 63) * 255 / 63, b = (c & 31) * 255 / 31;
+  return rgb(r + (255 - r) * pct / 100, g + (255 - g) * pct / 100, b + (255 - b) * pct / 100);
+}
 static void applyTheme() {
   C_BG = THEMES[sTheme].bg;
   C_RULE = THEMES[sTheme].rule;
   C_GOLD = THEMES[sTheme].accent;
+  C_DIM = towardsWhite(C_BG, 40);    // on black: 102, near the 96 it was
+  C_MUTED = towardsWhite(C_BG, 65);  // on black: 166, near the 164 it was
 }
 
 // ── settings (defaults; data/config.json overrides) ──────────────────────
