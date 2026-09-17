@@ -25,7 +25,7 @@ pio run -e ticker -t upload
 | Speaker chime, LED glow | A banner across the header for ten seconds | No speaker, no LED. The Sound and LED rows are gone. |
 | 96px logos, 24px badges | 128 and 32 | The 3.4MB data partition has room for 35 of each many times over. |
 | Four faces, 8–25px | 14 / 19 / 25px Helvetica, 50px Logisoso digits for the price | Read from across a room. |
-| Seven 42px rows | Nine 44px rows landscape, sixteen portrait | The Orientation row in Settings turns the screen: landscape, portrait, or either flipped. Every position comes from one layout table with a landscape and a portrait column; the scan-out callback scrolls a band of lines or of columns to match. A change restarts the board. |
+| Seven 42px rows | Nine 44px rows landscape, sixteen portrait | Settings > Orientation opens a page of four tiles, each a little screen drawn that way round with the cable edge marked: landscape, portrait, or either flipped. Every position comes from one layout table with a landscape and a portrait column; the scan-out callback scrolls a band of lines or of columns to match. A change restarts the board. |
 | Detail page stacked | Two columns: logo, name, the big price and the range bars on the left; chart, chips and three headlines on the right | The full headline list is still a swipe up. |
 | 3×4 heatmap | 6×4, 24 tiles a page | |
 | 6×5 letter grid | 10×3, 80px keys | |

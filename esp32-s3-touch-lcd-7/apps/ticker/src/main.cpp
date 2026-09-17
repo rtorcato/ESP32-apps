@@ -1749,7 +1749,7 @@ static void drawSettingRow(uint8_t i) {
   int16_t cy = y + 5 + GH(2) / 2;
   if (strcmp(v, ">") == 0) {
     chevron(L.w - 20, cy, C_MUTED);
-  } else if (i == 5) {  // the theme's name in grey, then the mark: the row opens a page
+  } else if (i == 3 || i == 5) {  // the value in grey, then the mark: the row opens a page
     chevron(L.w - 20, cy, C_MUTED);
     textAt(L.w - 40 - textWidth(2, v), y + 5, 2, C_MUTED, v);
   } else {
@@ -1787,13 +1787,16 @@ static void drawColumns() {
 // The Themes page: a tile per theme in its own colours, with a sample row
 // so the choice is seen before it is made. Four across in landscape, two
 // in portrait. A tap applies, saves and repaints the page in the new theme.
-static void themeRect(uint8_t i, int16_t *x, int16_t *y, int16_t *w, int16_t *h) {
-  uint8_t cols = L.w >= 800 ? 4 : 2, rows = (N_THEMES + cols - 1) / cols;
+static void tileRect(uint8_t i, uint8_t n, uint8_t cols, int16_t *x, int16_t *y, int16_t *w, int16_t *h) {
+  uint8_t rows = (n + cols - 1) / cols;
   const int16_t gap = 16;
   *w = (L.w - 40 - gap * (cols - 1)) / cols;
   *h = (L.yHint - 8 - L.sY0 - gap * (rows - 1)) / rows;
   *x = 20 + (i % cols) * (*w + gap);
   *y = L.sY0 + (i / cols) * (*h + gap);
+}
+static void themeRect(uint8_t i, int16_t *x, int16_t *y, int16_t *w, int16_t *h) {
+  tileRect(i, N_THEMES, L.w >= 800 ? 4 : 2, x, y, w, h);
 }
 static void drawThemeTile(uint8_t i) {
   int16_t x, y, w, h;
@@ -1821,6 +1824,43 @@ static int8_t hitTheme(int16_t tx, int16_t ty) {
   for (uint8_t i = 0; i < N_THEMES; i++) {
     int16_t x, y, w, h;
     themeRect(i, &x, &y, &w, &h);
+    if (tx >= x && tx < x + w && ty >= y && ty < y + h) return i;
+  }
+  return -1;
+}
+// The Orientation page: four tiles, each a little screen drawn the way
+// that setting would turn it -- the header bar, the rows, and a gold mark
+// on the edge the cables leave by, so the flipped ones can be told apart
+// -- the current one outlined. A tap on another saves and restarts.
+static void orientRect(uint8_t i, int16_t *x, int16_t *y, int16_t *w, int16_t *h) { tileRect(i, 4, 2, x, y, w, h); }
+static void drawOrientTile(uint8_t i) {
+  int16_t x, y, w, h;
+  orientRect(i, &x, &y, &w, &h);
+  gfx->drawRoundRect(x, y, w, h, 12, i == sRot ? C_FG : C_RULE);
+  if (i == sRot)
+    for (int8_t d = 1; d < 3; d++) gfx->drawRoundRect(x + d, y + d, w - 2 * d, h - 2 * d, 12 - d, C_FG);
+  textAt(x + 14, y + 10, 2, C_FG, ROT_NAMES[i]);
+  bool port = i & 1;
+  int16_t sw = port ? 60 : 96, sh = port ? 96 : 60;
+  int16_t top = y + 10 + GH(2) + 8, avail = y + h - 10 - top;
+  int16_t sx = x + (w - sw) / 2, sy = top + (avail - sh) / 2;
+  gfx->fillRoundRect(sx, sy, sw, sh, 6, C_RULE);
+  gfx->fillRect(sx + 6, sy + 6, sw - 12, 4, C_MUTED);  // the header bar
+  for (int16_t ry = sy + 16; ry < sy + sh - 6; ry += 8) gfx->fillRect(sx + 6, ry, sw - 12, 2, C_DIM);  // the rows
+  if (i == 0) gfx->fillRect(sx - 4, sy + sh / 2 - 10, 4, 20, C_GOLD);  // the cable edge: left, bottom, right, top
+  else if (i == 1) gfx->fillRect(sx + sw / 2 - 10, sy + sh, 20, 4, C_GOLD);
+  else if (i == 2) gfx->fillRect(sx + sw, sy + sh / 2 - 10, 4, 20, C_GOLD);
+  else gfx->fillRect(sx + sw / 2 - 10, sy - 4, 20, 4, C_GOLD);
+}
+static void drawOrient() {
+  drawPanel("ORIENTATION", C_MUTED, nullptr, 0, true, 4, "< ORIENTATION", "a change restarts the board");
+  for (uint8_t i = 0; i < 4; i++) drawOrientTile(i);
+  drawHint("tap one to turn the screen        < settings");
+}
+static int8_t hitOrient(int16_t tx, int16_t ty) {
+  for (uint8_t i = 0; i < 4; i++) {
+    int16_t x, y, w, h;
+    orientRect(i, &x, &y, &w, &h);
     if (tx >= x && tx < x + w && ty >= y && ty < y + h) return i;
   }
   return -1;
@@ -1883,13 +1923,7 @@ static uint8_t tapSetting(uint8_t i) {
   if (i == 9) return 1;
   if (i == 10) return 4;
   if (i == 11) return 5;
-  if (i == 3) {  // orientation: saved, then a restart, which is cheaper than re-allocating every buffer
-    sRot = (sRot + 1) % 4;
-    saveSettings();
-    drawHint("turning the screen. restarting", C_WARN);
-    delay(600);
-    ESP.restart();
-  }
+  if (i == 3) return 9;
   if (i == 8) nextCurrency();
   else if (i == 1) sSpeed = (sSpeed + 1) % 3;
   else if (i == 4) sClock = !sClock;
@@ -2944,7 +2978,7 @@ static void selfCheck() {
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
-enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes };
+enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -3116,7 +3150,7 @@ static void openHeat();
 static void openNews(uint8_t idx);
 static void headerTap(int16_t x) {
   if (headerBack && x < L.tabX + 140) {  // the back mark and the title beside it: one page up
-    if (view == View::Columns || view == View::Themes || view == View::Info) {
+    if (view == View::Columns || view == View::Themes || view == View::Orient || view == View::Info) {
       view = View::Settings;
       pageOpenedAt = millis();
       drawSettings();
@@ -3279,6 +3313,7 @@ void loop() {
       else if (view == View::Confirm) drawConfirm();
       else if (view == View::Columns) drawColumns();
       else if (view == View::Themes) drawThemes();
+      else if (view == View::Orient) drawOrient();
       else drawDetail(true);
     }
   }
@@ -3367,7 +3402,7 @@ void loop() {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) ||
-                ((view == View::Columns || view == View::Themes) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
+                ((view == View::Columns || view == View::Themes || view == View::Orient) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -3403,7 +3438,7 @@ void loop() {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
-    } else if ((view == View::Columns || view == View::Themes) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+    } else if ((view == View::Columns || view == View::Themes || view == View::Orient) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       view = View::Settings;
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
@@ -3498,6 +3533,9 @@ void loop() {
       } else if (r == 8) {
         view = View::Themes;
         drawThemes();
+      } else if (r == 9) {
+        view = View::Orient;
+        drawOrient();
       }
     } else if (view == View::Confirm) {
       if (hitConfirm(tx, ty)) {
@@ -3520,6 +3558,15 @@ void loop() {
         sCols ^= 1 << i;
         saveSettings();
         drawColumnRow((uint8_t)i);
+      }
+    } else if (view == View::Orient) {
+      int8_t i = hitOrient(tx, ty);
+      if (i >= 0 && i != sRot) {  // a restart is cheaper than re-allocating every buffer
+        sRot = (uint8_t)i;
+        saveSettings();
+        drawHint("turning the screen. restarting", C_WARN);
+        delay(600);
+        ESP.restart();
       }
     } else if (view == View::Themes) {
       int8_t i = hitTheme(tx, ty);
