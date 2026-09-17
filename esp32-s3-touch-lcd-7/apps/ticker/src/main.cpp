@@ -19,6 +19,7 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <JPEGDEC.h>
 #include <LittleFS.h>
 #include <NetworkClientSecure.h>
 #include <DNSServer.h>
@@ -28,6 +29,7 @@
 #include <esp_sleep.h>
 #include <algorithm>
 #include <assert.h>
+#include <new>
 #include <time.h>
 
 // ── one colour scheme: black, white symbols, green and red numbers ───────
@@ -554,18 +556,29 @@ static volatile bool searchWant = false;
 static char query[9] = "", searchQ[9] = "";
 static uint8_t searchMode = 0;  // 0 the keyboard, 1 the results
 
-// ── news: Yahoo's per-symbol headline RSS, keyless ───────────────────────
+// ── news: Yahoo's search endpoint, keyless -- headlines with a 140x140 picture each ──
+// The RSS feed had no pictures. v1/finance/search?q=SYMBOL&newsCount=N gives
+// the same headlines as JSON, each with a thumbnail; for the whole list
+// q is the index itself, which is the market's own news.
 struct NewsItem {
   char title[96];
+  char pub[20];
   char age[8];
+  char thumb[240];  // the 140x140 picture's url, or empty
 };
-static const uint8_t NEWS_N = 12, NEWS_ALL = 255;  // idx NEWS_ALL: one feed for the whole list
+static const uint8_t NEWS_N = 8, NEWS_ALL = 255;  // idx NEWS_ALL: the market's news, for the whole list
+static const int16_t THUMB = 140;
 static uint8_t newsPage = 0;
 static NewsItem news[NEWS_N];  // fetch task writes, UI reads, under mux
 static uint8_t newsN = 0, newsIdx = 255;
 static uint32_t newsAt = 0;
-static bool newsFailed = false;
+static bool newsFailed = false, newsPicsDone = false;
 static volatile int16_t newsWant = -1;  // symbol index to fetch headlines for, or -1
+// The pictures: one 140x140 RGB565 slot per headline in PSRAM, decoded as
+// they arrive; newsImgVer ticks so the open page can blit each new one.
+static uint16_t *newsImg[NEWS_N];
+static bool newsImgOk[NEWS_N];
+static volatile uint8_t newsImgVer = 0;
 
 // ── pure helpers (what selfCheck covers) ─────────────────────────────────
 static void formatPrice(float v, char *out, size_t n) {
@@ -2241,45 +2254,69 @@ static void drawNews(bool full) {
   } else {
     r = rowCopy(detailIdx);
   }
+  static uint8_t cVer = 0, cDrawn = 0;  // pictures blitted on the page as drawn: a bit per card
   if (full) {
     gfx->fillScreen(C_BG);
     char head[16];
     snprintf(head, sizeof head, "< %s", all ? "HEADLINES" : r.label);
-    drawHeader(all ? 3 : 0, head, all ? "every stock and coin on the list" : "headlines");
-    drawHint(all ? "^ v  pages        v list" : "< next        v stock        prev >");
+    drawHeader(all ? 3 : 0, head, all ? nullptr : "headlines");
+    drawHint(all ? "^ pages        v list" : "< next        v stock        prev >");
     cNews[0] = '\0';
   }
   NewsItem items[NEWS_N];
-  uint8_t n;
+  bool ok[NEWS_N];
+  uint8_t n, ver;
   bool mine, failed;
   xSemaphoreTake(mux, portMAX_DELAY);
   mine = newsIdx == detailIdx;
   n = mine ? newsN : 0;
   failed = mine && newsFailed;
   memcpy(items, news, sizeof items);
+  memcpy(ok, newsImgOk, sizeof ok);
+  ver = newsImgVer;
   xSemaphoreGive(mux);
+  // A magazine page: four cards, two by two in landscape, a column in
+  // portrait -- the picture left, the headline beside it, the source and
+  // the age under that. Pictures land after the text and are blitted in
+  // place as they do, without repainting the page.
+  const uint8_t per = 4, cols = L.w >= 800 ? 2 : 1;
+  const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 36;
   char key[24];
   snprintf(key, sizeof key, "%u|%u|%d|%lu|%u", detailIdx, n, failed, (unsigned long)newsAt, newsPage);
-  if (strcmp(key, cNews) == 0) return;
-  strcpy(cNews, key);
-  gfx->fillRect(0, L.yRow0, L.w, L.yHint - 4 - L.yRow0, C_BG);
-  if (!mine || (!n && !failed)) {
-    field(20, 220, 30, 1, C_DIM, "loading headlines...");
-    return;
+  bool fresh = strcmp(key, cNews) != 0;
+  if (!fresh && ver == cVer) return;
+  cVer = ver;
+  if (fresh) {
+    strcpy(cNews, key);
+    cDrawn = 0;
+    gfx->fillRect(0, L.yRow0, L.w, L.yHint - 4 - L.yRow0, C_BG);
+    if (!mine || (!n && !failed)) {
+      field(20, 220, 30, 1, C_DIM, "loading headlines...");
+      return;
+    }
+    if (!n) {
+      field(20, 220, 30, 1, C_DIM, "no headlines");
+      return;
+    }
   }
-  if (!n) {
-    field(20, 220, 30, 1, C_DIM, "no headlines");
-    return;
-  }
-  int16_t y = 56;
-  for (uint8_t i = newsPage * 6; i < n && i < newsPage * 6 + 6 && y + 40 <= L.yHint - 8; i++) {
-    char lines[2][64];
-    uint8_t k = wrapText(items[i].title, L.w - 40 - 70, lines, 2);
-    for (uint8_t j = 0; j < k; j++) textAt(20, y + j * 20, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
-    fieldRight(L.w - 20, y, 6, 1, C_DIM, items[i].age);
-    y += k * 20 + 8;
-    gfx->drawFastHLine(20, y, L.w - 40, C_RULE);
-    y += 10;
+  if (!mine || !n) return;
+  for (uint8_t k = 0; k < per; k++) {
+    uint8_t i = newsPage * per + k;
+    if (i >= n) break;
+    int16_t x = 20 + (k % cols) * (cw + 16), y = 52 + (k / cols) * ch;
+    if (fresh) {
+      if (!ok[i]) gfx->fillRoundRect(x, y, THUMB, THUMB, 8, C_RULE);
+      char lines[4][64];
+      uint8_t l = wrapText(items[i].title, cw - THUMB - 16, lines, 4);
+      for (uint8_t j = 0; j < l; j++) textAt(x + THUMB + 16, y + 2 + j * 20, 1, j == 0 ? C_FG : C_MUTED, lines[j]);
+      char who[32];
+      snprintf(who, sizeof who, "%.20s%s%s", items[i].pub, items[i].age[0] ? "  ·  " : "", items[i].age);
+      textAt(x + THUMB + 16, y + THUMB - GH(1), 1, C_DIM, who);
+    }
+    if (ok[i] && !(cDrawn & (1 << k)) && newsImg[i]) {
+      gfx->draw16bitRGBBitmap(x, y, newsImg[i], THUMB, THUMB);
+      cDrawn |= 1 << k;
+    }
   }
 }
 
@@ -2441,26 +2478,6 @@ static bool seriesHeld(uint8_t idx, uint8_t range) {  // a byte read; no lock ne
   return series[range].idx == idx && series[range].range == range;
 }
 
-// Days since the epoch for a civil date (Howard Hinnant's algorithm), so
-// an RFC 822 pubDate can be compared with time() without a timezone dance.
-static int32_t daysFromCivil(int y, unsigned m, unsigned d) {
-  y -= m <= 2;
-  int era = (y >= 0 ? y : y - 399) / 400;
-  unsigned yoe = (unsigned)(y - era * 400);
-  unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  return era * 146097 + (int32_t)doe - 719468;
-}
-static const char *const MONTHS = "JanFebMarAprMayJunJulAugSepOctNovDec";
-// "Wed, 16 Sep 2026 14:05:28 +0000" -> UTC epoch, 0 if unparseable.
-static time_t parseRfc822(const char *s) {
-  char mon[4];
-  int d, y, H, M, S;
-  if (sscanf(s, "%*3s, %d %3s %d %d:%d:%d", &d, mon, &y, &H, &M, &S) != 6) return 0;
-  const char *m = strstr(MONTHS, mon);
-  if (!m) return 0;
-  return (time_t)daysFromCivil(y, (m - MONTHS) / 3 + 1, d) * 86400 + H * 3600 + M * 60 + S;
-}
 static void ageOf(time_t when, char *out, size_t n) {
   time_t now = time(nullptr);
   if (!when || now < 1000000000L || now < when) { out[0] = '\0'; return; }
@@ -2481,23 +2498,6 @@ static void decodeEntities(char *s) {
       memmove(p + tl, p + fl, strlen(p + fl) + 1);
     }
   }
-}
-// Text between <tag> and </tag> after `from`, CDATA unwrapped, into out.
-static const char *xmlText(const char *from, const char *end, const char *tag, char *out, size_t n) {
-  char open[24], close[24];
-  snprintf(open, sizeof open, "<%s>", tag);
-  snprintf(close, sizeof close, "</%s>", tag);
-  const char *a = strstr(from, open);
-  if (!a || a >= end) { out[0] = '\0'; return nullptr; }
-  a += strlen(open);
-  const char *b = strstr(a, close);
-  if (!b || b > end) { out[0] = '\0'; return nullptr; }
-  if (strncmp(a, "<![CDATA[", 9) == 0) { a += 9; if (b - 3 > a && strncmp(b - 3, "]]>", 3) == 0) b -= 3; }
-  size_t l = (size_t)(b - a);
-  if (l >= n) l = n - 1;
-  memcpy(out, a, l);
-  out[l] = '\0';
-  return b;
 }
 static void doSearch() {
   char url[200];
@@ -2549,64 +2549,149 @@ static void doSearch() {
   Serial.printf("search '%s': %u hits%s (heap %u)\n", searchQ, n, ok ? "" : " FAILED", ESP.getFreeHeap());
 }
 
-static void doNews(uint8_t idx) {
-  Row r;
-  char syms[300] = "", url[420];
-  if (idx == NEWS_ALL) {  // every stock and coin in one feed; Yahoo takes a comma list
-    for (uint8_t i = 0; i < nRows; i++) {
-      if (rows[i].kind == K_FX || rows[i].kind == K_INDEX) continue;
-      if (syms[0]) strlcat(syms, ",", sizeof syms);
-      strlcat(syms, rows[i].label, sizeof syms);
-      if (rows[i].coin) strlcat(syms, "-USD", sizeof syms);
-    }
-    memset(&r, 0, sizeof r);
-    strcpy(r.label, "ALL");
-  } else {
-    r = rowCopy(idx);
-    snprintf(syms, sizeof syms, "%s%s", r.label, r.coin ? "-USD" : "");  // ^GSPC and CAD=X have feeds of their own
-  }
-  snprintf(url, sizeof url, "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s&region=US&lang=en-US", syms);
-  NetworkClientSecure client;
-  client.setInsecure();
+// GET url over HTTP/1.0 into out (at most cap bytes); the length, or -1.
+// The body is read by hand until the server closes, the way fetchChart does.
+static int fetchBytes(NetworkClientSecure &client, const char *url, uint8_t *out, size_t cap, const char *tag) {
   HTTPClient http;
   http.setConnectTimeout(6000);
   http.setTimeout(6000);
+  http.useHTTP10(true);
+  if (!http.begin(client, url)) return -1;
+  http.addHeader("User-Agent", UA);
+  int code = http.GET();
+  if (code != 200) {
+    Serial.printf("%s http %d\n", tag, code);
+    http.end();
+    return -1;
+  }
+  size_t len = 0;
+  NetworkClient *st = http.getStreamPtr();
+  uint32_t last = millis();
+  while (millis() - last < 6000 && len < cap) {
+    int n = st->available();
+    if (n > 0) {
+      n = st->read(out + len, min((size_t)n, cap - len));
+      if (n > 0) {
+        len += n;
+        last = millis();
+      }
+    } else if (!st->connected()) {
+      break;
+    } else {
+      delay(5);
+    }
+  }
+  http.end();
+  return (int)len;
+}
+// JPEGDEC into a 140x140 slot. The decoder's buffers are big, so it lives
+// in PSRAM, made once.
+static uint16_t *jpegDst = nullptr;
+static int jpegDraw(JPEGDRAW *d) {
+  for (int y = 0; y < d->iHeight; y++) {
+    int dy = d->y + y;
+    if (dy >= THUMB) break;
+    int w = d->iWidth;
+    if (d->x + w > THUMB) w = THUMB - d->x;
+    if (w > 0) memcpy(jpegDst + dy * THUMB + d->x, d->pPixels + y * d->iWidth, w * 2);
+  }
+  return 1;
+}
+static bool decodeThumb(uint8_t *data, int len, uint16_t *dst) {
+  static JPEGDEC *jpeg = nullptr;
+  if (!jpeg) {
+    void *m = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);
+    if (!m) return false;
+    jpeg = new (m) JPEGDEC();
+  }
+  if (!jpeg->openRAM(data, len, jpegDraw)) return false;
+  jpeg->setPixelType(RGB565_LITTLE_ENDIAN);
+  jpegDst = dst;
+  memset(dst, 0, THUMB * THUMB * 2);
+  bool ok = jpeg->decode(0, 0, 0) == 1;
+  jpeg->close();
+  return ok;
+}
+static bool newsPageOpen();  // defined with the views, below
+static void doNews(uint8_t idx) {
+  Row r;
+  char q[16];
+  if (idx == NEWS_ALL) {  // the whole list: the index's news is the market's news
+    memset(&r, 0, sizeof r);
+    strcpy(r.label, "ALL");
+    strcpy(q, "S%26P%20500");
+  } else {
+    r = rowCopy(idx);
+    snprintf(q, sizeof q, "%s%s", r.label, r.coin ? "-USD" : "");
+  }
+  char url[160];
+  snprintf(url, sizeof url, "https://query1.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=0&newsCount=%u", q, NEWS_N);
+  NetworkClientSecure client;
+  client.setInsecure();
+  static uint8_t *buf = nullptr;  // 48KB in PSRAM: the JSON, then each picture in turn
+  const size_t CAP = 48 * 1024;
+  if (!buf) buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_SPIRAM);
   NewsItem got[NEWS_N];
   uint8_t n = 0;
   bool ok = false;
-  if (http.begin(client, url)) {
-    http.addHeader("User-Agent", UA);
-    int code = http.GET();
-    if (code == 200) {
-      String body = http.getString();  // ~12KB
-      ok = true;
-      const char *p = body.c_str();
-      while (n < NEWS_N) {
-        const char *item = strstr(p, "<item>");
-        if (!item) break;
-        const char *end = strstr(item, "</item>");
-        if (!end) break;
-        char date[40];
-        xmlText(item, end, "title", got[n].title, sizeof got[n].title);
-        xmlText(item, end, "pubDate", date, sizeof date);
-        decodeEntities(got[n].title);
-        ageOf(parseRfc822(date), got[n].age, sizeof got[n].age);
-        if (got[n].title[0]) n++;
-        p = end + 7;
-      }
+  int len = buf ? fetchBytes(client, url, buf, CAP - 1, r.label) : -1;
+  if (len > 0) {
+    JsonDocument filter, doc;
+    JsonObject f = filter["news"][0].to<JsonObject>();
+    f["title"] = true;
+    f["publisher"] = true;
+    f["providerPublishTime"] = true;
+    f["thumbnail"]["resolutions"][0]["url"] = true;
+    f["thumbnail"]["resolutions"][0]["tag"] = true;
+    DeserializationError je = deserializeJson(doc, (const char *)buf, (size_t)len, DeserializationOption::Filter(filter));
+    if (je) {
+      Serial.printf("news %s: json %s (%d bytes)\n", r.label, je.c_str(), len);
     } else {
-      Serial.printf("news %s http %d\n", r.label, code);
+      ok = true;
+      for (JsonObject it : doc["news"].as<JsonArray>()) {
+        if (n >= NEWS_N) break;
+        NewsItem &g = got[n];
+        memset(&g, 0, sizeof g);
+        snprintf(g.title, sizeof g.title, "%s", it["title"] | "");
+        if (!g.title[0]) continue;
+        decodeEntities(g.title);
+        snprintf(g.pub, sizeof g.pub, "%s", it["publisher"] | "");
+        ageOf((time_t)(it["providerPublishTime"] | 0L), g.age, sizeof g.age);
+        for (JsonObject res : it["thumbnail"]["resolutions"].as<JsonArray>())
+          if (strcmp(res["tag"] | "", "140x140") == 0) snprintf(g.thumb, sizeof g.thumb, "%s", res["url"] | "");
+        n++;
+      }
     }
-    http.end();
   }
   xSemaphoreTake(mux, portMAX_DELAY);
   newsIdx = idx;
   newsN = n;
   newsFailed = !ok;
+  newsPicsDone = false;
   newsAt = millis();
   memcpy(news, got, sizeof news);
+  memset(newsImgOk, 0, sizeof newsImgOk);
+  newsImgVer++;
   xSemaphoreGive(mux);
   Serial.printf("news %s: %u headlines%s (heap %u)\n", r.label, n, ok ? "" : " FAILED", ESP.getFreeHeap());
+  // The pictures, one at a time, only while the news page is the one open
+  // (the stock page shows three headlines and needs none) and nothing
+  // newer has been asked for.
+  uint8_t pics = 0;
+  bool wanted = newsPageOpen();
+  for (uint8_t i = 0; i < n && buf && newsPageOpen() && newsWant < 0; i++) {
+    if (!got[i].thumb[0]) continue;
+    if (!newsImg[i]) newsImg[i] = (uint16_t *)heap_caps_malloc(THUMB * THUMB * 2, MALLOC_CAP_SPIRAM);
+    if (!newsImg[i]) break;
+    int l = fetchBytes(client, got[i].thumb, buf, CAP, "picture");
+    if (l > 0 && decodeThumb(buf, l, newsImg[i])) {
+      newsImgOk[i] = true;
+      newsImgVer++;
+      pics++;
+    }
+  }
+  if (wanted && newsWant < 0) newsPicsDone = true;
+  if (wanted) Serial.printf("news %s: %u pictures (heap %u)\n", r.label, pics, ESP.getFreeHeap());
 }
 
 static bool fetchCoins(NetworkClientSecure &client) {
@@ -3047,6 +3132,7 @@ enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Conf
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
+static bool newsPageOpen() { return view == View::News; }
 
 // Expander ack, panel start, PSRAM left: the first three things to read when
 // the screen stays white or cycles colours (the panel's no-signal pattern)
@@ -3261,7 +3347,7 @@ static void openNews(uint8_t idx) {
   detailIdx = idx;
   detailOpenedAt = millis();
   newsPage = 0;
-  if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000)) newsWant = idx;
+  if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000 && newsPicsDone)) newsWant = idx;  // cached, pictures and all?
   drawNews(true);
 }
 static void openSearch() {
@@ -3499,7 +3585,7 @@ void loop() {
       else if (g == Gesture::SwipeUp) openNews(detailIdx);
     } else if (view == View::News && detailIdx == NEWS_ALL) {
       if (g == Gesture::SwipeDown) backToList();
-      else if (g == Gesture::SwipeUp && newsN > 6) { newsPage = (newsPage + 1) % ((newsN + 5) / 6); }
+      else if (g == Gesture::SwipeUp && newsN > 4) { newsPage = (newsPage + 1) % ((newsN + 3) / 4); }
     } else if (view == View::News) {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
