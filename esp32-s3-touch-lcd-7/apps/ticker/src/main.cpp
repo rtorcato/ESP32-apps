@@ -586,7 +586,7 @@ struct NewsItem {
 static const uint8_t NEWS_N = 16, NEWS_ALL = 255;  // idx NEWS_ALL: the sources below, for the whole list
 static uint8_t storyIdx = 0;  // the headline open on the story page
 static const int16_t THUMB = 140;
-static uint8_t newsPage = 0;
+static uint8_t newsTop = 0;  // the first row of cards on screen; a drag moves it
 static NewsItem news[NEWS_N];  // fetch task writes, UI reads, under mux
 static uint8_t newsN = 0, newsIdx = 255;
 static uint32_t newsAt = 0;
@@ -2479,9 +2479,9 @@ static void drawNews(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
     char head[16];
-    snprintf(head, sizeof head, "< %s", all ? "HEADLINES" : r.label);
-    drawHeader(all ? 3 : 0, head, all ? nullptr : "headlines");
-    drawHint(all ? "^ pages        v list" : "< next        v stock        prev >");
+    snprintf(head, sizeof head, "< %s", all ? "NEWS" : r.label);
+    drawHeader(all ? 3 : 0, head, all ? nullptr : "news");
+    drawHint(all ? "drag for more        tap a story" : "< next        tap a story        prev >");
     cNews[0] = '\0';
   }
   static NewsItem items[NEWS_N];  // 9KB: the loop task's stack is not the place (it rebooted the board)
@@ -2503,7 +2503,7 @@ static void drawNews(bool full) {
   const uint8_t per = 4, cols = L.w >= 800 ? 2 : 1;
   const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 36;
   char key[24];
-  snprintf(key, sizeof key, "%u|%u|%d|%lu|%u", detailIdx, n, failed, (unsigned long)newsAt, newsPage);
+  snprintf(key, sizeof key, "%u|%u|%d|%lu|%u", detailIdx, n, failed, (unsigned long)newsAt, newsTop);
   bool fresh = strcmp(key, cNews) != 0;
   if (!fresh && ver == cVer) return;
   cVer = ver;
@@ -2522,7 +2522,7 @@ static void drawNews(bool full) {
   }
   if (!mine || !n) return;
   for (uint8_t k = 0; k < per; k++) {
-    uint8_t i = newsPage * per + k;
+    uint8_t i = newsTop * cols + k;
     if (i >= n) break;
     int16_t x = 20 + (k % cols) * (cw + 16), y = 52 + (k / cols) * ch;
     if (fresh) {
@@ -2780,7 +2780,7 @@ static int8_t hitCard(int16_t x, int16_t y) {
   int16_t c = (x - 20) / (cw + 16), rw = (y - 52) / ch;
   if (c >= cols || rw >= 4 / cols) return -1;
   int8_t k = rw * cols + c;
-  return newsPage * 4 + k < newsN ? k : -1;
+  return newsTop * cols + k < newsN ? k : -1;
 }
 static void drawStory() {
   NewsItem it;
@@ -2790,8 +2790,8 @@ static void drawStory() {
   pic = newsImgOk[storyIdx] && newsImg[storyIdx];
   xSemaphoreGive(mux);
   gfx->fillScreen(C_BG);
-  drawHeader(3, detailIdx == NEWS_ALL ? "< HEADLINES" : "< BACK", it.pub);
-  drawHint("scan the code to read it on your phone        < headlines");
+  drawHeader(3, "< NEWS", it.pub);
+  drawHint("scan the code to read it on your phone        < news");
   // the QR code: version 10 (57 modules, 271 bytes) at 3px, on white; to the right in landscape, below in portrait
   const uint8_t VER = 10;
   static uint8_t qrData[512];
@@ -3595,6 +3595,12 @@ static void headerTap(int16_t x) {
       openNews(detailIdx);
       return;
     }
+    if (view == View::News && detailIdx != NEWS_ALL) {  // a stock's news: back to the stock
+      view = View::Detail;
+      detailOpenedAt = millis();
+      drawDetail(true);
+      return;
+    }
     if (view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::NewsSrc || view == View::Info) {
       view = View::Settings;
       pageOpenedAt = millis();
@@ -3640,7 +3646,7 @@ static void openNews(uint8_t idx) {
   view = View::News;
   detailIdx = idx;
   detailOpenedAt = millis();
-  newsPage = 0;
+  newsTop = 0;
   if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000 && newsPicsDone)) newsWant = idx;  // cached, pictures and all?
   drawNews(true);
 }
@@ -3884,13 +3890,9 @@ void loop() {
       else if (g == Gesture::SwipeRight) openDetail((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) backToList();
       else if (g == Gesture::SwipeUp) openNews(detailIdx);
-    } else if (view == View::News && detailIdx == NEWS_ALL) {
-      if (g == Gesture::SwipeDown) backToList();
-      else if (g == Gesture::SwipeUp && newsN > 4) { newsPage = (newsPage + 1) % ((newsN + 3) / 4); }
-    } else if (view == View::News) {
+    } else if (view == View::News && detailIdx != NEWS_ALL) {  // vertical is the scroll; the page's own news: left and right are the neighbours
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
-      else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
     } else if (view == View::Story && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       openNews(detailIdx);
     } else if ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::NewsSrc) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
@@ -3932,6 +3934,18 @@ void loop() {
     while (acc >= L.sH && setTop > 0) { acc -= L.sH; setTop--; drawSettingRows(); }
     if (setTop == 0 && acc > 0) acc = 0;
     if (setTop + L.sN >= L.sRows && acc < 0) acc = 0;
+  }
+  // A drag on the news page scrolls it a row of cards per half a card.
+  if (view == View::News && g == Gesture::Drag && ddy) {
+    static int16_t acc = 0;
+    const uint8_t cols = L.w >= 800 ? 2 : 1, vis = 4 / cols, rowsAll = (newsN + cols - 1) / cols;
+    const int16_t step = (THUMB + 36) / 2;
+    uint8_t maxTop = rowsAll > vis ? rowsAll - vis : 0;
+    acc += ddy;
+    while (acc <= -step && newsTop < maxTop) { acc += step; newsTop++; drawNews(false); }
+    while (acc >= step && newsTop > 0) { acc -= step; newsTop--; drawNews(false); }
+    if (newsTop == 0 && acc > 0) acc = 0;
+    if (newsTop >= maxTop && acc < 0) acc = 0;
   }
   if (view == View::Detail && removeArmedUntil && millis() > removeArmedUntil) {
     removeArmedUntil = 0;
@@ -4032,7 +4046,7 @@ void loop() {
       }
     } else if (view == View::News) {
       int8_t k = hitCard(tx, ty);
-      if (k >= 0) openStory(newsPage * 4 + k);
+      if (k >= 0) openStory(newsTop * (L.w >= 800 ? 2 : 1) + k);
     } else if (view == View::Choice) {
       int8_t i = hitChoice(tx, ty);
       if (i >= 0) {  // a value: taken, and the sheet goes
