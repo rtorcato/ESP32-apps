@@ -2072,8 +2072,7 @@ static void drawInfo(bool full) {
 // The signed percent is printed on every tile, because colour is never
 // the only cue. Pages of twelve; swipe up and down between them.
 // (heatmap grid: see Layout)
-static uint8_t heatPage = 0;
-static char cHeat[160];
+static char cHeat[200];
 static uint16_t heatColour(float pct, bool valid) {
   if (!valid) return C_RULE;
   static const float steps[] = {0.3f, 1.0f, 2.0f, 4.0f, 7.0f};
@@ -2085,46 +2084,104 @@ static uint16_t heatColour(float pct, bool valid) {
   const uint8_t *c = pct >= 0 ? up[lvl - 1] : dn[lvl - 1];
   return rgb(c[0], c[1], c[2]);
 }
-static uint8_t heatPages() { return (nShown + L.hPer - 1) / L.hPer; }
+// One page, every row of the section, each tile's area its move: a treemap.
+// Weights are |pct| with a floor so a still stock is a sliver, not nothing;
+// sorted biggest first and laid out by the squarify rule -- each row of
+// tiles runs along the shorter side of what is left, and grows while its
+// worst tile is getting squarer -- so the big movers are big, square and
+// top-left. Text goes on a tile that has room for it.
+struct Tile { uint8_t idx; int16_t x, y, w, h; };  // idx into order[]
+static Tile tiles[MAX_SYMBOLS];
+static uint8_t nTiles = 0;
+static void layoutHeat() {
+  const int16_t X0 = 0, Y0 = L.hY0, W = L.w, H = L.yHint - 8 - L.hY0;
+  uint8_t n = nShown, ord[MAX_SYMBOLS];
+  float wgt[MAX_SYMBOLS], total = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    const Row &r = rows[order[i]];
+    wgt[i] = r.valid ? max(fabsf(r.pct), 0.3f) : 0.3f;
+    total += wgt[i];
+    ord[i] = i;
+  }
+  for (uint8_t i = 1; i < n; i++) {  // insertion sort, biggest first
+    uint8_t k = ord[i];
+    int8_t j = i - 1;
+    while (j >= 0 && wgt[ord[j]] < wgt[k]) { ord[j + 1] = ord[j]; j--; }
+    ord[j + 1] = k;
+  }
+  nTiles = 0;
+  if (!n || total <= 0) return;
+  float scale = (float)W * H / total;
+  float rx = X0, ry = Y0, rw = W, rh = H;
+  uint8_t i = 0;
+  while (i < n && rw >= 1 && rh >= 1) {
+    float side = min(rw, rh), sum = 0, amax = 0, amin = 1e30f, worst = 1e30f;
+    uint8_t start = i;
+    while (i < n) {  // grow the row while the worst aspect improves
+      float a = wgt[ord[i]] * scale, ns = sum + a, t = ns / side;
+      float mx = max(amax, a), mn = min(amin, a);
+      float w1 = max((mx / t) / t, t / (mn / t));
+      if (i > start && w1 > worst) break;
+      worst = w1; sum = ns; amax = mx; amin = mn; i++;
+    }
+    float t = sum / side, pos = 0;
+    bool vertical = rw >= rh;  // the shorter side is the height: a column at the left
+    for (uint8_t k = start; k < i; k++) {
+      float len = wgt[ord[k]] * scale / t;
+      Tile &tl = tiles[nTiles++];
+      tl.idx = ord[k];
+      if (vertical) { tl.x = (int16_t)rx; tl.y = (int16_t)(ry + pos); tl.w = (int16_t)(t + 0.5f); tl.h = (int16_t)(len + 0.5f); }
+      else { tl.x = (int16_t)(rx + pos); tl.y = (int16_t)ry; tl.w = (int16_t)(len + 0.5f); tl.h = (int16_t)(t + 0.5f); }
+      pos += len;
+    }
+    if (vertical) { rx += t; rw -= t; } else { ry += t; rh -= t; }
+  }
+}
 static int8_t hitTile(int16_t x, int16_t y) {
-  if (y < L.hY0 || y >= L.hY0 + L.hRows * (L.hH + 2)) return -1;
-  int8_t t = (y - L.hY0) / (L.hH + 2) * L.hCols + x / (L.hW + 2);
-  return heatPage * L.hPer + t < nShown ? t : -1;
+  for (uint8_t t = 0; t < nTiles; t++)
+    if (x >= tiles[t].x && x < tiles[t].x + tiles[t].w && y >= tiles[t].y && y < tiles[t].y + tiles[t].h) return t;
+  return -1;
 }
 static void drawHeat(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
-    char h[48];
-    snprintf(h, sizeof h, "%s, page %u of %u", SECT_NAMES[sect], heatPage + 1, heatPages());
-    drawHeader(2, "HEATMAP", heatPages() > 1 ? h : SECT_NAMES[sect]);
-    drawHint(heatPages() > 1 ? "^ v  pages        < search        list >" : "< search        list >");
+    drawHeader(2, "HEATMAP", SECT_NAMES[sect]);
+    drawHint("tap a tile        < search        list >");
     cHeat[0] = '\0';
   }
-  char key[160] = "";
-  for (uint8_t t = 0; t < L.hPer && heatPage * L.hPer + t < nShown; t++) {
-    const Row &r = rows[order[heatPage * L.hPer + t]];
+  char key[200] = "";
+  for (uint8_t i = 0; i < nShown; i++) {
+    const Row &r = rows[order[i]];
     char k[8];
     snprintf(k, sizeof k, "%d,", r.valid ? (int)(r.pct * 10) : -9999);
     strlcat(key, k, sizeof key);
   }
   if (strcmp(key, cHeat) == 0) return;
   strcpy(cHeat, key);
-  for (uint8_t t = 0; t < L.hPer; t++) {
-    int16_t x = (t % L.hCols) * (L.hW + 2), y = L.hY0 + (t / L.hCols) * (L.hH + 2);
-    if (heatPage * L.hPer + t >= nShown) {
-      gfx->fillRect(x, y, L.hW, L.hH, C_BG);
-      continue;
-    }
-    Row r = rowCopy(order[heatPage * L.hPer + t]);
-    gfx->fillRoundRect(x, y, L.hW, L.hH, 10, heatColour(r.pct, r.valid));
-    textAt(x + 10, y + 10, 2, C_FG, r.label);
+  layoutHeat();
+  gfx->fillRect(0, L.hY0, L.w, L.yHint - 8 - L.hY0, C_BG);
+  for (uint8_t t = 0; t < nTiles; t++) {
+    const Tile &tl = tiles[t];
+    if (tl.w < 4 || tl.h < 4) continue;
+    Row r = rowCopy(order[tl.idx]);
+    gfx->fillRoundRect(tl.x + 1, tl.y + 1, tl.w - 2, tl.h - 2, tl.w > 40 && tl.h > 40 ? 8 : 3, heatColour(r.pct, r.valid));
     char b[12];
     if (r.valid) formatPct(r.pct, b, sizeof b);
     else strcpy(b, "--");
-    textAt(x + 10, y + 40, 2, C_FG, b);
-    if (r.valid) {
-      priceStr(r, r.price, b, sizeof b);
-      textAt(x + 10, y + 76, 1, rgb(220, 224, 228), b);
+    bool big = tl.w >= 110 && tl.h >= 70;
+    uint8_t f = big ? 2 : 1;
+    if (tl.w >= textWidth(f, r.label) + 12 && tl.h >= GH(f) + 8) {
+      int16_t ty = tl.y + 8;
+      textAt(tl.x + 8, ty, f, C_FG, r.label);
+      ty += GH(f) + 2;
+      if (tl.h >= ty - tl.y + GH(f) + 4 && tl.w >= textWidth(f, b) + 12) {
+        textAt(tl.x + 8, ty, f, C_FG, b);
+        ty += GH(f) + 2;
+      }
+      if (big && r.valid && tl.h >= ty - tl.y + GH(1) + 6) {
+        priceStr(r, r.price, b, sizeof b);
+        textAt(tl.x + 8, ty, 1, rgb(220, 224, 228), b);
+      }
     }
   }
 }
@@ -3130,7 +3187,6 @@ static void selfCheck() {
   if (!two) assert(L.rY + L.rH <= L.dYDay);
   assert(L.chX + L.chW <= L.w && L.chY + L.chH <= L.rY && L.rY + L.rH <= L.dYNews && L.dYNews + 3 * L.newsStep <= L.yHint);
   assert(L.rW <= L.rStep && GW(2) * 2 <= L.rW && GH(2) <= L.rH && L.chX + L.rStep * (N_RANGES - 1) + L.rW <= L.w);
-  assert(L.hCols * (L.hW + 2) <= L.w + 2 && L.hY0 + L.hRows * (L.hH + 2) <= L.h);
   assert(30 % L.kCols == 0 && L.kY0 + (30 / L.kCols) * L.kH <= L.h && L.kCols * L.kW <= L.w && L.resY0 + MAX_HITS * L.resH <= L.yHint);
   }
   Lp = &LAYOUTS[0];
@@ -3306,7 +3362,6 @@ static void backToList() {
 static void openHeat() {
   view = View::Heat;
   pageOpenedAt = millis();
-  if (heatPage >= heatPages()) heatPage = 0;
   drawHeat(true);
 }
 static void openSearch();
@@ -3557,6 +3612,7 @@ void loop() {
       int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) openDetail(order[r]);
       else if (ty < L.yRow0) headerTap(tx);
+      tap = false;  // handled: the page just opened must not see the same press as its own tap
     }
   }
   // Swipes are the navigation, phone style. List: right opens settings.
@@ -3579,8 +3635,6 @@ void loop() {
     } else if (view == View::Heat) {
       if (g == Gesture::SwipeRight) backToList();
       else if (g == Gesture::SwipeLeft) openSearch();
-      else if (g == Gesture::SwipeUp && heatPages() > 1) { heatPage = (heatPage + 1) % heatPages(); drawHeat(true); }
-      else if (g == Gesture::SwipeDown && heatPages() > 1) { heatPage = (heatPage + heatPages() - 1) % heatPages(); drawHeat(true); }
     } else if (view == View::Search && g == Gesture::SwipeRight) {
       openHeat();
     } else if (view == View::Search && g == Gesture::SwipeDown) {
@@ -3668,7 +3722,7 @@ void loop() {
   if (tap && state == State::Running && view != View::List) {
     if (view == View::Heat) {
       int8_t t = hitTile(tx, ty);
-      if (t >= 0) openDetail(order[heatPage * L.hPer + t]);
+      if (t >= 0) openDetail(order[tiles[t].idx]);
     } else if (view == View::Search) {
       pageOpenedAt = millis();
       if (searchMode == 0) {
