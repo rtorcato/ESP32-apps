@@ -84,11 +84,15 @@ def fetch(url: str) -> bytes | None:
 
 
 def to_bmp(png: bytes, size: int, tmp: pathlib.Path) -> bytes:
-    """Resize and decode via sips, preserving alpha (32bpp BI_BITFIELDS)."""
+    """Resize and decode via sips, preserving alpha (32bpp BI_BITFIELDS).
+
+    -Z fits the longer side to size and keeps the aspect; -z forced a square
+    and squashed every flag (Canada's 2:1 became 1:1). crop_fit centres a
+    rectangle in its square anyway."""
     src, dst = tmp / "in.png", tmp / "out.bmp"
     src.write_bytes(png)
     subprocess.run(
-        ["sips", "-z", str(size), str(size), "-s", "format", "bmp", str(src), "--out", str(dst)],
+        ["sips", "-Z", str(size), "-s", "format", "bmp", str(src), "--out", str(dst)],
         check=True, capture_output=True,
     )
     return dst.read_bytes()
