@@ -706,20 +706,40 @@ static void fieldCentre(int16_t cx, int16_t y, uint8_t chars, uint8_t size, uint
 // size*size*2, blit. No decoder, no fetch. False when the file is missing or
 // the wrong size, and the caller draws nothing there -- the symbol text next
 // to it carries the identity. One static buffer serves both sizes.
-static uint16_t logoBuf[LOGO_BIG * LOGO_BIG];
-static bool blitLogo(int16_t x, int16_t y, uint8_t size, const char *label) {
+// Logos live in PSRAM once read: a flash read stalls the cache, and with
+// it the scan-out's reads of the framebuffer, which showed as a flicker
+// every time a row with a badge entered the list. logoInventory() reads
+// every file at boot; a symbol added later is read on its first blit.
+struct LogoCache { uint8_t size; char label[MAX_LABEL + 1]; uint16_t *px; };
+static LogoCache logoCache[MAX_SYMBOLS * 2];
+static uint8_t nLogoCache = 0;
+static uint16_t *logoLoad(uint8_t size, const char *label) {
+  for (uint8_t i = 0; i < nLogoCache; i++)
+    if (logoCache[i].size == size && strcmp(logoCache[i].label, label) == 0) return logoCache[i].px;
+  if (nLogoCache >= MAX_SYMBOLS * 2) return nullptr;
   char path[40];
   snprintf(path, sizeof path, "/logo/%u/%s.565", size, label);
   File f = LittleFS.open(path, "r");
-  if (!f) return false;
+  if (!f) return nullptr;
   const size_t want = (size_t)size * size * 2;
-  bool ok = f.size() == want && f.read((uint8_t *)logoBuf, want) == want;
+  uint16_t *px = f.size() == want ? (uint16_t *)heap_caps_malloc(want, MALLOC_CAP_SPIRAM) : nullptr;
+  bool ok = px && f.read((uint8_t *)px, want) == want;
   f.close();
   if (!ok) {
-    Serial.printf("%s: bad size, rerun tools/make-logos.py --size %u\n", path, size);
-    return false;
+    if (px) free(px);
+    else Serial.printf("%s: bad size, rerun tools/make-logos.py --size %u\n", path, size);
+    return nullptr;
   }
-  gfx->draw16bitRGBBitmap(x, y, logoBuf, size, size);
+  LogoCache &c = logoCache[nLogoCache++];
+  c.size = size;
+  snprintf(c.label, sizeof c.label, "%s", label);
+  c.px = px;
+  return px;
+}
+static bool blitLogo(int16_t x, int16_t y, uint8_t size, const char *label) {
+  uint16_t *px = logoLoad(size, label);
+  if (!px) return false;
+  gfx->draw16bitRGBBitmap(x, y, px, size, size);
   return true;
 }
 
@@ -729,12 +749,8 @@ static uint8_t haveLogo[2];  // per size, for the info page
 static void logoInventory() {
   for (uint8_t size : {LOGO_BADGE, LOGO_BIG}) {
     uint8_t have = 0;
-    for (uint8_t i = 0; i < nRows; i++) {
-      char path[40];
-      snprintf(path, sizeof path, "/logo/%u/%s.565", size, rows[i].label);
-      File f = LittleFS.open(path, "r");
-      if (f && f.size() == (size_t)size * size * 2) have++;
-    }
+    for (uint8_t i = 0; i < nRows; i++)
+      if (logoLoad(size, rows[i].label)) have++;  // into PSRAM, once
     haveLogo[size == LOGO_BIG] = have;
     Serial.printf("logos %upx: %u/%u present%s\n", size, have, nRows,
                   have ? "" : "  (python3 tools/make-logos.py --size N --out data/logo/N; ./push-config ticker)");
@@ -2822,7 +2838,6 @@ static void selfCheck() {
   assert(30 % L.kCols == 0 && L.kY0 + (30 / L.kCols) * L.kH <= L.h && L.kCols * L.kW <= L.w && L.resY0 + MAX_HITS * L.resH <= L.yHint);
   }
   Lp = &LAYOUTS[0];
-  assert(sizeof logoBuf >= (size_t)LOGO_BADGE * LOGO_BADGE * 2);
   for (const Face &f : FACES) assert(f.font[13] == f.cap && (uint8_t)(-(int8_t)f.font[14]) == f.desc);  // u8g2 header: ascent_A, descent_g
 }
 

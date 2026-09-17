@@ -29,7 +29,7 @@
 // reported success (2026-09-17). Flicker is the bounce buffer's job below,
 // not the clock's. If the colours are mirrored (cyan draws yellow), swap
 // the R and B pin groups.
-#define LCD_PCLK_HZ 16000000
+#define LCD_PCLK_HZ 14000000
 #define LCD_PCLK_NEG 1
 
 // The panel DMA reads its framebuffer from PSRAM; whenever the CPU competes
