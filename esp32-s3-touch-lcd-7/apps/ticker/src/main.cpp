@@ -20,6 +20,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <JPEGDEC.h>
+#include <qrcode.h>
 #include <LittleFS.h>
 #include <NetworkClientSecure.h>
 #include <DNSServer.h>
@@ -133,7 +134,7 @@ static const Layout LAYOUTS[2] = {
      12, 420, 564, 40,
      20, 52, 168, 52, 90, 114, 20, 196, 264, 200, 316, 368, 20, 340, 8,
      400, 52, 388, 200, 262, 72, 79, 40, 312, 38,
-     56, 35, 11, 12,
+     56, 35, 11, 13,
      44, 130, 98, 6, 4, 24,
      200, 80, 76, 10, 60, 100, 56,
      240, 320, 330, 56, 402, 150, 210, 254, 284,
@@ -143,7 +144,7 @@ static const Layout LAYOUTS[2] = {
      12, -1, 320, 36,
      20, 52, 168, 52, 90, 114, 20, 196, 264, 200, 544, 596, 20, 440, 8,
      20, 296, 440, 190, 494, 80, 88, 40, 660, 28,
-     56, 35, 11, 12,
+     56, 35, 11, 13,
      44, 118, 96, 4, 7, 28,
      440, 80, 66, 6, 60, 100, 56,
      80, 320, 400, 56, 472, 200, 260, 304, 334,
@@ -408,6 +409,14 @@ static void userRemove(uint8_t i) {
   Serial.printf("removed %s\n", label);
 }
 
+// The headlines page's sources: search terms for Yahoo's news, three of
+// our own always there, then any the config adds (news: ["..."]). Each is
+// a request of eight stories; the page merges them. Settings > News turns
+// each on or off (NVS "nsrc", a bit each).
+static const uint8_t NEWS_SRC_MAX = 8;
+static const char *const NEWS_DEFAULT[] = {"S&P 500", "Bitcoin", "Federal Reserve"};
+static char newsSrc[NEWS_SRC_MAX][24];
+static uint8_t nNewsSrc = 0, sNewsOn = 0xFF;
 static bool addRow(const char *label, const char *id, bool coin, uint8_t kind = K_STOCK) {
   if (nRows >= MAX_SYMBOLS) return false;
   if (!label || !*label || strlen(label) > MAX_LABEL) return false;
@@ -449,6 +458,12 @@ static bool loadConfig() {
     const char *id = o["id"], *label = o["label"];
     if (addRow(label ? label : id, id, true)) nCoins++;
     else Serial.printf("skipped coin '%s' (bad label or list full)\n", id ? id : "?");
+  }
+  nNewsSrc = 0;
+  for (const char *d : NEWS_DEFAULT) snprintf(newsSrc[nNewsSrc++], sizeof newsSrc[0], "%s", d);
+  for (JsonVariant v : cfgArr("news")) {  // extra search terms for the headlines page
+    const char *t = v.as<const char *>();
+    if (t && *t && nNewsSrc < NEWS_SRC_MAX) snprintf(newsSrc[nNewsSrc++], sizeof newsSrc[0], "%s", t);
   }
   if (nRows == 0) {
     cfgErr = "config.json has no symbols";
@@ -565,8 +580,10 @@ struct NewsItem {
   char pub[20];
   char age[8];
   char thumb[240];  // the 140x140 picture's url, or empty
+  char link[200];   // the story, for the QR code on its page
 };
-static const uint8_t NEWS_N = 8, NEWS_ALL = 255;  // idx NEWS_ALL: the market's news, for the whole list
+static const uint8_t NEWS_N = 16, NEWS_ALL = 255;  // idx NEWS_ALL: the sources below, for the whole list
+static uint8_t storyIdx = 0;  // the headline open on the story page
 static const int16_t THUMB = 140;
 static uint8_t newsPage = 0;
 static NewsItem news[NEWS_N];  // fetch task writes, UI reads, under mux
@@ -1471,8 +1488,8 @@ static void drawDetail(bool full) {
   struct tm t;
   Session ses = getLocalTime(&t, 0) ? sessionNow(t) : Session::Regular;
   bool ext = !r.coin && r.valid && ses != Session::Regular && r.last > 0 && r.price > 0 && r.last != r.price;
-  float shown = ext ? r.last : r.price, base = ext ? r.price : r.prev;
-  float pctv = ext ? (r.last - r.price) / r.price * 100.0f : r.pct;
+  // The day's figures stay the figures; the extended-hours print gets a line of its own under them.
+  float shown = r.price, base = r.prev, pctv = r.pct;
 
   char price[12], pct[12], key[64];
   if (r.valid) {
@@ -1495,7 +1512,7 @@ static void drawDetail(bool full) {
   }
   if (full) kText[0] = kRanges[0] = kNews[0] = '\0';
 
-  snprintf(key, sizeof key, "%s|%s|%s|%d|%s|%u", r.label, price, pct, ext, sCur, dots);
+  snprintf(key, sizeof key, "%s|%s|%s|%d|%.2f|%s|%u", r.label, price, pct, ext, r.last, sCur, dots);
   if (strcmp(key, kText) != 0) {
     strcpy(kText, key);
     char name[28], tag[28] = "";  // the name beside the logo, and one line under it
@@ -1517,6 +1534,14 @@ static void drawDetail(bool full) {
     if (r.valid && base > 0) snprintf(chg, sizeof chg, "%+.2f", disp(r, shown) - disp(r, base));
     field(L.dXPrice, L.dYChg, 12, 2, fg, chg);
     field(L.dXPct, L.dYChg, 8, 2, fg, pct);
+    char after[48] = "";
+    if (ext) {
+      char lp[12];
+      priceStr(r, r.last, lp, sizeof lp);
+      snprintf(after, sizeof after, "%s %s   %+.2f (%+.2f%%)", ses == Session::Pre ? "pre-market" : "after hours", lp,
+               disp(r, r.last) - disp(r, r.price), (r.last - r.price) / r.price * 100.0f);
+    }
+    field(L.dXPrice, L.dYChg + GH(2) + 4, 40, 1, r.last >= r.price ? C_GOOD : C_BAD, after);
   }
 
   // Chart: the sparkline's data with room to be a chart. The previous close
@@ -1743,6 +1768,7 @@ static void loadSettings() {
     sRot = prefs.getUChar("rot", sRot) & 3;
     sTheme = prefs.getUChar("bg", sTheme) % N_THEMES;
     applyTheme();
+    sNewsOn = prefs.getUChar("nsrc", 0xFF);
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1771,6 +1797,7 @@ static void saveSettings() {
   prefs.putUChar("cols", sCols);
   prefs.putUChar("rot", sRot);
   prefs.putUChar("bg", sTheme);
+  prefs.putUChar("nsrc", sNewsOn);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -1788,15 +1815,15 @@ static void chevron(int16_t right, int16_t cy, uint16_t c) {
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
-  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Orientation", "Clock", "Theme", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
+  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "News", "Orientation", "Clock", "Theme", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
   char ssid[24];
   snprintf(ssid, sizeof ssid, "%.20s", wifiSsid[0] ? wifiSsid : "not set");
-  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? ROT_NAMES[sRot] : i == 4 ? CLOCK_NAMES[sClock]
-                : i == 5 ? THEMES[sTheme].name : i == 6 ? RET_NAMES[sRet] : i == 7 ? SLEEP_NAMES[sSleep] : i == 8 ? sCur : i == 9 ? ">" : i == 10 ? ssid : ">";
+  const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? ">" : i == 4 ? ROT_NAMES[sRot] : i == 5 ? CLOCK_NAMES[sClock]
+                : i == 6 ? THEMES[sTheme].name : i == 7 ? RET_NAMES[sRet] : i == 8 ? SLEEP_NAMES[sSleep] : i == 9 ? sCur : i == 10 ? ">" : i == 11 ? ssid : ">";
   if (i < setTop || i >= setTop + L.sN) return;
   int16_t y = L.sY0 + (i - setTop) * L.sH;
   gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
-  textAt(20, y + 5, 2, i == 11 ? C_BAD : C_MUTED, labels[i]);
+  textAt(20, y + 5, 2, i == 12 ? C_BAD : C_MUTED, labels[i]);
   int16_t cy = y + 5 + GH(2) / 2;  // every row opens a page: its value in grey, then the mark
   chevron(L.w - 20, cy, C_MUTED);
   if (strcmp(v, ">") != 0) textAt(L.w - 40 - textWidth(2, v), y + 5, 2, C_MUTED, v);
@@ -1815,6 +1842,20 @@ static void drawColumns() {
   drawPanel("COLUMNS", C_MUTED, nullptr, 0, true, 4, "< COLUMNS", "what a row shows");
   for (uint8_t i = 0; i < 6; i++) drawColumnRow(i);
   drawHint("tap a row to turn it on or off        < settings");
+}
+// The News page: the headline sources, on or off. More come from config.json.
+static void drawNewsSrcRow(uint8_t i) {
+  int16_t y = L.sY0 + i * L.sH;
+  gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
+  bool on = sNewsOn & (1 << i);
+  textAt(20, y + 5, 2, C_MUTED, newsSrc[i]);
+  textAt(L.w - 20 - textWidth(2, on ? "on" : "off"), y + 5, 2, on ? C_GOOD : C_DIM, on ? "on" : "off");
+  gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
+}
+static void drawNewsSrc() {
+  drawPanel("NEWS", C_MUTED, nullptr, 0, true, 4, "< NEWS", "sources for the headlines page; add more in config.json");
+  for (uint8_t i = 0; i < nNewsSrc; i++) drawNewsSrcRow(i);
+  drawHint("tap a source to turn it on or off        < settings");
 }
 // The Themes page: a tile per theme in its own colours, with a sample row
 // so the choice is seen before it is made. Four across in landscape, two
@@ -2012,16 +2053,17 @@ static bool hitConfirm(int16_t x, int16_t y) { return y >= L.cfY && y < L.cfY + 
 static uint8_t tapSetting(uint8_t i) {
   if (i == 0) return 3;
   if (i == 2) return 7;
-  if (i == 5) return 8;
-  if (i == 9) return 1;
-  if (i == 10) return 4;
-  if (i == 11) return 5;
-  if (i == 3) return 9;
-  if (i == 1) return 10 + CH_SPEED;  // 10 and up: a page of values
-  if (i == 4) return 10 + CH_CLOCK;
-  if (i == 6) return 10 + CH_RET;
-  if (i == 7) return 10 + CH_SLEEP;
-  if (i == 8) return 10 + CH_CUR;
+  if (i == 3) return 20;  // the news sources page
+  if (i == 4) return 9;
+  if (i == 6) return 8;
+  if (i == 10) return 1;
+  if (i == 11) return 4;
+  if (i == 12) return 5;
+  if (i == 1) return 10 + CH_SPEED;  // 10 to 14: a page of values
+  if (i == 5) return 10 + CH_CLOCK;
+  if (i == 7) return 10 + CH_RET;
+  if (i == 8) return 10 + CH_SLEEP;
+  if (i == 9) return 10 + CH_CUR;
   return 0;
 }
 
@@ -2090,24 +2132,28 @@ static uint16_t heatColour(float pct, bool valid) {
 // tiles runs along the shorter side of what is left, and grows while its
 // worst tile is getting squarer -- so the big movers are big, square and
 // top-left. Text goes on a tile that has room for it.
-struct Tile { uint8_t idx; int16_t x, y, w, h; };  // idx into order[]
+struct Tile { uint8_t idx; int16_t x, y, w, h; };  // idx into rows[]
 static Tile tiles[MAX_SYMBOLS];
 static uint8_t nTiles = 0;
 static void layoutHeat() {
   const int16_t X0 = 0, Y0 = L.hY0, W = L.w, H = L.yHint - 8 - L.hY0;
-  uint8_t n = nShown, ord[MAX_SYMBOLS];
+  uint8_t n = 0, ord[MAX_SYMBOLS];
   float wgt[MAX_SYMBOLS], total = 0;
-  for (uint8_t i = 0; i < n; i++) {
-    const Row &r = rows[order[i]];
-    wgt[i] = r.valid ? max(fabsf(r.pct), 0.3f) : 0.3f;
-    total += wgt[i];
-    ord[i] = i;
+  for (uint8_t i = 0; i < nRows; i++) {  // stocks only, whatever tab the list is on
+    const Row &r = rows[i];
+    if (r.kind != K_STOCK) continue;
+    wgt[n] = r.valid ? max(fabsf(r.pct), 0.3f) : 0.3f;
+    total += wgt[n];
+    ord[n] = i;
+    n++;
   }
-  for (uint8_t i = 1; i < n; i++) {  // insertion sort, biggest first
+  for (uint8_t i = 1; i < n; i++) {  // insertion sort, biggest first (wgt travels with ord)
     uint8_t k = ord[i];
+    float wk = wgt[i];
     int8_t j = i - 1;
-    while (j >= 0 && wgt[ord[j]] < wgt[k]) { ord[j + 1] = ord[j]; j--; }
+    while (j >= 0 && wgt[j] < wk) { ord[j + 1] = ord[j]; wgt[j + 1] = wgt[j]; j--; }
     ord[j + 1] = k;
+    wgt[j + 1] = wk;
   }
   nTiles = 0;
   if (!n || total <= 0) return;
@@ -2118,7 +2164,7 @@ static void layoutHeat() {
     float side = min(rw, rh), sum = 0, amax = 0, amin = 1e30f, worst = 1e30f;
     uint8_t start = i;
     while (i < n) {  // grow the row while the worst aspect improves
-      float a = wgt[ord[i]] * scale, ns = sum + a, t = ns / side;
+      float a = wgt[i] * scale, ns = sum + a, t = ns / side;
       float mx = max(amax, a), mn = min(amin, a);
       float w1 = max((mx / t) / t, t / (mn / t));
       if (i > start && w1 > worst) break;
@@ -2127,7 +2173,7 @@ static void layoutHeat() {
     float t = sum / side, pos = 0;
     bool vertical = rw >= rh;  // the shorter side is the height: a column at the left
     for (uint8_t k = start; k < i; k++) {
-      float len = wgt[ord[k]] * scale / t;
+      float len = wgt[k] * scale / t;
       Tile &tl = tiles[nTiles++];
       tl.idx = ord[k];
       if (vertical) { tl.x = (int16_t)rx; tl.y = (int16_t)(ry + pos); tl.w = (int16_t)(t + 0.5f); tl.h = (int16_t)(len + 0.5f); }
@@ -2145,13 +2191,14 @@ static int8_t hitTile(int16_t x, int16_t y) {
 static void drawHeat(bool full) {
   if (full) {
     gfx->fillScreen(C_BG);
-    drawHeader(2, "HEATMAP", SECT_NAMES[sect]);
+    drawHeader(2, "HEATMAP", "stocks by today's move");
     drawHint("tap a tile        < search        list >");
     cHeat[0] = '\0';
   }
   char key[200] = "";
-  for (uint8_t i = 0; i < nShown; i++) {
-    const Row &r = rows[order[i]];
+  for (uint8_t i = 0; i < nRows; i++) {
+    const Row &r = rows[i];
+    if (r.kind != K_STOCK) continue;
     char k[8];
     snprintf(k, sizeof k, "%d,", r.valid ? (int)(r.pct * 10) : -9999);
     strlcat(key, k, sizeof key);
@@ -2163,7 +2210,7 @@ static void drawHeat(bool full) {
   for (uint8_t t = 0; t < nTiles; t++) {
     const Tile &tl = tiles[t];
     if (tl.w < 4 || tl.h < 4) continue;
-    Row r = rowCopy(order[tl.idx]);
+    Row r = rowCopy(tl.idx);
     gfx->fillRoundRect(tl.x + 1, tl.y + 1, tl.w - 2, tl.h - 2, tl.w > 40 && tl.h > 40 ? 8 : 3, heatColour(r.pct, r.valid));
     char b[12];
     if (r.valid) formatPct(r.pct, b, sizeof b);
@@ -2619,6 +2666,56 @@ static void doSearch() {
   Serial.printf("search '%s': %u hits%s (heap %u)\n", searchQ, n, ok ? "" : " FAILED", ESP.getFreeHeap());
 }
 
+// A headline's own page: the picture, the headline large, the source and
+// the age, and a QR code of the story's link -- the panel cannot show the
+// article, a phone can. Tap a card on the headlines page to get here.
+static int8_t hitCard(int16_t x, int16_t y) {
+  const uint8_t cols = L.w >= 800 ? 2 : 1;
+  const int16_t cw = (L.w - 40 - 16 * (cols - 1)) / cols, ch = THUMB + 36;
+  if (x < 20 || y < 52) return -1;
+  int16_t c = (x - 20) / (cw + 16), rw = (y - 52) / ch;
+  if (c >= cols || rw >= 4 / cols) return -1;
+  int8_t k = rw * cols + c;
+  return newsPage * 4 + k < newsN ? k : -1;
+}
+static void drawStory() {
+  NewsItem it;
+  bool pic;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  it = news[storyIdx];
+  pic = newsImgOk[storyIdx] && newsImg[storyIdx];
+  xSemaphoreGive(mux);
+  gfx->fillScreen(C_BG);
+  drawHeader(3, detailIdx == NEWS_ALL ? "< HEADLINES" : "< BACK", it.pub);
+  drawHint("scan the code to read it on your phone        < headlines");
+  // the QR code: version 10 (57 modules, 271 bytes) at 3px, on white; to the right in landscape, below in portrait
+  const uint8_t VER = 10;
+  static uint8_t qrData[512];
+  QRCode qr;
+  bool haveQr = it.link[0] && qrcode_initText(&qr, qrData, VER, ECC_LOW, it.link) == 0;
+  int16_t qrPx = haveQr ? qr.size * 3 + 16 : 0;
+  bool wide = L.w >= 800;
+  int16_t tx = 20 + THUMB + 16, tw = (wide ? L.w - 20 - qrPx - 20 : L.w - 20) - tx;
+  if (pic) gfx->draw16bitRGBBitmap(20, 60, newsImg[storyIdx], THUMB, THUMB);
+  else gfx->fillRoundRect(20, 60, THUMB, THUMB, 8, C_RULE);
+  char lines[6][64];
+  uint8_t n = wrapText(it.title, tw * 14 / 19, lines, 6);
+  int16_t y = 60;
+  for (uint8_t i = 0; i < n; i++, y += GH(2) + 2) textAt(tx, y, 2, C_FG, lines[i]);
+  char who[40];
+  snprintf(who, sizeof who, "%s%s%s", it.pub, it.age[0] ? "  ·  " : "", it.age);
+  textAt(tx, y + 8, 1, C_DIM, who);
+  if (haveQr) {
+    int16_t qx = wide ? L.w - 20 - qrPx : 20, qy = wide ? 60 : max<int16_t>(y + 40, 60 + THUMB + 24);
+    gfx->fillRect(qx, qy, qrPx, qrPx, 0xFFFF);
+    for (uint8_t yy = 0; yy < qr.size; yy++)
+      for (uint8_t xx = 0; xx < qr.size; xx++)
+        if (qrcode_getModule(&qr, xx, yy)) gfx->fillRect(qx + 8 + xx * 3, qy + 8 + yy * 3, 3, 3, 0x0000);
+  } else if (it.link[0]) {
+    textAt(tx, y + 8 + GH(1) + 6, 1, C_DIM, "link too long for a code");
+  }
+}
+static void openStory(uint8_t i);  // with the other openers, below
 // GET url over HTTP/1.0 into out (at most cap bytes); the length, or -1.
 // The body is read by hand until the server closes, the way fetchChart does.
 static int fetchBytes(NetworkClientSecure &client, const char *url, uint8_t *out, size_t cap, const char *tag) {
@@ -2683,55 +2780,76 @@ static bool decodeThumb(uint8_t *data, int len, uint16_t *dst) {
   return ok;
 }
 static bool newsPageOpen();  // defined with the views, below
+// Spaces, & and the like as %XX, for a search term in a url.
+static void urlEncode(const char *in, char *out, size_t n) {
+  size_t o = 0;
+  for (; *in && o + 4 < n; in++) {
+    if (isalnum((unsigned char)*in) || strchr("-_.~", *in)) out[o++] = *in;
+    else o += snprintf(out + o, n - o, "%%%02X", (unsigned char)*in);
+  }
+  out[o] = '\0';
+}
+// One search: up to eight stories for q, appended to got[] (n), titles deduped. True if the request parsed.
+static bool fetchNews(NetworkClientSecure &client, uint8_t *buf, size_t cap, const char *q, const char *tag, NewsItem *got, uint8_t &n) {
+  char url[220];
+  snprintf(url, sizeof url, "https://query1.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=0&newsCount=8", q);
+  int len = fetchBytes(client, url, buf, cap - 1, tag);
+  if (len <= 0) return false;
+  JsonDocument filter, doc;
+  JsonObject f = filter["news"][0].to<JsonObject>();
+  for (const char *k : {"title", "publisher", "providerPublishTime", "link"}) f[k] = true;
+  f["thumbnail"]["resolutions"][0]["url"] = true;
+  f["thumbnail"]["resolutions"][0]["tag"] = true;
+  DeserializationError je = deserializeJson(doc, (const char *)buf, (size_t)len, DeserializationOption::Filter(filter));
+  if (je) {
+    Serial.printf("news %s: json %s (%d bytes)\n", tag, je.c_str(), len);
+    return false;
+  }
+  for (JsonObject it : doc["news"].as<JsonArray>()) {
+    if (n >= NEWS_N) break;
+    NewsItem &g = got[n];
+    memset(&g, 0, sizeof g);
+    snprintf(g.title, sizeof g.title, "%s", it["title"] | "");
+    if (!g.title[0]) continue;
+    decodeEntities(g.title);
+    bool dup = false;
+    for (uint8_t i = 0; i < n && !dup; i++) dup = strcmp(got[i].title, g.title) == 0;
+    if (dup) continue;
+    snprintf(g.pub, sizeof g.pub, "%s", it["publisher"] | "");
+    snprintf(g.link, sizeof g.link, "%s", it["link"] | "");
+    ageOf((time_t)(it["providerPublishTime"] | 0L), g.age, sizeof g.age);
+    for (JsonObject res : it["thumbnail"]["resolutions"].as<JsonArray>())
+      if (strcmp(res["tag"] | "", "140x140") == 0) snprintf(g.thumb, sizeof g.thumb, "%s", res["url"] | "");
+    n++;
+  }
+  return true;
+}
 static void doNews(uint8_t idx) {
   Row r;
-  char q[16];
-  if (idx == NEWS_ALL) {  // the whole list: the index's news is the market's news
+  if (idx == NEWS_ALL) {
     memset(&r, 0, sizeof r);
     strcpy(r.label, "ALL");
-    strcpy(q, "S%26P%20500");
   } else {
     r = rowCopy(idx);
-    snprintf(q, sizeof q, "%s%s", r.label, r.coin ? "-USD" : "");
   }
-  char url[160];
-  snprintf(url, sizeof url, "https://query1.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=0&newsCount=%u", q, NEWS_N);
   NetworkClientSecure client;
   client.setInsecure();
-  static uint8_t *buf = nullptr;  // 48KB in PSRAM: the JSON, then each picture in turn
+  static uint8_t *buf = nullptr;  // 48KB in PSRAM: each JSON, then each picture in turn
   const size_t CAP = 48 * 1024;
   if (!buf) buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_SPIRAM);
-  NewsItem got[NEWS_N];
+  static NewsItem got[NEWS_N];  // 6KB: not on the fetch task's stack
   uint8_t n = 0;
   bool ok = false;
-  int len = buf ? fetchBytes(client, url, buf, CAP - 1, r.label) : -1;
-  if (len > 0) {
-    JsonDocument filter, doc;
-    JsonObject f = filter["news"][0].to<JsonObject>();
-    f["title"] = true;
-    f["publisher"] = true;
-    f["providerPublishTime"] = true;
-    f["thumbnail"]["resolutions"][0]["url"] = true;
-    f["thumbnail"]["resolutions"][0]["tag"] = true;
-    DeserializationError je = deserializeJson(doc, (const char *)buf, (size_t)len, DeserializationOption::Filter(filter));
-    if (je) {
-      Serial.printf("news %s: json %s (%d bytes)\n", r.label, je.c_str(), len);
-    } else {
-      ok = true;
-      for (JsonObject it : doc["news"].as<JsonArray>()) {
-        if (n >= NEWS_N) break;
-        NewsItem &g = got[n];
-        memset(&g, 0, sizeof g);
-        snprintf(g.title, sizeof g.title, "%s", it["title"] | "");
-        if (!g.title[0]) continue;
-        decodeEntities(g.title);
-        snprintf(g.pub, sizeof g.pub, "%s", it["publisher"] | "");
-        ageOf((time_t)(it["providerPublishTime"] | 0L), g.age, sizeof g.age);
-        for (JsonObject res : it["thumbnail"]["resolutions"].as<JsonArray>())
-          if (strcmp(res["tag"] | "", "140x140") == 0) snprintf(g.thumb, sizeof g.thumb, "%s", res["url"] | "");
-        n++;
-      }
+  char q[80];
+  if (buf && idx == NEWS_ALL) {  // every source that is on, in order
+    for (uint8_t si = 0; si < nNewsSrc && n < NEWS_N && newsWant < 0; si++) {
+      if (!(sNewsOn & (1 << si))) continue;
+      urlEncode(newsSrc[si], q, sizeof q);
+      ok |= fetchNews(client, buf, CAP, q, newsSrc[si], got, n);
     }
+  } else if (buf) {
+    snprintf(q, sizeof q, "%s%s", r.label, r.coin ? "-USD" : "");
+    ok = fetchNews(client, buf, CAP, q, r.label, got, n);
   }
   xSemaphoreTake(mux, portMAX_DELAY);
   newsIdx = idx;
@@ -3197,11 +3315,11 @@ static void selfCheck() {
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
-enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient, Choice };
+enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient, Choice, NewsSrc, Story };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
-static bool newsPageOpen() { return view == View::News; }
+static bool newsPageOpen() { return view == View::News || view == View::Story; }
 
 // Expander ack, panel start, PSRAM left: the first three things to read when
 // the screen stays white or cycles colours (the panel's no-signal pattern)
@@ -3369,7 +3487,11 @@ static void openHeat();
 static void openNews(uint8_t idx);
 static void headerTap(int16_t x) {
   if (headerBack && x < L.tabX + 140) {  // the back mark and the title beside it: one page up
-    if (view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::Info) {
+    if (view == View::Story) {
+      openNews(detailIdx);
+      return;
+    }
+    if (view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::NewsSrc || view == View::Info) {
       view = View::Settings;
       pageOpenedAt = millis();
       drawSettings();
@@ -3417,6 +3539,12 @@ static void openNews(uint8_t idx) {
   newsPage = 0;
   if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000 && newsPicsDone)) newsWant = idx;  // cached, pictures and all?
   drawNews(true);
+}
+static void openStory(uint8_t i) {
+  storyIdx = i;
+  view = View::Story;
+  detailOpenedAt = millis();
+  drawStory();
 }
 static void openSearch() {
   view = View::Search;
@@ -3534,6 +3662,8 @@ void loop() {
       else if (view == View::Themes) drawThemes();
       else if (view == View::Orient) drawOrient();
       else if (view == View::Choice) drawChoice();
+      else if (view == View::NewsSrc) drawNewsSrc();
+      else if (view == View::Story) drawStory();
       else drawDetail(true);
     }
   }
@@ -3623,7 +3753,8 @@ void loop() {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) ||
-                ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
+                ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::NewsSrc) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
+                (view == View::Story && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -3657,7 +3788,9 @@ void loop() {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
-    } else if ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+    } else if (view == View::Story && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+      openNews(detailIdx);
+    } else if ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::NewsSrc) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       view = View::Settings;
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
@@ -3722,7 +3855,7 @@ void loop() {
   if (tap && state == State::Running && view != View::List) {
     if (view == View::Heat) {
       int8_t t = hitTile(tx, ty);
-      if (t >= 0) openDetail(order[tiles[t].idx]);
+      if (t >= 0) openDetail(tiles[t].idx);
     } else if (view == View::Search) {
       pageOpenedAt = millis();
       if (searchMode == 0) {
@@ -3755,6 +3888,9 @@ void loop() {
       } else if (r == 9) {
         view = View::Orient;
         drawOrient();
+      } else if (r == 20) {
+        view = View::NewsSrc;
+        drawNewsSrc();
       } else if (r >= 10) {
         buildChoice(r - 10);
         view = View::Choice;
@@ -3782,6 +3918,17 @@ void loop() {
         saveSettings();
         drawColumnRow((uint8_t)i);
       }
+    } else if (view == View::NewsSrc) {
+      int8_t i = hitSetting(ty);
+      if (i >= 0 && i < nNewsSrc) {
+        sNewsOn ^= 1 << i;
+        saveSettings();
+        drawNewsSrcRow((uint8_t)i);
+        newsAt = 0;  // the headlines page fetches afresh next time
+      }
+    } else if (view == View::News) {
+      int8_t k = hitCard(tx, ty);
+      if (k >= 0) openStory(newsPage * 4 + k);
     } else if (view == View::Choice) {
       int8_t i = hitSetting(ty);
       if (i >= 0 && i < chN && i != chSel) {
@@ -3827,7 +3974,7 @@ void loop() {
     Serial.printf("tap %d,%d -> view %u %s\n", tx, ty, (unsigned)view, view == View::Detail ? rows[detailIdx].label : "");
   }
 
-  if ((view == View::Detail || view == View::News) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
+  if ((view == View::Detail || view == View::News || view == View::Story) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
     backToList();
   // Only the pages the crawl is interrupted for come back on their own: a
   // stock, its headlines, the heatmap. Settings, search and the rest were
