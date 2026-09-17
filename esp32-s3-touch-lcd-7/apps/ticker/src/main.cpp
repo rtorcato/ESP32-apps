@@ -1261,9 +1261,9 @@ static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "TICKER";
   bigText((L.w - textWidth(3, name) * 2) / 2, L.wordY, 3, 2, C_FG, name);
-  const int16_t chipH = 48, gap = 14, step = 104;
+  const int16_t chipH = 48, gap = 14, step = 96;
   const int16_t off[3] = {0, -60, -110};  // each band starts part way off the left edge
-  int16_t mid = L.h / 2 - 10 - chipH / 2;
+  int16_t mid = L.h / 2 + 16 - chipH / 2;  // the top band clears the name by 26px
   uint8_t r = 0;  // the next row to chip, round the list
   for (uint8_t b = 0; b < 3 && nRows; b++) {
     bool lit = b == 1;
@@ -1709,6 +1709,14 @@ static void saveSettings() {
   applySettings();
 }
 
+// A disclosure mark the way a phone draws one: two 2px strokes, quiet
+// grey, its point at `right`. The rows that open a page wear it.
+static void chevron(int16_t right, int16_t cy, uint16_t c) {
+  for (int8_t d = 0; d < 2; d++) {
+    gfx->drawLine(right - 9 + d, cy - 8, right - 1 + d, cy, c);
+    gfx->drawLine(right - 1 + d, cy, right - 9 + d, cy + 8, c);
+  }
+}
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
@@ -1721,7 +1729,15 @@ static void drawSettingRow(uint8_t i) {
   int16_t y = L.sY0 + (i - setTop) * L.sH;
   gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
   textAt(20, y + 5, 2, i == 11 ? C_BAD : C_MUTED, labels[i]);
-  textAt(L.w - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
+  int16_t cy = y + 5 + GH(2) / 2;
+  if (strcmp(v, ">") == 0) {
+    chevron(L.w - 20, cy, C_MUTED);
+  } else if (i == 5) {  // the theme's name in grey, then the mark: the row opens a page
+    chevron(L.w - 20, cy, C_MUTED);
+    textAt(L.w - 40 - textWidth(2, v), y + 5, 2, C_MUTED, v);
+  } else {
+    textAt(L.w - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
+  }
   gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
 }
 // The next display currency: USD, then each CURRENCIES row, round again.
@@ -1768,7 +1784,8 @@ static void drawThemeTile(uint8_t i) {
   const Theme &t = THEMES[i];
   gfx->fillRoundRect(x, y, w, h, 12, t.bg);
   gfx->drawRoundRect(x, y, w, h, 12, i == sTheme ? C_FG : t.rule);
-  if (i == sTheme) gfx->drawRoundRect(x + 1, y + 1, w - 2, h - 2, 11, C_FG);
+  if (i == sTheme)  // the chosen one: a 3px white border
+    for (int8_t d = 1; d < 3; d++) gfx->drawRoundRect(x + d, y + d, w - 2 * d, h - 2 * d, 12 - d, C_FG);
   textAt(x + 14, y + 10, 2, C_FG, t.name);
   gfx->fillRect(x + 14, y + 10 + GH(2) + 4, 40, 3, t.accent);
   int16_t ry = y + h / 2 + 2;
