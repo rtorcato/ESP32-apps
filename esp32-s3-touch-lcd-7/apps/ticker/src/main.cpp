@@ -2112,9 +2112,9 @@ static void checkMark(int16_t right, int16_t cy, uint16_t c) {  // two strokes, 
 }
 // ── the sheet: a panel over the page, the way a phone asks ───────────────
 // The page under it is saved (768KB, in PSRAM) and put back when the sheet
-// closes, so it needs no repaint; meanwhile it sits at half light. Sheets
-// open over Settings only, where the scan-out reads the buffer 1:1. The
-// value pickers and the two confirms are sheets.
+// closes, so it needs no repaint; meanwhile it sits at half light. Any
+// page the scan-out reads 1:1 can carry one (the list cannot: openConfirm
+// paints a backdrop there). The value pickers and the two confirms are sheets.
 static uint16_t *sheetSave = nullptr;
 static int16_t shX, shY, shW, shH;
 static const int16_t SH_ROW = 44;
@@ -3790,6 +3790,27 @@ static void openStory(uint8_t i) {
   detailOpenedAt = millis();
   drawStory();
 }
+// The shutdown and clear-device sheet, from Settings or from a long press
+// on the header anywhere. Over the list the buffer is in ring order, so a
+// plain backdrop is painted first and Cancel repaints the list; over any
+// other page the sheet's saved bytes come back as they were.
+static View confirmFrom = View::Settings;
+static void openConfirm(uint8_t what) {
+  confirmWhat = what;
+  confirmFrom = view;
+  if (view == View::List) {
+    gfx->fillScreen(C_BG);
+    drawHeader(0);
+  }
+  view = View::Confirm;
+  drawConfirm();
+}
+static void closeConfirm() {
+  sheetClose();
+  view = confirmFrom;
+  if (view == View::List) backToList();
+  else pageOpenedAt = millis();
+}
 static void openSearch() {
   view = View::Search;
   searchMode = 0;
@@ -3859,6 +3880,21 @@ void loop() {
     return;
   }
   bool tap = g == Gesture::Tap || (g == Gesture::TapUp && tapUpQuick);
+  // A finger held on the header for two seconds, on any page, opens the
+  // shutdown sheet: the BOOT button is a display data line while the
+  // screen is on, so it cannot be the power button. The recogniser's long
+  // press comes at 700ms; the rest of the hold is timed here.
+  static uint32_t headerHoldAt = 0;
+  if (g == Gesture::LongPress && ty < L.yRow0 && state == State::Running && view != View::Confirm && view != View::Choice &&
+      view != View::Splash)
+    headerHoldAt = millis();
+  if (!touchHeld) headerHoldAt = 0;
+  if (headerHoldAt && millis() - headerHoldAt > 1300) {
+    headerHoldAt = 0;
+    openConfirm(1);
+    g = Gesture::None;
+    tap = false;
+  }
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
   bool open = haveTime && marketOpen(t);
@@ -4034,7 +4070,9 @@ void loop() {
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
-    } else if ((view == View::Confirm || view == View::Choice) && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) {
+    } else if (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) {
+      closeConfirm();
+    } else if (view == View::Choice && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) {
       sheetClose();
       view = View::Settings;
       pageOpenedAt = millis();
@@ -4125,9 +4163,7 @@ void loop() {
         view = View::Info;
         drawInfo(true);
       } else if (r == 3 || r == 5) {
-        confirmWhat = r == 3 ? 1 : 2;
-        view = View::Confirm;
-        drawConfirm();
+        openConfirm(r == 3 ? 1 : 2);
       } else if (r == 4) {
         WiFi.disconnect(true);
         startSetup();
@@ -4160,8 +4196,7 @@ void loop() {
           goToSleep(0);  // no timer: a touch is the only way back
         }
       } else {  // Cancel, or anywhere off the sheet
-        sheetClose();
-        view = View::Settings;
+        closeConfirm();
       }
     } else if (view == View::Columns) {
       int8_t i = hitSetting(ty);
