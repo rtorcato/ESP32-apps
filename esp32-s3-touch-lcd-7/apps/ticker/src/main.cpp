@@ -1905,7 +1905,7 @@ static void drawInfo(bool full) {
   static uint32_t last = 0;
   if (full) {
     drawPanel("INFO", C_MUTED, nullptr, 0, true, 4, "< INFO", "tap for the splash screen");
-    drawHint("< list     v settings");
+    drawHint("< settings");
     last = 0;
   }
   if (millis() - last < 1000) return;
@@ -3366,7 +3366,7 @@ void loop() {
   if (swipe && state == State::Running) {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
-                (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && g == Gesture::SwipeDown) ||
+                (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) ||
                 ((view == View::Columns || view == View::Themes) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
@@ -3408,13 +3408,12 @@ void loop() {
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
       backToList();
-    } else if (view == View::Confirm && g == Gesture::SwipeDown) {
+    } else if (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) {
       view = View::Settings;
       pageOpenedAt = millis();
       drawSettings();
-    } else if (view == View::Info) {
-      if (g == Gesture::SwipeLeft) backToList();
-      else if (g == Gesture::SwipeDown) {
+    } else if (view == View::Info) {  // a settings page: left or down is settings, like the others
+      if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown) {
         view = View::Settings;
         pageOpenedAt = millis();
         drawSettings();
