@@ -4168,9 +4168,9 @@ void loop() {
         drawNewsSrcRow((uint8_t)i);
         newsAt = 0;  // the headlines page fetches afresh next time
       }
-    } else if (view == View::News) {
+    } else if (view == View::News) {  // on the lift, like a list row: a finger that is starting a drag is not a tap
       int8_t k = hitCard(tx, ty);
-      if (k >= 0) openStory(newsTop * (L.w >= 800 ? 2 : 1) + k);
+      if (k >= 0 && g == Gesture::TapUp) openStory(newsTop * (L.w >= 800 ? 2 : 1) + k);
     } else if (view == View::Choice) {
       int8_t i = hitChoice(tx, ty);
       if (i >= 0) {  // a value: taken, and the sheet goes
