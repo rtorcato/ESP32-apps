@@ -939,7 +939,8 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
   uint16_t fg = !r.valid ? C_DIM : r.pct >= 0 ? C_GOOD : C_BAD;
   gfx->fillRect(0, y, L.w, ROW_H, C_BG);  // the columns move; nothing may outlive a change
   if (rule) gfx->drawFastHLine(0, y, L.w, C_RULE);
-  if (!blitLogo(L.xSym, y + L.yBadge, LOGO_BADGE, r.label)) {  // no file: a tile with the initial
+  if (r.kind == K_INDEX) {  // an index has no mark; its badge column stays empty
+  } else if (!blitLogo(L.xSym, y + L.yBadge, LOGO_BADGE, r.label)) {  // no file: a tile with the initial
     gfx->fillRoundRect(L.xSym, y + L.yBadge, LOGO_BADGE, LOGO_BADGE, 6, C_RULE);
     char c[2] = {r.label[0], 0};
     textAt(L.xSym + (LOGO_BADGE - textWidth(2, c)) / 2, y + L.yBadge + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
@@ -1314,7 +1315,8 @@ static void drawDetail(bool full) {
     snprintf(head, sizeof head, "< %s", r.label);
     drawHeader(0, head, r.coin ? "crypto" : r.kind == K_FX ? "currency" : r.kind == K_INDEX ? "index" : r.name);
     cDetail[0] = '\0';
-    if (!blitLogo(L.dXLogo, L.dYLogo, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
+    if (r.kind == K_INDEX) {  // no mark for an index, on the page as on the list
+    } else if (!blitLogo(L.dXLogo, L.dYLogo, LOGO_BIG, r.label)) {  // no file: a tile with the symbol
       gfx->fillRoundRect(L.dXLogo, L.dYLogo, LOGO_BIG, LOGO_BIG, 20, C_RULE);
       textAt(L.dXLogo + (LOGO_BIG - textWidth(3, r.label)) / 2, L.dYLogo + (LOGO_BIG - FACES[2].cap) / 2, 3, C_MUTED, r.label);
     }

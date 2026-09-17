@@ -8,8 +8,9 @@ a 512KB single-core part, and it means a logo that fails to download is a
 missing file the firmware already handles rather than a runtime failure.
 
 Sources, all tested, all keyless:
-  stocks  https://financialmodelingprep.com/image-stock/<SYMBOL>.png
-  coins   https://assets.coincap.io/assets/icons/<label lowercased>@2x.png
+  stocks      https://financialmodelingprep.com/image-stock/<SYMBOL>.png
+  coins       https://assets.coincap.io/assets/icons/<label lowercased>@2x.png
+  currencies  https://flagcdn.com/w320/<country>.png  (the currency's country)
 
 logo.clearbit.com is dead (DNS no longer resolves) and img.logo.dev wants a
 token, so neither is used.
@@ -42,6 +43,14 @@ OUTDIR = HERE / "data" / "logo"
 
 STOCK_URL = "https://financialmodelingprep.com/image-stock/{}.png"
 COIN_URL = "https://assets.coincap.io/assets/icons/{}@2x.png"
+FLAG_URL = "https://flagcdn.com/w320/{}.png"
+# The flag a currency row wears. A code not in here is skipped, and the
+# firmware draws its initial tile as it does for any missing logo.
+CURRENCY_COUNTRY = {
+    "USD": "us", "CAD": "ca", "EUR": "eu", "GBP": "gb", "JPY": "jp", "CHF": "ch", "AUD": "au",
+    "NZD": "nz", "CNY": "cn", "HKD": "hk", "SGD": "sg", "INR": "in", "KRW": "kr", "MXN": "mx",
+    "BRL": "br", "SEK": "se", "NOK": "no", "DKK": "dk", "ZAR": "za", "TRY": "tr", "PLN": "pl",
+}
 
 # A glyph darker than this, sitting on a light background, is inverted: Apple's
 # mark is solid black, and flattening black-on-white onto a black screen gives a
@@ -306,20 +315,27 @@ def main() -> int:
     outdir = args.out
 
     wl = json.loads(CONFIG.read_text())
-    targets = [(s, STOCK_URL.format(s)) for s in wl.get("stocks", [])]
+    targets = [(s, STOCK_URL.format(s), False) for s in wl.get("stocks", [])]
     for c in wl.get("coins", []):
         label = c.get("label") or c["id"]
         # coincap keys on the ticker, not the CoinGecko id, so the label is what
         # we have to go on. A custom label that isn't a ticker simply won't
         # resolve, and the firmware falls back to drawing the text.
-        targets.append((label, COIN_URL.format(label.lower())))
+        targets.append((label, COIN_URL.format(label.lower()), False))
+    for code in wl.get("currencies", []):
+        # A flag is a picture, not a mark: no background knock-out (Japan's is
+        # all white), no inversion, the whole rectangle kept.
+        if code in CURRENCY_COUNTRY:
+            targets.append((code, FLAG_URL.format(CURRENCY_COUNTRY[code]), True))
+        else:
+            print(f"{code}: no flag known for this currency, skipped")
 
     outdir.mkdir(parents=True, exist_ok=True)
     tmp = pathlib.Path("/tmp/ticker-logos")
     tmp.mkdir(exist_ok=True)
 
     ok = skipped = faint = 0
-    for label, url in targets:
+    for label, url, photo in targets:
         print(f"{label}:")
         png = fetch(url)
         if not png:
@@ -334,7 +350,7 @@ def main() -> int:
 
         # Classify on the full decode, where the border is the real border;
         # then crop, and pack with the same decision.
-        mode, invert = classify(px, w, h)
+        mode, invert = ("opaque", False) if photo else classify(px, w, h)
         px, mark_pct = crop_fit(px, w, h, mode, invert, args.size)
         w = h = args.size
         dest = outdir / f"{label}.565"
