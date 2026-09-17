@@ -546,16 +546,20 @@ static bool loadConfig() {
 // moment a page opens, selected one first, so a chip tap is instant once
 // they have landed -- a TLS round trip per tap felt slow.
 struct RangeDef { const char *label, *range, *interval; };
-static const RangeDef RANGES[] = {{"1D", "1d", nullptr}, {"5D", "5d", "30m"}, {"1M", "1mo", "1d"},
+static const RangeDef RANGES[] = {{"1D", "1d", "5m"}, {"5D", "5d", "30m"}, {"1M", "1mo", "1d"},
                                   {"6M", "6mo", "1d"}, {"1Y", "1y", "1wk"}};
-static const uint8_t N_RANGES = 5, SERIES_N = 130;  // 6mo of daily closes is ~126
+static const uint8_t N_RANGES = 5, SERIES_N = 130;  // 6mo of daily closes is ~126; a day at 5m is merged to fit
+// A range's bars: close for the line, open/high/low/volume for the candles,
+// the time for the labels along the bottom. 3KB each, five of them.
 struct Series {
   uint8_t idx, range, n;
   bool valid;
   float prev;
-  float close[SERIES_N];
+  float close[SERIES_N], open[SERIES_N], high[SERIES_N], low[SERIES_N], vol[SERIES_N];
+  int32_t t[SERIES_N];
 };
-static Series series[N_RANGES];  // [0] unused; written by the fetch task, read by the UI, under mux
+static uint8_t sCandle = 0;  // the stock page's chart: 0 a line, 1 candles with volume (NVS "cand"); a tap on the chart flips it
+static Series *series = nullptr;  // N_RANGES of them, 15KB, in PSRAM (setup); written by the fetch task, read by the UI, under mux
 static volatile uint8_t seriesWant = 0;  // bitmask of ranges still to fetch for seriesIdx
 static volatile uint8_t seriesIdx = 0;
 static uint8_t rangeSel = 0;
@@ -1481,6 +1485,81 @@ static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint
   field(L.chX + 6, L.chY + L.chH - GH(1) - 4, 9, 1, C_DIM, b);
 }
 
+// Candles with volume under them, the way a trading screen draws a day:
+// bars merged in groups so they fit four pixels apart, the previous close
+// dashed, the last close tagged at the right edge, high and low in the
+// corners, three times along the bottom.
+static void drawCandles(const Row &r, const Series &s) {
+  const uint8_t maxBars = (L.chW - 8) / 4;
+  uint8_t k = (s.n + maxBars - 1) / maxBars;
+  if (!k) k = 1;
+  uint8_t m = (s.n + k - 1) / k;
+  static float O[SERIES_N], H[SERIES_N], Lo[SERIES_N], C[SERIES_N], V[SERIES_N];
+  static int32_t T[SERIES_N];
+  float lo = s.prev > 0 ? s.prev : s.low[0], hi = lo, vmax = 0;
+  for (uint8_t i = 0; i < m; i++) {
+    uint8_t a = i * k, b = min<uint16_t>(a + k, s.n);
+    O[i] = s.open[a];
+    C[i] = s.close[b - 1];
+    H[i] = s.high[a];
+    Lo[i] = s.low[a];
+    V[i] = 0;
+    T[i] = s.t[a];
+    for (uint8_t j = a; j < b; j++) {
+      H[i] = max(H[i], s.high[j]);
+      Lo[i] = min(Lo[i], s.low[j]);
+      V[i] += s.vol[j];
+    }
+    lo = min(lo, Lo[i]);
+    hi = max(hi, H[i]);
+    vmax = max(vmax, V[i]);
+  }
+  const int16_t priceH = L.chH - 56, volH = 36, volY = L.chY + priceH + 8;  // then 12px for the times
+  gfx->drawRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_RULE);
+  int16_t cw = (L.chW - 8) / m, x0 = L.chX + 4 + ((L.chW - 8) - cw * m) / 2;
+  if (s.prev > 0) {
+    int16_t yp = sparkY(s.prev, lo, hi, L.chY, priceH);
+    for (int16_t x = L.chX; x < L.chX + L.chW; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
+  }
+  for (uint8_t i = 0; i < m; i++) {
+    int16_t x = x0 + i * cw, cx = x + cw / 2;
+    uint16_t c = C[i] >= O[i] ? C_GOOD : C_BAD;
+    int16_t yh = sparkY(H[i], lo, hi, L.chY, priceH), yl = sparkY(Lo[i], lo, hi, L.chY, priceH);
+    int16_t yo = sparkY(O[i], lo, hi, L.chY, priceH), yc = sparkY(C[i], lo, hi, L.chY, priceH);
+    gfx->drawFastVLine(cx, yh, yl - yh + 1, c);
+    int16_t top = min(yo, yc), bh = abs(yc - yo) + 1;
+    if (cw >= 4) gfx->fillRect(x + 1, top, cw - 2, bh, c);
+    else gfx->drawFastVLine(cx, top, bh, c);
+    if (vmax > 0) {
+      int16_t vh = (int16_t)(V[i] / vmax * volH);
+      if (vh < 1 && V[i] > 0) vh = 1;
+      gfx->fillRect(x + 1, volY + volH - vh, max<int16_t>(1, cw - 2), vh, mix(C_BG, c, 55));
+    }
+  }
+  char b[12];
+  priceStr(r, C[m - 1], b, sizeof b);  // the last close, tagged at the right edge
+  int16_t yc = sparkY(C[m - 1], lo, hi, L.chY, priceH), tw = textWidth(1, b) + 10;
+  uint16_t lc = C[m - 1] >= (s.prev > 0 ? s.prev : O[0]) ? C_GOOD : C_BAD;
+  gfx->fillRoundRect(L.chX + L.chW - tw - 4, yc - 9, tw, 18, 4, lc);
+  textAt(L.chX + L.chW - tw + 1, yc - 7, 1, C_BG, b);
+  priceStr(r, hi, b, sizeof b);
+  field(L.chX + 6, L.chY + 4, 9, 1, C_DIM, b);
+  priceStr(r, lo, b, sizeof b);
+  field(L.chX + 6, L.chY + priceH - GH(1) - 4, 9, 1, C_DIM, b);
+  const char *fmt = rangeSel == 0 ? "%H:%M" : rangeSel == 1 ? "%a %H:%M" : "%m/%d";
+  for (uint8_t j = 0; j < 3; j++) {
+    uint8_t i = j == 0 ? 0 : j == 1 ? m / 2 : m - 1;
+    if (!T[i]) continue;
+    time_t tt = T[i];
+    struct tm tmv;
+    localtime_r(&tt, &tmv);
+    char lb[16];
+    strftime(lb, sizeof lb, fmt, &tmv);
+    int16_t w = textWidth(1, lb), x = x0 + i * cw + cw / 2 - (j == 0 ? 0 : j == 1 ? w / 2 : w);
+    textAt(x, L.chY + L.chH - GH(1) + 2, 1, C_DIM, lb);
+  }
+}
+
 static uint8_t wrapText(const char *s, int16_t w, char out[][64], uint8_t lines);
 static void drawDetail(bool full) {
   Row r = rowCopy(detailIdx);
@@ -1514,10 +1593,13 @@ static void drawDetail(bool full) {
   xSemaphoreTake(mux, portMAX_DELAY);
   sr = series[rangeSel];
   xSemaphoreGive(mux);
-  bool mine = rangeSel && sr.idx == detailIdx && sr.range == rangeSel;
-  const float *cl = rangeSel ? sr.close : r.close;
-  uint8_t n = rangeSel ? (mine ? sr.n : 0) : r.n;
-  float prev = rangeSel ? sr.prev : r.prev;
+  // The line for 1D is the row's own sparkline data; every other range,
+  // and candles at any range, come from the fetched series.
+  bool useSeries = rangeSel || sCandle;
+  bool mine = useSeries && sr.idx == detailIdx && sr.range == rangeSel;
+  const float *cl = useSeries ? sr.close : r.close;
+  uint8_t n = useSeries ? (mine ? sr.n : 0) : r.n;
+  float prev = useSeries ? sr.prev : r.prev;
 
   // Outside the regular session the page shows the newest extended-hours
   // bar as the price, with its move measured from the regular close, and
@@ -1584,20 +1666,22 @@ static void drawDetail(bool full) {
   // Chart: the sparkline's data with room to be a chart. The previous close
   // is a dashed reference line -- the percent is measured from it, so
   // without it the shape means nothing.
-  snprintf(key, sizeof key, "%u|%u|%d|%d|%.2f|%d", rangeSel, n, mine && !sr.valid, r.valid, n ? cl[n - 1] : 0.0f, fg == C_GOOD);
+  snprintf(key, sizeof key, "%u|%u|%d|%d|%.2f|%d|%u", rangeSel, n, mine && !sr.valid, r.valid, n ? cl[n - 1] : 0.0f, fg == C_GOOD, sCandle);
   if (strcmp(key, kChart) != 0) {
     strcpy(kChart, key);
     gfx->fillRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_BG);  // chips below are left alone
-    if (rangeSel && mine && !sr.valid) {
+    if (useSeries && mine && !sr.valid) {
       char m[24];
       snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
       field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, m);
-    } else if (rangeSel && n < 2) {
+    } else if (useSeries && n < 2) {
       char m[24];
       snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
       field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, m);
     } else if (!r.valid || n < 2) {
       field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, r.valid ? "no series" : "fetching...");
+    } else if (sCandle) {
+      drawCandles(r, sr);
     } else {
       drawChart(r, cl, n, prev, fg);
     }
@@ -1806,6 +1890,7 @@ static void loadSettings() {
     sTheme = prefs.getUChar("bg", sTheme) % N_THEMES;
     applyTheme();
     sNewsOn = prefs.getUChar("nsrc", 0xFF);
+    sCandle = prefs.getUChar("cand", 0) & 1;
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1835,6 +1920,7 @@ static void saveSettings() {
   prefs.putUChar("rot", sRot);
   prefs.putUChar("bg", sTheme);
   prefs.putUChar("nsrc", sNewsOn);
+  prefs.putUChar("cand", sCandle);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -2545,7 +2631,7 @@ static void drawNews(bool full) {
 // Yahoo's v8 chart for one symbol at one range/interval, filtered down to the
 // meta fields used and the close array. False on any HTTP or parse failure.
 static bool fetchChart(NetworkClientSecure &client, const char *id, const char *range, const char *interval,
-                       JsonDocument &doc) {
+                       JsonDocument &doc, bool bars = false) {
   char url[180];
   snprintf(url, sizeof url, "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=%s", id, range,
            interval);
@@ -2578,6 +2664,10 @@ static bool fetchChart(NetworkClientSecure &client, const char *id, const char *
                         "regularMarketVolume"})
     fm[k] = true;
   filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
+  if (bars) {  // the stock page's series: the whole bar, and its time
+    for (const char *k : {"open", "high", "low", "volume"}) filter["chart"]["result"][0]["indicators"]["quote"][0][k] = true;
+    filter["chart"]["result"][0]["timestamp"] = true;
+  }
   String body;
   body.reserve(http.getSize() > 0 ? http.getSize() + 1 : 24 * 1024);
   {
@@ -2625,6 +2715,39 @@ static uint8_t pullCloses(JsonVariant res, float *out, uint8_t cap) {
       n--;
     }
     out[n++] = v.as<float>();
+  }
+  return n;
+}
+
+// The whole bar, arrays in lockstep, nulls skipped where close is null;
+// the LAST cap bars if there are more.
+static uint8_t pullBars(JsonVariant res, Series &s) {
+  JsonObject q = res["indicators"]["quote"][0];
+  JsonArray c = q["close"], o = q["open"], h = q["high"], l = q["low"], v = q["volume"], ts = res["timestamp"];
+  auto ci = c.begin(), oi = o.begin(), hi = h.begin(), li = l.begin(), vi = v.begin(), ti = ts.begin();
+  uint8_t n = 0;
+  for (; ci != c.end(); ++ci) {
+    float cl = (*ci) | NAN, op = oi != o.end() ? (*oi) | NAN : NAN, hg = hi != h.end() ? (*hi) | NAN : NAN,
+          lw = li != l.end() ? (*li) | NAN : NAN, vo = vi != v.end() ? (*vi) | 0.0f : 0.0f;
+    int32_t tm = ti != ts.end() ? (*ti) | 0L : 0L;
+    if (oi != o.end()) ++oi;
+    if (hi != h.end()) ++hi;
+    if (li != l.end()) ++li;
+    if (vi != v.end()) ++vi;
+    if (ti != ts.end()) ++ti;
+    if (isnan(cl)) continue;
+    if (n == SERIES_N) {
+      for (float *a : {s.close, s.open, s.high, s.low, s.vol}) memmove(a, a + 1, (SERIES_N - 1) * sizeof(float));
+      memmove(s.t, s.t + 1, (SERIES_N - 1) * sizeof(int32_t));
+      n--;
+    }
+    s.close[n] = cl;
+    s.open[n] = isnan(op) ? cl : op;
+    s.high[n] = isnan(hg) ? cl : hg;
+    s.low[n] = isnan(lw) ? cl : lw;
+    s.vol[n] = vo;
+    s.t[n] = tm;
+    n++;
   }
   return n;
 }
@@ -2682,10 +2805,10 @@ static void doSeries(uint8_t idx, uint8_t range) {
     client.setInsecure();
     JsonDocument doc;
     char id[MAX_LABEL + 5];
-    if (fetchChart(client, yahooId(r, id), RANGES[range].range, RANGES[range].interval, doc)) {
+    if (fetchChart(client, yahooId(r, id), RANGES[range].range, RANGES[range].interval, doc, true)) {
       JsonVariant res = doc["chart"]["result"][0];
       s.prev = res["meta"]["chartPreviousClose"] | 0.0f;
-      s.n = pullCloses(res, s.close, SERIES_N);
+      s.n = pullBars(res, s);
       s.valid = s.n >= 2;
     }
   }
@@ -3456,6 +3579,7 @@ void setup() {
   }
 
   mux = xSemaphoreCreateMutex();
+  series = (Series *)heap_caps_calloc(N_RANGES, sizeof(Series), MALLOC_CAP_SPIRAM);
   if (loadConfig()) applyOverlay();
   if (cfgErr) {
     Serial.printf("config error: %s\n", cfgErr);
@@ -3570,10 +3694,10 @@ static void openDetail(uint8_t idx) {
   if (refreshOnOpen && !(getLocalTime(&t, 0) && sessionNow(t) == Session::Closed)) priority = idx;  // nothing new when closed
   seriesIdx = idx;
   uint8_t want = 0;
-  for (uint8_t rg = 1; rg < N_RANGES; rg++)
-    if (!rows[idx].coin && !seriesHeld(idx, rg)) want |= 1 << rg;
-  seriesWant = want;  // all four, selected first; the range sticks across PREV/NEXT
-  if (!rows[idx].coin && !(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000)) newsWant = idx;  // the page shows three
+  for (uint8_t rg = 0; rg < N_RANGES; rg++)  // coins too: their series come from Yahoo as BTC-USD
+    if (!seriesHeld(idx, rg)) want |= 1 << rg;
+  seriesWant = want;  // all five, selected first; the range sticks across PREV/NEXT
+  if (!(newsIdx == idx && millis() - newsAt < 10UL * 60 * 1000)) newsWant = idx;  // the page shows three
   drawDetail(true);
 }
 
@@ -4085,11 +4209,16 @@ void loop() {
       drawInfo(true);
     } else {
       int8_t rg = hitRange(tx, ty);
-      if (rg >= 0 && !rows[detailIdx].coin && rg != rangeSel) {
+      if (rg >= 0 && rg != rangeSel) {
         rangeSel = (uint8_t)rg;
-        if (rg && !seriesHeld(detailIdx, rg)) seriesWant = seriesWant | (1 << rg);  // failed earlier: retry
+        if (!seriesHeld(detailIdx, rg)) seriesWant = seriesWant | (1 << rg);  // failed earlier: retry
         drawRangeChips();
         kChartReset = true;  // the chart must redraw for the new range
+      } else if (view == View::Detail && rg < 0 && tx >= L.chX && tx < L.chX + L.chW && ty >= L.chY && ty < L.chY + L.chH) {
+        sCandle = !sCandle;  // the chart itself: line or candles
+        saveSettings();
+        if (sCandle && !seriesHeld(detailIdx, rangeSel)) seriesWant = seriesWant | (1 << rangeSel);
+        kChartReset = true;
       }
     }
     Serial.printf("tap %d,%d -> view %u %s\n", tx, ty, (unsigned)view, view == View::Detail ? rows[detailIdx].label : "");
