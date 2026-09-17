@@ -1273,37 +1273,40 @@ static void drawFoot(const struct tm *t, bool haveTime) {
 // through them, the wordmark, and one status line that follows the Wi-Fi
 // join. Primitives only, so there is no asset to generate or push.
 static void splashStatus(const char *s) { fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, s); }
-// The splash: TICKER in white above three bands of symbol chips -- badge
-// and label -- the middle band bright and the outer two at half light,
-// running off both edges like a tape. Indices have no badge and sit it
-// out. Drawn once; the status line under it is what changes.
-static void blitLogoDim(int16_t x, int16_t y, const char *label) {  // a badge at half brightness
-  uint16_t *px = logoLoad(LOGO_BADGE, label);
-  if (!px) return;
-  uint16_t d[LOGO_BADGE * LOGO_BADGE];
-  for (uint16_t i = 0; i < LOGO_BADGE * LOGO_BADGE; i++) d[i] = (px[i] >> 1) & 0x7BEF;  // each channel halved
-  gfx->draw16bitRGBBitmap(x, y, d, LOGO_BADGE, LOGO_BADGE);
-}
+// The splash: TICKER in white above three bands of symbol chips, badge and
+// label. Each band takes as many chips as fit inside the margins and is
+// centred, so no chip is cut at an edge, and the bands are all alike -- a
+// brighter middle band read as a stray highlight. Indices have no badge
+// and sit it out. Drawn once; the status line under it is what changes.
 static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "TICKER";
   bigText((L.w - textWidth(3, name) * 2) / 2, L.wordY, 3, 2, C_FG, name);
   const int16_t chipH = 48, gap = 14, step = 96;
-  const int16_t off[3] = {0, -60, -110};  // each band starts part way off the left edge
   int16_t mid = L.h / 2 + 16 - chipH / 2;  // the top band clears the name by 26px
   uint8_t r = 0;  // the next row to chip, round the list
   for (uint8_t b = 0; b < 3 && nRows; b++) {
-    bool lit = b == 1;
-    int16_t y = mid + (b - 1) * step, x = off[b];
-    for (uint16_t guard = 0; x < L.w && guard < nRows * 3u; guard++) {
+    uint8_t idx[16], n = 0;
+    int16_t total = 0;
+    for (uint16_t guard = 0; n < 16 && guard < nRows; guard++) {
       const Row &row = rows[r];
+      if (row.kind == K_INDEX) {
+        r = (r + 1) % nRows;
+        continue;
+      }
+      int16_t add = 56 + textWidth(2, row.label) + (n ? gap : 0);
+      if (total + add > L.w - 40) break;
+      idx[n++] = r;
+      total += add;
       r = (r + 1) % nRows;
-      if (row.kind == K_INDEX) continue;
+    }
+    int16_t y = mid + (b - 1) * step, x = (L.w - total) / 2;
+    for (uint8_t i = 0; i < n; i++) {
+      const Row &row = rows[idx[i]];
       int16_t w = 56 + textWidth(2, row.label);
-      gfx->fillRoundRect(x, y, w, chipH, 10, lit ? C_RULE : (C_RULE >> 1) & 0x7BEF);
-      if (lit) blitLogo(x + 8, y + 8, LOGO_BADGE, row.label);
-      else blitLogoDim(x + 8, y + 8, row.label);
-      textAt(x + 48, y + (chipH - GH(2)) / 2, 2, lit ? C_FG : C_DIM, row.label);
+      gfx->fillRoundRect(x, y, w, chipH, 10, C_RULE);
+      blitLogo(x + 8, y + 8, LOGO_BADGE, row.label);
+      textAt(x + 48, y + (chipH - GH(2)) / 2, 2, C_FG, row.label);
       x += w + gap;
     }
   }
