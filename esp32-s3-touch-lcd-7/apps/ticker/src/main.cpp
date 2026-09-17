@@ -59,11 +59,13 @@ static const Theme THEMES[] = {
 static const uint8_t N_THEMES = sizeof THEMES / sizeof THEMES[0];
 static uint8_t sTheme = 0;
 static uint16_t C_BG = THEMES[0].bg, C_RULE = THEMES[0].rule, C_GOLD = THEMES[0].accent, C_DIM = 0x630C, C_MUTED = 0xA534;
-// The colour pct of the way from c towards white.
-static uint16_t towardsWhite(uint16_t c, uint8_t pct) {
-  uint8_t r = (c >> 11) * 255 / 31, g = ((c >> 5) & 63) * 255 / 63, b = (c & 31) * 255 / 31;
-  return rgb(r + (255 - r) * pct / 100, g + (255 - g) * pct / 100, b + (255 - b) * pct / 100);
+// The colour pct of the way from a towards b.
+static uint16_t mix(uint16_t a, uint16_t b, uint8_t pct) {
+  int r0 = (a >> 11) * 255 / 31, g0 = ((a >> 5) & 63) * 255 / 63, b0 = (a & 31) * 255 / 31;
+  int r1 = (b >> 11) * 255 / 31, g1 = ((b >> 5) & 63) * 255 / 63, b1 = (b & 31) * 255 / 31;
+  return rgb(r0 + (r1 - r0) * pct / 100, g0 + (g1 - g0) * pct / 100, b0 + (b1 - b0) * pct / 100);
 }
+static uint16_t towardsWhite(uint16_t c, uint8_t pct) { return mix(c, 0xFFFF, pct); }
 static void applyTheme() {
   C_BG = THEMES[sTheme].bg;
   C_RULE = THEMES[sTheme].rule;
@@ -100,8 +102,9 @@ struct Face {
 static const Face FACES[] = {{u8g2_font_helvR14_tr, 14, 4},
                              {u8g2_font_helvB18_tr, 19, 5},
                              {u8g2_font_helvB24_tr, 25, 7},
-                             {u8g2_font_logisoso50_tn, 50, 13}};  // digits only: the big price
-static const uint8_t GWS[] = {8, 11, 14, 28};  // width reserved per character, per size
+                             {u8g2_font_logisoso50_tn, 50, 13},  // digits only: the big price
+                             {u8g2_font_logisoso58_tr, 58, 15}};  // letters too: the splash title
+static const uint8_t GWS[] = {8, 11, 14, 28, 34};  // width reserved per character, per size
 #define GW(s) (GWS[(s) - 1])
 #define GH(s) (FACES[(s) - 1].cap + FACES[(s) - 1].desc)
 
@@ -1273,43 +1276,52 @@ static void drawFoot(const struct tm *t, bool haveTime) {
 // through them, the wordmark, and one status line that follows the Wi-Fi
 // join. Primitives only, so there is no asset to generate or push.
 static void splashStatus(const char *s) { fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, s); }
-// The splash: TICKER in white above three bands of symbol chips, badge and
-// label. Each band takes as many chips as fit inside the margins and is
-// centred, so no chip is cut at an edge, and the bands are all alike -- a
-// brighter middle band read as a stray highlight. Indices have no badge
-// and sit it out. Drawn once; the status line under it is what changes.
+// The splash: TICKER TAPE in Logisoso, the four things it shows under it,
+// and a chart across the lower half -- a walk with a lift, the same every
+// boot, one filled column per pixel and a 3px line in the theme's green.
+// No symbols, no marks. Drawn once; the status line under it changes.
 static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
-  const char *name = "TICKER";
-  bigText((L.w - textWidth(3, name) * 2) / 2, L.wordY, 3, 2, C_FG, name);
-  const int16_t chipH = 48, gap = 14, step = 96;
-  int16_t mid = L.h / 2 + 16 - chipH / 2;  // the top band clears the name by 26px
-  uint8_t r = 0;  // the next row to chip, round the list
-  for (uint8_t b = 0; b < 3 && nRows; b++) {
-    uint8_t idx[16], n = 0;
-    int16_t total = 0;
-    for (uint16_t guard = 0; n < 16 && guard < nRows; guard++) {
-      const Row &row = rows[r];
-      if (row.kind == K_INDEX) {
-        r = (r + 1) % nRows;
-        continue;
-      }
-      int16_t add = 56 + textWidth(2, row.label) + (n ? gap : 0);
-      if (total + add > L.w - 40) break;
-      idx[n++] = r;
-      total += add;
-      r = (r + 1) % nRows;
-    }
-    int16_t y = mid + (b - 1) * step, x = (L.w - total) / 2;
-    for (uint8_t i = 0; i < n; i++) {
-      const Row &row = rows[idx[i]];
-      int16_t w = 56 + textWidth(2, row.label);
-      gfx->fillRoundRect(x, y, w, chipH, 10, C_RULE);
-      blitLogo(x + 8, y + 8, LOGO_BADGE, row.label);
-      textAt(x + 48, y + (chipH - GH(2)) / 2, 2, C_FG, row.label);
-      x += w + gap;
-    }
+  const char *name = "TICKER TAPE";
+  int16_t ty = L.wordY - 16;
+  textAt((L.w - textWidth(5, name)) / 2, ty, 5, C_FG, name);
+  // the four words, a dot between each
+  const char *words[4] = {"STOCKS", "NEWS", "FX", "CRYPTO"};
+  int16_t ww[4], total = 0;
+  for (uint8_t i = 0; i < 4; i++) total += ww[i] = textWidth(2, words[i]);
+  const int16_t sep = 44;
+  int16_t x = (L.w - total - sep * 3) / 2, wy = ty + FACES[4].cap + 22;
+  for (uint8_t i = 0; i < 4; i++) {
+    textAt(x, wy, 2, C_MUTED, words[i]);
+    x += ww[i];
+    if (i < 3) gfx->fillCircle(x + sep / 2, wy + GH(2) / 2 - 2, 3, C_GOLD);
+    x += sep;
   }
+  // the chart: anchors every 20px on a random walk, straight lines between
+  const int16_t top = wy + 70, base = L.creditY - 24, end = L.w - 12;
+  const uint8_t N = end / 20 + 2;
+  float v[64];
+  uint32_t seed = 0x9E3779B9u;
+  float a = 0.35f;
+  for (uint8_t i = 0; i < N && i < 64; i++) {
+    seed = seed * 1664525u + 1013904223u;
+    a += (((seed >> 8) & 0xFFFF) / 65535.0f - 0.5f) * 0.22f + 0.012f;  // a lift over the width
+    a = constrain(a, 0.06f, 0.96f);
+    v[i] = a;
+  }
+  uint16_t fill = mix(C_BG, C_GOOD, 16);
+  int16_t py = 0;
+  for (int16_t px = 0; px <= end; px++) {
+    uint8_t i = px / 20;
+    float f = (px - i * 20) / 20.0f;
+    float val = v[i] + (v[i + 1 < N ? i + 1 : i] - v[i]) * f;
+    int16_t y = base - (int16_t)(val * (base - top));
+    gfx->drawFastVLine(px, y, base - y, fill);
+    if (px) for (int8_t d = -1; d <= 1; d++) gfx->drawLine(px - 1, py + d, px, y + d, C_GOOD);
+    py = y;
+  }
+  gfx->fillCircle(end, py, 5, C_GOOD);
+  gfx->drawFastHLine(0, base, L.w, C_RULE);
   const char *credit = "made by Richard Torcato";
   textAt((L.w - textWidth(1, credit)) / 2, L.creditY, 1, C_MUTED, credit);
   splashStatus(status);

@@ -1,4 +1,4 @@
-# ticker — **built** (first flash 2026-09-16, unverified by eye)
+# ticker — **Ticker Tape**, built (first flash 2026-09-16)
 
 The CYD ticker, ported to the 7" 800×480 panel with everything it learned:
 the same fetch path (Yahoo, CoinGecko, HTTP/1.0 with the body read by hand),
