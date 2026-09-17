@@ -681,9 +681,14 @@ static int32_t modp(int32_t a, int32_t m) {
   return r < 0 ? r + m : r;
 }
 static int32_t floordiv(int32_t a, int32_t m) { return (a - modp(a, m)) / m; }
+// A section with fewer rows than the strip holds sits still from its first
+// row, the slots past its last one empty: no crawl, no wrap, no drag.
+static bool listStatic() { return nShown <= L.rows; }
 static int16_t hitRow(int16_t y, int32_t pos, uint8_t n) {
   if (n == 0 || y < L.yRow0 || y >= L.yRow0 + L.strip) return -1;
-  return (int16_t)modp(floordiv(pos + y - L.yRow0, ROW_H), n);
+  int32_t r = floordiv(pos + y - L.yRow0, ROW_H);
+  if (n <= L.rows) return r >= n ? -1 : (int16_t)r;  // static, by the same rule as listStatic()
+  return (int16_t)modp(r, n);
 }
 // Which settings row, or -1.
 static int8_t hitSetting(int16_t y) {
@@ -1057,6 +1062,12 @@ static bool seamAt(int32_t v) {
 
 // A slot fully owned by virtual row v: repaint only if the row's key changed.
 static void paintSlot(int32_t v) {
+  if (listStatic() && (v < 0 || v >= nShown)) {  // past a short section's last row: an empty slot
+    if (cRow[slotOf(v)][0] == '-') return;
+    strcpy(cRow[slotOf(v)], "-");
+    gfx->fillRect(0, L.yRow0 + slotOf(v) * ROW_H, L.w, ROW_H, C_BG);
+    return;
+  }
   Row r = rowCopy(rowOf(v));
   char key[48], price[12], pct[12];
   rowKey(r, key, sizeof key, price, pct);
@@ -1117,6 +1128,7 @@ static void scrollBy(int32_t delta) {
 
 static void listStart() {
   gfx->fillScreen(C_BG);
+  if (listStatic()) pos = 0;  // a short section: from its first row, and it stays there
   boardScrollArea(L.yRow0, L.strip);
   panelScroll(pos);
   invalidateCache();
@@ -1143,6 +1155,7 @@ static void listTick() {
   scrollLast = now;
   int32_t v0 = topV();
   for (uint8_t p = offPx() ? 1 : 0; p < L.rows; p++) paintSlot(v0 + p);
+  if (listStatic()) return;  // sits still
   if (touchHeld || now < holdUntil) {
     scrollAcc = 0;
     return;
@@ -3528,7 +3541,7 @@ void loop() {
   static int32_t hilite = INT32_MIN;
   if (state == State::Running && view == View::List) {
     if (touchHeld) holdUntil = millis() + (g == Gesture::Drag ? 8000 : 3000);  // a drag went somewhere to read
-    if (g == Gesture::Drag && ddy) scrollBy(-ddy);
+    if (g == Gesture::Drag && ddy && !listStatic()) scrollBy(-ddy);
     if (g == Gesture::Tap && hilite == INT32_MIN) {
       int16_t r = hitRow(ty, pos, nShown);
       if (r >= 0) {
