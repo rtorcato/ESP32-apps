@@ -2801,10 +2801,22 @@ static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms re
 static State state = State::Boot;
 static View view = View::List;
 
+// Expander ack, panel start, PSRAM left: the first three things to read when
+// the screen stays white or cycles colours (the panel's no-signal pattern)
+// while serial says the app is fine.
+static void panelBegin(bool expanderOk) {
+  gfx = boardDisplay();
+  bool ok = gfx->begin();
+  Serial.printf("board: expander %s, panel %s, psram %u free\n", expanderOk ? "ok" : "NO ACK", ok ? "ok" : "FAILED",
+                ESP.getFreePsram());
+  boardSetRotation(sRot);
+  Lp = &LAYOUTS[sRot & 1];
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
-  boardBegin();
+  bool xp = boardBegin();
   selfCheck();
 
   // What woke us. A timer wake inside the sleep window goes straight back
@@ -2823,10 +2835,7 @@ void setup() {
   if (loadConfig()) applyOverlay();
   if (cfgErr) {
     Serial.printf("config error: %s\n", cfgErr);
-    gfx = boardDisplay();
-    gfx->begin();
-    boardSetRotation(sRot);
-    Lp = &LAYOUTS[sRot & 1];
+    panelBegin(xp);
     gfx->setTextWrap(false);
     backlight(255);
     return;  // loop() draws the panel
@@ -2840,10 +2849,7 @@ void setup() {
   if (wifiSsid[0] && cause == ESP_SLEEP_WAKEUP_TIMER && haveTime && sleepDue(t)) goToSleep(secondsUntilWake(t));
   awakeUntil = millis() + 60000;
 
-  gfx = boardDisplay();
-  gfx->begin();
-  boardSetRotation(sRot);  // the Orientation setting; loadSettings ran above
-  Lp = &LAYOUTS[sRot & 1];
+  panelBegin(xp);  // the Orientation setting applies here; loadSettings ran above
   gfx->fillScreen(C_BG);
   gfx->setTextWrap(false);
   rowCanvas = new Arduino_Canvas(L.w, ROW_H, nullptr);
