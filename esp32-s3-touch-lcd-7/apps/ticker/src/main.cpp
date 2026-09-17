@@ -1236,34 +1236,40 @@ static void drawFoot(const struct tm *t, bool haveTime) {
 // through them, the wordmark, and one status line that follows the Wi-Fi
 // join. Primitives only, so there is no asset to generate or push.
 static void splashStatus(const char *s) { fieldCentre(L.w / 2, L.yHint, 80, 1, C_DIM, s); }
+// The splash: TICKER in white above three bands of symbol chips -- badge
+// and label -- the middle band bright and the outer two at half light,
+// running off both edges like a tape. Indices have no badge and sit it
+// out. Drawn once; the status line under it is what changes.
+static void blitLogoDim(int16_t x, int16_t y, const char *label) {  // a badge at half brightness
+  uint16_t *px = logoLoad(LOGO_BADGE, label);
+  if (!px) return;
+  uint16_t d[LOGO_BADGE * LOGO_BADGE];
+  for (uint16_t i = 0; i < LOGO_BADGE * LOGO_BADGE; i++) d[i] = (px[i] >> 1) & 0x7BEF;  // each channel halved
+  gfx->draw16bitRGBBitmap(x, y, d, LOGO_BADGE, LOGO_BADGE);
+}
 static void drawSplash(const char *status) {
-  for (int16_t y = 0; y < L.h; y++) {  // (0,10,30) at the top fading to black
-    uint8_t g = 10 - (uint16_t)y * 10 / L.h, b = 30 - (uint16_t)y * 30 / L.h;
-    gfx->drawFastHLine(0, y, L.w, ((g & 0xFC) << 3) | (b >> 3));
-  }
-  struct Candle { int16_t o, c, l, h; };  // in the CYD's 240-wide units; scaled below
-  static const Candle k[9] = {{206, 196, 211, 192}, {196, 202, 205, 190}, {202, 184, 204, 180},
-                              {184, 172, 188, 166}, {172, 178, 182, 168}, {178, 158, 180, 152},
-                              {158, 148, 162, 144}, {148, 154, 156, 142}, {154, 132, 156, 126}};
-  auto Y = [](int16_t y) -> int16_t { return 190 + (int16_t)((y - 126) * 2.5f); };  // 126..211 -> 190..402
-  int16_t cy = L.candleY - 190;  // the candle table is drawn around y 190
-  for (uint8_t i = 0; i < 9; i++) {
-    int16_t x = L.candleX0 + i * L.candleStep;
-    uint16_t col = k[i].c < k[i].o ? C_GOOD : C_BAD;
-    gfx->fillRect(x + L.candleW / 2 - 1, cy + Y(k[i].h), 3, Y(k[i].l) - Y(k[i].h) + 1, col);
-    gfx->fillRect(x, cy + Y(min(k[i].o, k[i].c)), L.candleW, Y(max(k[i].o, k[i].c)) - Y(min(k[i].o, k[i].c)) + 2, col);
-  }
-  for (uint8_t i = 1; i < 9; i++) {  // the average, a little under the bodies
-    int16_t x0 = L.candleX0 + (i - 1) * L.candleStep + L.candleW / 2, x1 = x0 + L.candleStep;
-    int16_t y0 = cy + Y((k[i - 1].o + k[i - 1].c) / 2) + 20, y1 = cy + Y((k[i].o + k[i].c) / 2) + 20;
-    for (int8_t d = 0; d < 3; d++) gfx->drawLine(x0, y0 + d, x1, y1 + d, C_GOLD);
-  }
-  gfx->drawFastHLine(L.w / 8, L.ruleY, L.w * 3 / 4, C_RULE);
+  gfx->fillScreen(C_BG);
   const char *name = "TICKER";
   bigText((L.w - textWidth(3, name) * 2) / 2, L.wordY, 3, 2, C_FG, name);
-  gfx->fillRect(L.w / 2 - 48, L.wordY + 68, 96, 3, C_GOLD);
-  const char *tag = L.w >= 800 ? "STOCKS      INDICES      CRYPTO      CURRENCIES      HEADLINES" : "STOCKS   INDICES   CRYPTO   FX   HEADLINES";
-  textAt((L.w - textWidth(1, tag)) / 2, L.tagY, 1, C_MUTED, tag);
+  const int16_t chipH = 48, gap = 14, step = 104;
+  const int16_t off[3] = {0, -60, -110};  // each band starts part way off the left edge
+  int16_t mid = L.h / 2 - 10 - chipH / 2;
+  uint8_t r = 0;  // the next row to chip, round the list
+  for (uint8_t b = 0; b < 3 && nRows; b++) {
+    bool lit = b == 1;
+    int16_t y = mid + (b - 1) * step, x = off[b];
+    for (uint16_t guard = 0; x < L.w && guard < nRows * 3u; guard++) {
+      const Row &row = rows[r];
+      r = (r + 1) % nRows;
+      if (row.kind == K_INDEX) continue;
+      int16_t w = 56 + textWidth(2, row.label);
+      gfx->fillRoundRect(x, y, w, chipH, 10, lit ? C_RULE : (C_RULE >> 1) & 0x7BEF);
+      if (lit) blitLogo(x + 8, y + 8, LOGO_BADGE, row.label);
+      else blitLogoDim(x + 8, y + 8, row.label);
+      textAt(x + 48, y + (chipH - GH(2)) / 2, 2, lit ? C_FG : C_DIM, row.label);
+      x += w + gap;
+    }
+  }
   const char *credit = "made by Richard Torcato";
   textAt((L.w - textWidth(1, credit)) / 2, L.creditY, 1, C_MUTED, credit);
   splashStatus(status);
