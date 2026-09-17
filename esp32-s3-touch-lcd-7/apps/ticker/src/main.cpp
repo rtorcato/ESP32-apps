@@ -32,15 +32,29 @@
 
 // ── one colour scheme: black, white symbols, green and red numbers ───────
 static const uint16_t C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
-                      C_DIM = 0x630C, C_MUTED = 0xA534, C_RULE = 0x2104, C_WARN = RGB565_YELLOW, C_GOLD = 0xFD40;
+                      C_DIM = 0x630C, C_MUTED = 0xA534, C_WARN = RGB565_YELLOW;
 static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
-// The background is a setting: a few dark colours, all darker than C_RULE
-// so the rules and tiles still read. Every clear in the app goes through
-// C_BG, so a change is one assignment and a repaint of the page.
-static const char *const BG_NAMES[] = {"black", "navy", "forest", "plum"};
-static const uint16_t BG_565[] = {0x0000, 0x0084 /* 0,16,32 */, 0x00C1 /* 0,24,8 */, 0x1803 /* 24,0,24 */};
-static uint8_t sBg = 0;
-static uint16_t C_BG = BG_565[0];
+// A theme is the background, the rule (also the tiles) and the accent;
+// text, green and red stay. Every clear in the app goes through C_BG, so
+// a theme is three assignments and a repaint. Picked on the Themes page
+// (Settings > Theme), kept in NVS.
+struct Theme { const char *name; uint16_t bg, rule, accent; };
+static const Theme THEMES[] = {
+    {"black", 0x0000, 0x2104 /* 32,32,32 */, 0xFD40},
+    {"navy", 0x0084 /* 0,16,32 */, 0x1948 /* 24,40,64 */, 0xFD40},
+    {"forest", 0x00C1 /* 0,24,8 */, 0x1984 /* 24,48,32 */, 0xFD40},
+    {"plum", 0x1803 /* 24,0,24 */, 0x30C6 /* 48,24,48 */, 0xFD40},
+    {"charcoal", 0x18E4 /* 28,28,32 */, 0x39C8 /* 56,56,64 */, 0xFD40},
+    {"slate", 0x10A3 /* 16,20,28 */, 0x2987 /* 40,48,60 */, 0xFD40},
+};
+static const uint8_t N_THEMES = sizeof THEMES / sizeof THEMES[0];
+static uint8_t sTheme = 0;
+static uint16_t C_BG = THEMES[0].bg, C_RULE = THEMES[0].rule, C_GOLD = THEMES[0].accent;
+static void applyTheme() {
+  C_BG = THEMES[sTheme].bg;
+  C_RULE = THEMES[sTheme].rule;
+  C_GOLD = THEMES[sTheme].accent;
+}
 
 // ── settings (defaults; data/config.json overrides) ──────────────────────
 static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
@@ -1643,8 +1657,8 @@ static void loadSettings() {
     sClock = prefs.getUChar("clk", sClock) % 2;
     sCols = prefs.getUChar("cols", sCols) & 63;
     sRot = prefs.getUChar("rot", sRot) & 3;
-    sBg = prefs.getUChar("bg", sBg) % 4;
-    C_BG = BG_565[sBg];
+    sTheme = prefs.getUChar("bg", sTheme) % N_THEMES;
+    applyTheme();
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1672,7 +1686,7 @@ static void saveSettings() {
   prefs.putUChar("clk", sClock);
   prefs.putUChar("cols", sCols);
   prefs.putUChar("rot", sRot);
-  prefs.putUChar("bg", sBg);
+  prefs.putUChar("bg", sTheme);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -1682,11 +1696,11 @@ static void saveSettings() {
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
-  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Orientation", "Clock", "Background", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
+  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Orientation", "Clock", "Theme", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
   char ssid[24];
   snprintf(ssid, sizeof ssid, "%.20s", wifiSsid[0] ? wifiSsid : "not set");
   const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? ROT_NAMES[sRot] : i == 4 ? CLOCK_NAMES[sClock]
-                : i == 5 ? BG_NAMES[sBg] : i == 6 ? RET_NAMES[sRet] : i == 7 ? SLEEP_NAMES[sSleep] : i == 8 ? sCur : i == 9 ? ">" : i == 10 ? ssid : ">";
+                : i == 5 ? THEMES[sTheme].name : i == 6 ? RET_NAMES[sRet] : i == 7 ? SLEEP_NAMES[sSleep] : i == 8 ? sCur : i == 9 ? ">" : i == 10 ? ssid : ">";
   if (i < setTop || i >= setTop + L.sN) return;
   int16_t y = L.sY0 + (i - setTop) * L.sH;
   gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
@@ -1720,6 +1734,46 @@ static void drawColumns() {
   drawPanel("COLUMNS", C_MUTED, nullptr, 0, true, 4, "< COLUMNS", "what a row shows");
   for (uint8_t i = 0; i < 6; i++) drawColumnRow(i);
   drawHint("tap a row to turn it on or off        < settings");
+}
+// The Themes page: a tile per theme in its own colours, with a sample row
+// so the choice is seen before it is made. Three across in landscape, two
+// in portrait. A tap applies, saves and repaints the page in the new theme.
+static void themeRect(uint8_t i, int16_t *x, int16_t *y, int16_t *w, int16_t *h) {
+  uint8_t cols = L.w >= 800 ? 3 : 2, rows = (N_THEMES + cols - 1) / cols;
+  const int16_t gap = 16;
+  *w = (L.w - 40 - gap * (cols - 1)) / cols;
+  *h = (L.yHint - 8 - L.sY0 - gap * (rows - 1)) / rows;
+  *x = 20 + (i % cols) * (*w + gap);
+  *y = L.sY0 + (i / cols) * (*h + gap);
+}
+static void drawThemeTile(uint8_t i) {
+  int16_t x, y, w, h;
+  themeRect(i, &x, &y, &w, &h);
+  const Theme &t = THEMES[i];
+  gfx->fillRoundRect(x, y, w, h, 12, t.bg);
+  gfx->drawRoundRect(x, y, w, h, 12, i == sTheme ? C_FG : t.rule);
+  if (i == sTheme) gfx->drawRoundRect(x + 1, y + 1, w - 2, h - 2, 11, C_FG);
+  textAt(x + 16, y + 14, 2, C_FG, t.name);
+  gfx->fillRect(x + 16, y + 14 + GH(2) + 6, 48, 3, t.accent);
+  int16_t ry = y + h / 2;
+  gfx->drawFastHLine(x + 16, ry - 8, w - 32, t.rule);
+  textAt(x + 16, ry, 2, C_FG, "AAPL");
+  textAt(x + w - 16 - textWidth(2, "+1.2%"), ry, 2, C_GOOD, "+1.2%");
+  textAt(x + 16, ry + GH(2) + 8, 2, C_MUTED, "MSFT");
+  textAt(x + w - 16 - textWidth(2, "-0.6%"), ry + GH(2) + 8, 2, C_BAD, "-0.6%");
+}
+static void drawThemes() {
+  drawPanel("THEMES", C_MUTED, nullptr, 0, true, 4, "< THEMES", "colours for every page");
+  for (uint8_t i = 0; i < N_THEMES; i++) drawThemeTile(i);
+  drawHint("tap a theme        < settings");
+}
+static int8_t hitTheme(int16_t tx, int16_t ty) {
+  for (uint8_t i = 0; i < N_THEMES; i++) {
+    int16_t x, y, w, h;
+    themeRect(i, &x, &y, &w, &h);
+    if (tx >= x && tx < x + w && ty >= y && ty < y + h) return i;
+  }
+  return -1;
 }
 // A scroll step redraws the rows in place -- each field clears its own box,
 // so there is no blanket clear and nothing to flicker -- and the hint only
@@ -1775,6 +1829,7 @@ static bool hitConfirm(int16_t x, int16_t y) { return y >= L.cfY && y < L.cfY + 
 static uint8_t tapSetting(uint8_t i) {
   if (i == 0) return 3;
   if (i == 2) return 7;
+  if (i == 5) return 8;
   if (i == 9) return 1;
   if (i == 10) return 4;
   if (i == 11) return 5;
@@ -1788,13 +1843,7 @@ static uint8_t tapSetting(uint8_t i) {
   if (i == 8) nextCurrency();
   else if (i == 1) sSpeed = (sSpeed + 1) % 3;
   else if (i == 4) sClock = !sClock;
-  else if (i == 5) {  // background: the whole page, so the new colour is seen at once
-    sBg = (sBg + 1) % 4;
-    C_BG = BG_565[sBg];
-    saveSettings();
-    drawSettings();
-    return 0;
-  } else if (i == 6) sRet = (sRet + 1) % 3;
+  else if (i == 6) sRet = (sRet + 1) % 3;
   else if (i == 7) sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
@@ -2845,7 +2894,7 @@ static void selfCheck() {
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
-enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns };
+enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -3169,6 +3218,7 @@ void loop() {
       else if (view == View::Heat) drawHeat(true);
       else if (view == View::Confirm) drawConfirm();
       else if (view == View::Columns) drawColumns();
+      else if (view == View::Themes) drawThemes();
       else drawDetail(true);
     }
   }
@@ -3257,7 +3307,7 @@ void loop() {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && g == Gesture::SwipeDown) ||
-                (view == View::Columns && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
+                ((view == View::Columns || view == View::Themes) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -3293,7 +3343,7 @@ void loop() {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
-    } else if (view == View::Columns && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+    } else if ((view == View::Columns || view == View::Themes) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       view = View::Settings;
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
@@ -3386,6 +3436,9 @@ void loop() {
       } else if (r == 7) {
         view = View::Columns;
         drawColumns();
+      } else if (r == 8) {
+        view = View::Themes;
+        drawThemes();
       }
     } else if (view == View::Confirm) {
       if (hitConfirm(tx, ty)) {
@@ -3408,6 +3461,14 @@ void loop() {
         sCols ^= 1 << i;
         saveSettings();
         drawColumnRow((uint8_t)i);
+      }
+    } else if (view == View::Themes) {
+      int8_t i = hitTheme(tx, ty);
+      if (i >= 0 && i != sTheme) {
+        sTheme = (uint8_t)i;
+        applyTheme();
+        saveSettings();
+        drawThemes();  // the whole page, in the new colours
       }
     } else if (view == View::Info) {  // a tap shows the splash, as the last line says
       view = View::Splash;
