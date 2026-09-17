@@ -1746,29 +1746,10 @@ static void drawSettingRow(uint8_t i) {
   int16_t y = L.sY0 + (i - setTop) * L.sH;
   gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
   textAt(20, y + 5, 2, i == 11 ? C_BAD : C_MUTED, labels[i]);
-  int16_t cy = y + 5 + GH(2) / 2;
-  if (strcmp(v, ">") == 0) {
-    chevron(L.w - 20, cy, C_MUTED);
-  } else if (i == 3 || i == 5) {  // the value in grey, then the mark: the row opens a page
-    chevron(L.w - 20, cy, C_MUTED);
-    textAt(L.w - 40 - textWidth(2, v), y + 5, 2, C_MUTED, v);
-  } else {
-    textAt(L.w - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
-  }
+  int16_t cy = y + 5 + GH(2) / 2;  // every row opens a page: its value in grey, then the mark
+  chevron(L.w - 20, cy, C_MUTED);
+  if (strcmp(v, ">") != 0) textAt(L.w - 40 - textWidth(2, v), y + 5, 2, C_MUTED, v);
   gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
-}
-// The next display currency: USD, then each CURRENCIES row, round again.
-static void nextCurrency() {
-  bool takeNext = strcmp(sCur, "USD") == 0;
-  for (uint8_t i = 0; i < nRows; i++) {
-    if (rows[i].kind != K_FX) continue;
-    if (takeNext) {
-      strcpy(sCur, rows[i].label);
-      return;
-    }
-    if (strcmp(rows[i].label, sCur) == 0) takeNext = true;
-  }
-  strcpy(sCur, "USD");  // past the last code, or no codes at all
 }
 // The Columns page: six toggles for what a list row shows.
 static void drawColumnRow(uint8_t i) {
@@ -1865,6 +1846,67 @@ static int8_t hitOrient(int16_t tx, int16_t ty) {
   }
   return -1;
 }
+// One page for each setting with a few values -- the rows used to cycle on
+// a tap, which was too easy to do by accident. The values as rows, the
+// current one bright with a check mark; a tap picks, saves, and the check
+// moves. Currency lists USD and every currency row.
+enum : uint8_t { CH_SPEED, CH_CLOCK, CH_RET, CH_SLEEP, CH_CUR };
+static uint8_t chWhich = 0, chN = 0, chSel = 0;
+static const char *chNames[10];
+static const char *chTitle = "", *chNote = nullptr;
+static void chList(const char *const *names, uint8_t n, uint8_t sel) {
+  for (uint8_t i = 0; i < n; i++) chNames[chN++] = names[i];
+  chSel = sel;
+}
+static void buildChoice(uint8_t which) {
+  chWhich = which;
+  chN = 0;
+  switch (which) {
+    case CH_SPEED: chTitle = "< SCROLL"; chNote = "how long a page of rows takes to pass"; chList(SPEED_NAMES, 3, sSpeed); break;
+    case CH_CLOCK: chTitle = "< CLOCK"; chNote = nullptr; chList(CLOCK_NAMES, 2, sClock); break;
+    case CH_RET: chTitle = "< AUTO RETURN"; chNote = "back to the list after a page sits"; chList(RET_NAMES, 3, sRet); break;
+    case CH_SLEEP: chTitle = "< SLEEP"; chNote = "when the panel goes dark"; chList(SLEEP_NAMES, 3, sSleep); break;
+    default:
+      chTitle = "< CURRENCY";
+      chNote = "prices shown in";
+      chNames[chN++] = "USD";
+      chSel = 0;
+      for (uint8_t i = 0; i < nRows && chN < 10; i++) {
+        if (rows[i].kind != K_FX) continue;
+        if (strcmp(rows[i].label, sCur) == 0) chSel = chN;
+        chNames[chN++] = rows[i].label;
+      }
+  }
+}
+static void applyChoice(uint8_t i) {
+  chSel = i;
+  switch (chWhich) {
+    case CH_SPEED: sSpeed = i; break;
+    case CH_CLOCK: sClock = i; break;
+    case CH_RET: sRet = i; break;
+    case CH_SLEEP: sSleep = i; break;
+    default: strcpy(sCur, chNames[i]);
+  }
+  saveSettings();
+}
+static void checkMark(int16_t right, int16_t cy, uint16_t c) {  // two strokes, 2px
+  for (int8_t d = 0; d < 2; d++) {
+    gfx->drawLine(right - 16, cy + d, right - 10, cy + 6 + d, c);
+    gfx->drawLine(right - 10, cy + 6 + d, right, cy - 6 + d, c);
+  }
+}
+static void drawChoiceRow(uint8_t i) {
+  int16_t y = L.sY0 + i * L.sH;
+  gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
+  textAt(20, y + 5, 2, i == chSel ? C_FG : C_MUTED, chNames[i]);
+  if (i == chSel) checkMark(L.w - 20, y + 5 + GH(2) / 2, C_GOOD);
+  gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
+}
+static void drawChoice() {
+  drawPanel(chTitle + 2, C_MUTED, nullptr, 0, true, 4, chTitle, chNote);
+  for (uint8_t i = 0; i < chN; i++) drawChoiceRow(i);
+  drawHint("tap a value        < settings");
+}
 // A scroll step redraws the rows in place -- each field clears its own box,
 // so there is no blanket clear and nothing to flicker -- and the hint only
 // when it changes.
@@ -1924,13 +1966,11 @@ static uint8_t tapSetting(uint8_t i) {
   if (i == 10) return 4;
   if (i == 11) return 5;
   if (i == 3) return 9;
-  if (i == 8) nextCurrency();
-  else if (i == 1) sSpeed = (sSpeed + 1) % 3;
-  else if (i == 4) sClock = !sClock;
-  else if (i == 6) sRet = (sRet + 1) % 3;
-  else if (i == 7) sSleep = (sSleep + 1) % 3;
-  saveSettings();
-  drawSettingRow(i);
+  if (i == 1) return 10 + CH_SPEED;  // 10 and up: a page of values
+  if (i == 4) return 10 + CH_CLOCK;
+  if (i == 6) return 10 + CH_RET;
+  if (i == 7) return 10 + CH_SLEEP;
+  if (i == 8) return 10 + CH_CUR;
   return 0;
 }
 
@@ -2978,7 +3018,7 @@ static void selfCheck() {
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
-enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient };
+enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient, Choice };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -3150,7 +3190,7 @@ static void openHeat();
 static void openNews(uint8_t idx);
 static void headerTap(int16_t x) {
   if (headerBack && x < L.tabX + 140) {  // the back mark and the title beside it: one page up
-    if (view == View::Columns || view == View::Themes || view == View::Orient || view == View::Info) {
+    if (view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::Info) {
       view = View::Settings;
       pageOpenedAt = millis();
       drawSettings();
@@ -3314,6 +3354,7 @@ void loop() {
       else if (view == View::Columns) drawColumns();
       else if (view == View::Themes) drawThemes();
       else if (view == View::Orient) drawOrient();
+      else if (view == View::Choice) drawChoice();
       else drawDetail(true);
     }
   }
@@ -3402,7 +3443,7 @@ void loop() {
     bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) ||
-                ((view == View::Columns || view == View::Themes || view == View::Orient) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
+                ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
                 (view == View::Search && (g == Gesture::SwipeDown || g == Gesture::SwipeRight)) || view == View::Heat ||
                 (view == View::Info && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) || view == View::Splash;
     if (view == View::List && g == Gesture::SwipeRight) {
@@ -3438,7 +3479,7 @@ void loop() {
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
-    } else if ((view == View::Columns || view == View::Themes || view == View::Orient) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
+    } else if ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) {
       view = View::Settings;
       drawSettings();
     } else if (view == View::Settings && g == Gesture::SwipeLeft) {
@@ -3536,6 +3577,10 @@ void loop() {
       } else if (r == 9) {
         view = View::Orient;
         drawOrient();
+      } else if (r >= 10) {
+        buildChoice(r - 10);
+        view = View::Choice;
+        drawChoice();
       }
     } else if (view == View::Confirm) {
       if (hitConfirm(tx, ty)) {
@@ -3558,6 +3603,14 @@ void loop() {
         sCols ^= 1 << i;
         saveSettings();
         drawColumnRow((uint8_t)i);
+      }
+    } else if (view == View::Choice) {
+      int8_t i = hitSetting(ty);
+      if (i >= 0 && i < chN && i != chSel) {
+        uint8_t was = chSel;
+        applyChoice((uint8_t)i);
+        drawChoiceRow(was);
+        drawChoiceRow((uint8_t)i);
       }
     } else if (view == View::Orient) {
       int8_t i = hitOrient(tx, ty);
