@@ -193,7 +193,6 @@ struct Row {
 static Row rows[MAX_SYMBOLS];
 static uint8_t nRows = 0, nStocks = 0, nIdx = 0, nFx = 0, nCoins = 0;
 enum : uint8_t { K_STOCK, K_INDEX, K_FX, K_COIN };
-static uint8_t nYahoo() { return nRows - nCoins; }  // rows[0..nYahoo) go through Yahoo, coins after
 // The list shows one SECTION at a time -- all, stocks, indices, crypto,
 // currencies -- cycled by a tap on the header and kept in NVS. order[]
 // is the rows of the current section; the ring and the heatmap draw from
@@ -740,7 +739,6 @@ static void logoInventory() {
 // series (CoinGecko simple/price carries none) and leave the column empty.
 static void drawSpark(int16_t x, int16_t y, int16_t w, int16_t h, const Row &r) {
   gfx->fillRect(x, y, w, h, C_BG);
-  if (r.coin) return;
   if (!r.valid || r.n < 2) {
     for (int16_t i = 0; i < w; i += 6) gfx->drawFastHLine(x + i, y + h / 2, 3, C_DIM);
     return;
@@ -1321,7 +1319,7 @@ static void drawDetail(bool full) {
       textAt(L.dXLogo + (LOGO_BIG - textWidth(3, r.label)) / 2, L.dYLogo + (LOGO_BIG - FACES[2].cap) / 2, 3, C_MUTED, r.label);
     }
     drawHint("< next        ^ all headlines        v list        prev >");
-    if (!r.coin) drawRangeChips();  // indices and FX have Yahoo history too
+    drawRangeChips();  // indices, FX and coins (as BTC-USD) have Yahoo history too
   }
   // Three headlines on the page itself, from the news cache; the news page
   // has the rest.
@@ -1404,9 +1402,7 @@ static void drawDetail(bool full) {
   if (strcmp(key, kChart) != 0) {
     strcpy(kChart, key);
     gfx->fillRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_BG);  // chips below are left alone
-    if (r.coin) {
-      field(L.chX + 8, L.chY + L.chH / 2 - 8, 40, 1, C_DIM, "no intraday series for coins");
-    } else if (rangeSel && mine && !sr.valid) {
+    if (rangeSel && mine && !sr.valid) {
       char m[24];
       snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
       field(L.chX + 8, L.chY + L.chH / 2 - 8, 24, 1, C_DIM, m);
@@ -2142,6 +2138,23 @@ static uint8_t pullCloses(JsonVariant res, float *out, uint8_t cap) {
   return n;
 }
 
+// Coins are priced by CoinGecko, which has no series; Yahoo carries them as
+// BTC-USD (the label is the symbol), so their charts come from there.
+static const char *yahooId(const Row &r, char *buf) {
+  if (!r.coin) return r.id;
+  snprintf(buf, MAX_LABEL + 5, "%s-USD", r.label);
+  return buf;
+}
+// A coin's sparkline only: the price and 24h change stay CoinGecko's. A day
+// at 15m, the way FX does it, since coins trade around the clock too.
+static bool fetchCoinSpark(NetworkClientSecure &client, Row &r) {
+  char id[MAX_LABEL + 5];
+  JsonDocument doc;
+  if (!fetchChart(client, yahooId(r, id), "1d", "15m", doc)) return false;
+  r.n = pullCloses(doc["chart"]["result"][0], r.close, SPARK_N);
+  return r.n >= 2;
+}
+
 static bool fetchStock(NetworkClientSecure &client, Row &r) {
   JsonDocument doc;
   // FX trades around the clock: a day at 5m is 21KB; 15m is a quarter of it.
@@ -2173,11 +2186,12 @@ static void doSeries(uint8_t idx, uint8_t range) {
   Series s = {};
   s.idx = idx;
   s.range = range;
-  if (!r.coin) {
+  {
     NetworkClientSecure client;
     client.setInsecure();
     JsonDocument doc;
-    if (fetchChart(client, r.id, RANGES[range].range, RANGES[range].interval, doc)) {
+    char id[MAX_LABEL + 5];
+    if (fetchChart(client, yahooId(r, id), RANGES[range].range, RANGES[range].interval, doc)) {
       JsonVariant res = doc["chart"]["result"][0];
       s.prev = res["meta"]["chartPreviousClose"] | 0.0f;
       s.n = pullCloses(res, s.close, SERIES_N);
@@ -2394,6 +2408,7 @@ static bool fetchCoins(NetworkClientSecure &client) {
     Row r = rowCopy(i);
     r.price = v["usd"] | 0.0f;
     r.pct = v["usd_24h_change"] | 0.0f;
+    r.prev = r.pct > -100.0f ? r.price / (1.0f + r.pct / 100.0f) : 0.0f;  // 24h ago: the chart's reference line
     r.volume = v["usd_24h_vol"] | 0.0f;
     r.valid = true;
     rowStore(i, r);
@@ -2407,7 +2422,7 @@ static void fetchOne(uint8_t i) {
   Row r = rowCopy(i);
   NetworkClientSecure client;
   client.setInsecure();  // public read-only quotes; pinning buys nothing
-  bool ok = fetchStock(client, r);
+  bool ok = r.coin ? fetchCoinSpark(client, r) : fetchStock(client, r);
   if (ok && ver != listVersion) {
     Serial.printf("%s: rows changed during the fetch, dropped\n", r.label);
     return;
@@ -2449,8 +2464,8 @@ static void fetchTask(void *) {
     int8_t pri = priority;
     if (pri >= 0) {
       priority = -1;
-      if (rows[pri].coin) doCoins();
-      else fetchOne(pri);
+      if (rows[pri].coin) doCoins();  // the price; the series follows
+      fetchOne(pri);
       continue;
     }
     if (searchWant) {
@@ -2491,18 +2506,18 @@ static void fetchTask(void *) {
       Serial.printf("session: %s\n", sessionWord(ses));
     }
     uint32_t stockEvery = ses == Session::Regular ? stockOpenMs : stockExtMs;
-    if (stockEvery < nYahoo() * 5000UL) stockEvery = nYahoo() * 5000UL;  // rate floor
+    if (stockEvery < nRows * 5000UL) stockEvery = nRows * 5000UL;  // rate floor
     bool due = lastStock == 0 || millis() - lastStock > stockEvery;
     if (ses == Session::Closed) due = lastStock == 0 || (closedAt && lastStock < closedAt);
-    if (!sweeping && nYahoo() && due) {
+    if (!sweeping && nRows && due) {
       sweeping = true;
       sweepIdx = 0;
     }
     if (!sweeping) continue;
-    if (sweepIdx >= nYahoo()) {
+    if (sweepIdx >= nRows) {  // every row: coins are in it for their series
       sweeping = false;
       lastStock = millis();
-      Serial.printf("sweep done (%u symbols, heap %u)\n", nYahoo(), ESP.getFreeHeap());
+      Serial.printf("sweep done (%u symbols, heap %u)\n", nRows, ESP.getFreeHeap());
     } else {
       fetchOne(sweepIdx++);
     }
