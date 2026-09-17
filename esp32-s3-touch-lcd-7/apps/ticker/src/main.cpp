@@ -1300,7 +1300,7 @@ static void drawHeader(uint8_t lit, const char *title, const char *note) {
 // Which header thing a tap at x lands on: 0-4 a section tab, 5 NEWS, 6 HEATMAP, 10 search, 11 settings, -1 nothing.
 static int8_t hitHeader(int16_t x) {
   if (tabsShown)
-    for (uint8_t i = 0; i < 6; i++)
+    for (uint8_t i = 0; i < 7; i++)
       if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
   int16_t i0 = L.iconX + 2 * L.iconStep - 8;  // two icons in the slots nearest the clock
   if (x >= i0 && x < i0 + 2 * L.iconStep) return 10 + (x - i0) / L.iconStep;
