@@ -31,9 +31,16 @@
 #include <time.h>
 
 // ── one colour scheme: black, white symbols, green and red numbers ───────
-static const uint16_t C_BG = RGB565_BLACK, C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
+static const uint16_t C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
                       C_DIM = 0x630C, C_MUTED = 0xA534, C_RULE = 0x2104, C_WARN = RGB565_YELLOW, C_GOLD = 0xFD40;
 static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
+// The background is a setting: a few dark colours, all darker than C_RULE
+// so the rules and tiles still read. Every clear in the app goes through
+// C_BG, so a change is one assignment and a repaint of the page.
+static const char *const BG_NAMES[] = {"black", "navy", "forest", "plum"};
+static const uint16_t BG_565[] = {0x0000, 0x0084 /* 0,16,32 */, 0x00C1 /* 0,24,8 */, 0x1803 /* 24,0,24 */};
+static uint8_t sBg = 0;
+static uint16_t C_BG = BG_565[0];
 
 // ── settings (defaults; data/config.json overrides) ──────────────────────
 static char tzString[64] = "EST5EDT,M3.2.0/2,M11.1.0/2";
@@ -91,7 +98,7 @@ static const Layout LAYOUTS[2] = {
      12, 420, 564, 40,
      20, 52, 168, 52, 90, 114, 20, 196, 264, 200, 316, 368, 20, 340, 8,
      400, 52, 388, 200, 262, 72, 79, 40, 312, 38,
-     56, 35, 11, 11,
+     56, 35, 11, 12,
      44, 130, 98, 6, 4, 24,
      200, 80, 76, 10, 60, 100, 56,
      240, 320, 330, 56, 402, 150, 210, 254, 284,
@@ -101,7 +108,7 @@ static const Layout LAYOUTS[2] = {
      12, -1, 320, 36,
      20, 52, 168, 52, 90, 114, 20, 196, 264, 200, 544, 596, 20, 440, 8,
      20, 296, 440, 190, 494, 80, 88, 40, 660, 28,
-     56, 35, 11, 11,
+     56, 35, 11, 12,
      44, 118, 96, 4, 7, 28,
      440, 80, 66, 6, 60, 100, 56,
      80, 320, 400, 56, 472, 200, 260, 304, 334,
@@ -945,7 +952,7 @@ static void paintRow(int16_t y, const Row &r, bool rule) {
     char c[2] = {r.label[0], 0};
     textAt(L.xSym + (LOGO_BADGE - textWidth(2, c)) / 2, y + L.yBadge + (LOGO_BADGE - FACES[1].cap) / 2, 2, C_MUTED, c);
   }
-  textAt(L.xLbl, y + L.yLbl, 2, C_FG, r.label);
+  textAt(r.kind == K_INDEX ? L.xSym : L.xLbl, y + L.yLbl, 2, C_FG, r.label);  // an index starts where its badge would
   int16_t right = L.xRight;
   if (sCols & COL_PCT) {
     textAt(right - textWidth(2, pct), y + L.yLbl, 2, fg, pct);
@@ -1381,9 +1388,10 @@ static void drawDetail(bool full) {
     snprintf(name, sizeof name, "%s", r.coin ? "crypto, 24h change" : r.kind == K_FX ? "one US dollar buys" : r.name);
     if (!r.valid) snprintf(tag, sizeof tag, "fetching %s%.*s", r.label, dots, "...");
     else if (ext) snprintf(tag, sizeof tag, "%s", ses == Session::Pre ? "pre-market" : "after hours");
-    field(L.dXTxt, L.dYSym, MAX_LABEL + 1, 3, C_FG, r.label);
-    field(L.dXTxt, L.dYName, 26, 1, C_MUTED, name);
-    field(L.dXTxt, L.dYTag, 26, 1, C_WARN, tag);
+    int16_t tx = r.kind == K_INDEX ? L.dXLogo : L.dXTxt;  // no logo: the text takes its place
+    field(tx, L.dYSym, MAX_LABEL + 1, 3, C_FG, r.label);
+    field(tx, L.dYName, 26, 1, C_MUTED, name);
+    field(tx, L.dYTag, 26, 1, C_WARN, tag);
     field(L.dXPrice, L.dYPrice, 8, 4, fg, price);  // the tall digits
     bool conv = false;
     disp(r, shown, &conv);  // which currency the number is in
@@ -1619,6 +1627,8 @@ static void loadSettings() {
     sClock = prefs.getUChar("clk", sClock) % 2;
     sCols = prefs.getUChar("cols", sCols) & 63;
     sRot = prefs.getUChar("rot", sRot) & 3;
+    sBg = prefs.getUChar("bg", sBg) % 4;
+    C_BG = BG_565[sBg];
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1646,6 +1656,7 @@ static void saveSettings() {
   prefs.putUChar("clk", sClock);
   prefs.putUChar("cols", sCols);
   prefs.putUChar("rot", sRot);
+  prefs.putUChar("bg", sBg);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -1655,15 +1666,15 @@ static void saveSettings() {
 static void drawSettingRow(uint8_t i) {
   // Eight rows, all on screen. Shutdown first, the everyday rows, the
   // advanced ones, and the one that cannot be undone last, in red.
-  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Orientation", "Clock", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
+  static const char *const labels[] = {"Shutdown", "Scroll", "Columns", "Orientation", "Clock", "Background", "Auto return", "Sleep", "Currency", "Info", "Wi-Fi", "Clear device"};
   char ssid[24];
   snprintf(ssid, sizeof ssid, "%.20s", wifiSsid[0] ? wifiSsid : "not set");
   const char *v = i == 0 ? ">" : i == 1 ? SPEED_NAMES[sSpeed] : i == 2 ? ">" : i == 3 ? ROT_NAMES[sRot] : i == 4 ? CLOCK_NAMES[sClock]
-                : i == 5 ? RET_NAMES[sRet] : i == 6 ? SLEEP_NAMES[sSleep] : i == 7 ? sCur : i == 8 ? ">" : i == 9 ? ssid : ">";
+                : i == 5 ? BG_NAMES[sBg] : i == 6 ? RET_NAMES[sRet] : i == 7 ? SLEEP_NAMES[sSleep] : i == 8 ? sCur : i == 9 ? ">" : i == 10 ? ssid : ">";
   if (i < setTop || i >= setTop + L.sN) return;
   int16_t y = L.sY0 + (i - setTop) * L.sH;
   gfx->fillRect(20, y + 3, L.w - 20, GH(2) + 4, C_BG);
-  textAt(20, y + 5, 2, i == 10 ? C_BAD : C_MUTED, labels[i]);
+  textAt(20, y + 5, 2, i == 11 ? C_BAD : C_MUTED, labels[i]);
   textAt(L.w - 20 - textWidth(2, v), y + 5, 2, C_FG, v);
   gfx->drawFastHLine(20, y + L.sH - 1, L.w - 40, C_RULE);
 }
@@ -1748,9 +1759,9 @@ static bool hitConfirm(int16_t x, int16_t y) { return y >= L.cfY && y < L.cfY + 
 static uint8_t tapSetting(uint8_t i) {
   if (i == 0) return 3;
   if (i == 2) return 7;
-  if (i == 8) return 1;
-  if (i == 9) return 4;
-  if (i == 10) return 5;
+  if (i == 9) return 1;
+  if (i == 10) return 4;
+  if (i == 11) return 5;
   if (i == 3) {  // orientation: saved, then a restart, which is cheaper than re-allocating every buffer
     sRot = (sRot + 1) % 4;
     saveSettings();
@@ -1758,11 +1769,17 @@ static uint8_t tapSetting(uint8_t i) {
     delay(600);
     ESP.restart();
   }
-  if (i == 7) nextCurrency();
+  if (i == 8) nextCurrency();
   else if (i == 1) sSpeed = (sSpeed + 1) % 3;
   else if (i == 4) sClock = !sClock;
-  else if (i == 5) sRet = (sRet + 1) % 3;
-  else if (i == 6) sSleep = (sSleep + 1) % 3;
+  else if (i == 5) {  // background: the whole page, so the new colour is seen at once
+    sBg = (sBg + 1) % 4;
+    C_BG = BG_565[sBg];
+    saveSettings();
+    drawSettings();
+    return 0;
+  } else if (i == 6) sRet = (sRet + 1) % 3;
+  else if (i == 7) sSleep = (sSleep + 1) % 3;
   saveSettings();
   drawSettingRow(i);
   return 0;
