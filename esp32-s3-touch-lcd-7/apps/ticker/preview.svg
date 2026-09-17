@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" width="800" height="480" role="img" aria-label="ticker LIST, landscape: section tabs and four page icons in the header, nine 44px rows of logo badge, symbol, intraday sparkline, price and signed percent">
+  <!-- 800x480 native (1:1), drawn from the firmware's LAYOUTS[0] constants
+       (2026-09-17): header 40px (tabs at x=12, CLOSED tag + clock at 420,
+       icons from 564 every 40), rows from y=40 every 44, badge 32px at x=12,
+       symbol at 56 in the 19px face, sparkline from 200 to the price column,
+       price right-aligned at 692, percent at 788. A rule marks a change of
+       kind. The list crawls continuously (scrolled at scan-out) and wraps.
+       Portrait is the same table's other column: 16 rows on 480x800. -->
+  <rect width="800" height="480" fill="#000000"/>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+    <!-- header: tabs, tag and clock, icons, rule -->
+    <text x="26" y="25" font-size="14" fill="#ffffff">ALL</text>
+    <rect x="22" y="34" width="35" height="3" fill="#ffffff"/>
+    <text x="90" y="25" font-size="14" fill="#606060">STOCKS</text>
+    <text x="180" y="25" font-size="14" fill="#606060">INDICES</text>
+    <text x="272" y="25" font-size="14" fill="#606060">CRYPTO</text>
+    <text x="356" y="25" font-size="14" fill="#606060">FX</text>
+    <text x="420" y="25" font-size="14" fill="#f8a800">CLOSED til 09:30</text>
+    <text x="548" y="25" font-size="14" fill="#a0a4a0" text-anchor="end">7:52 AM</text>
+    <g fill="none" stroke="#a0a4a0" stroke-width="2">
+      <circle cx="577" cy="17" r="6.5"/><line x1="582" y1="22" x2="590" y2="30"/>
+    </g>
+    <g fill="#a0a4a0">
+      <rect x="610" y="9" width="9" height="9" rx="2"/><rect x="622" y="9" width="9" height="9" rx="2"/>
+      <rect x="610" y="21" width="9" height="9" rx="2"/><rect x="622" y="21" width="9" height="9" rx="2"/>
+      <rect x="649" y="10" width="16" height="3"/><rect x="649" y="17" width="22" height="3"/><rect x="649" y="24" width="16" height="3"/>
+      <circle cx="693" cy="12" r="3"/><circle cx="705" cy="20" r="3"/><circle cx="699" cy="28" r="3"/>
+    </g>
+    <g stroke="#a0a4a0" stroke-width="1">
+      <line x1="689" y1="12" x2="711" y2="12"/><line x1="689" y1="20" x2="711" y2="20"/><line x1="689" y1="28" x2="711" y2="28"/>
+    </g>
+    <line x1="0" y1="39.5" x2="800" y2="39.5" stroke="#202020"/>
+
+    <!-- nine rows: badge, symbol, sparkline, price, percent -->
+    <g font-size="19">
+      <rect x="12" y="46" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="69" font-size="19" fill="#a0a4a0" text-anchor="middle">A</text>
+      <text x="56" y="69" fill="#ffffff">AAPL</text>
+      <polyline fill="none" stroke="#00ff00" stroke-width="2" points="200,68 240,64 280,66 320,58 360,60 400,54 440,56 480,50 520,52 560,48"/>
+      <text x="692" y="69" fill="#00ff00" text-anchor="end">245.12</text><text x="788" y="69" fill="#00ff00" text-anchor="end">+1.2%</text>
+
+      <rect x="12" y="90" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="113" fill="#a0a4a0" text-anchor="middle">M</text>
+      <text x="56" y="113" fill="#ffffff">MSFT</text>
+      <polyline fill="none" stroke="#ff0000" stroke-width="2" points="200,96 240,100 280,98 320,106 360,104 400,110 440,108 480,114 520,112 560,116"/>
+      <text x="692" y="113" fill="#ff0000" text-anchor="end">508.40</text><text x="788" y="113" fill="#ff0000" text-anchor="end">-0.6%</text>
+
+      <rect x="12" y="134" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="157" fill="#a0a4a0" text-anchor="middle">N</text>
+      <text x="56" y="157" fill="#ffffff">NVDA</text>
+      <polyline fill="none" stroke="#00ff00" stroke-width="2" points="200,160 240,156 280,158 320,150 360,152 400,144 440,148 480,140 520,142 560,136"/>
+      <text x="692" y="157" fill="#00ff00" text-anchor="end">176.30</text><text x="788" y="157" fill="#00ff00" text-anchor="end">+2.8%</text>
+
+      <rect x="12" y="178" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="201" fill="#a0a4a0" text-anchor="middle">A</text>
+      <text x="56" y="201" fill="#ffffff">AMD</text>
+      <polyline fill="none" stroke="#00ff00" stroke-width="2" points="200,204 240,200 280,202 320,196 360,198 400,192 440,194 480,190 520,188 560,186"/>
+      <text x="692" y="201" fill="#00ff00" text-anchor="end">158.75</text><text x="788" y="201" fill="#00ff00" text-anchor="end">+0.9%</text>
+
+      <rect x="12" y="222" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="245" fill="#a0a4a0" text-anchor="middle">H</text>
+      <text x="56" y="245" fill="#ffffff">HOOD</text>
+      <polyline fill="none" stroke="#ff0000" stroke-width="2" points="200,228 240,232 280,236 320,240 360,238 400,246 440,248 480,252 520,250 560,256"/>
+      <text x="692" y="245" fill="#ff0000" text-anchor="end">112.08</text><text x="788" y="245" fill="#ff0000" text-anchor="end">-5.5%</text>
+
+      <rect x="12" y="266" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="289" fill="#a0a4a0" text-anchor="middle">T</text>
+      <text x="56" y="289" fill="#ffffff">TSLA</text>
+      <polyline fill="none" stroke="#00ff00" stroke-width="2" points="200,292 240,290 280,286 320,288 360,282 400,284 440,278 480,280 520,276 560,274"/>
+      <text x="692" y="289" fill="#00ff00" text-anchor="end">412.20</text><text x="788" y="289" fill="#00ff00" text-anchor="end">+0.4%</text>
+
+      <!-- a rule where the kind changes: stocks to indices -->
+      <line x1="0" y1="304.5" x2="800" y2="304.5" stroke="#202020"/>
+      <rect x="12" y="310" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="333" fill="#a0a4a0" text-anchor="middle">S</text>
+      <text x="56" y="333" fill="#ffffff">S&amp;P 500</text>
+      <polyline fill="none" stroke="#00ff00" stroke-width="2" points="200,334 240,332 280,330 320,328 360,326 400,324 440,322 480,320 520,318 560,316"/>
+      <text x="692" y="333" fill="#00ff00" text-anchor="end">6,612</text><text x="788" y="333" fill="#00ff00" text-anchor="end">+0.3%</text>
+
+      <rect x="12" y="354" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="377" fill="#a0a4a0" text-anchor="middle">N</text>
+      <text x="56" y="377" fill="#ffffff">NASDAQ</text>
+      <polyline fill="none" stroke="#00ff00" stroke-width="2" points="200,380 240,376 280,374 320,372 360,368 400,366 440,362 480,360 520,358 560,354"/>
+      <text x="692" y="377" fill="#00ff00" text-anchor="end">22,380</text><text x="788" y="377" fill="#00ff00" text-anchor="end">+0.7%</text>
+
+      <!-- indices to crypto -->
+      <line x1="0" y1="392.5" x2="800" y2="392.5" stroke="#202020"/>
+      <rect x="12" y="398" width="32" height="32" rx="6" fill="#202020"/><text x="28" y="421" fill="#a0a4a0" text-anchor="middle">B</text>
+      <text x="56" y="421" fill="#ffffff">BTC</text>
+      <polyline fill="none" stroke="#ff0000" stroke-width="2" points="200,404 240,408 280,406 320,412 360,414 400,418 440,416 480,422 520,424 560,428"/>
+      <text x="692" y="421" fill="#ff0000" text-anchor="end">115,240</text><text x="788" y="421" fill="#ff0000" text-anchor="end">-1.1%</text>
+    </g>
+    <!-- the hint line, dim, below the ninth row -->
+    <text x="400" y="466" font-size="14" fill="#606060" text-anchor="middle">drag to scroll &#183; tap a stock &#183; swipe left heatmap &#183; swipe right settings</text>
+  </g>
+</svg>
