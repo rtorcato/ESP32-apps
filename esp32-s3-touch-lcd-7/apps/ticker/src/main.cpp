@@ -33,19 +33,25 @@
 // ── one colour scheme: black, white symbols, green and red numbers ───────
 static const uint16_t C_FG = RGB565_WHITE, C_GOOD = 0x07E0, C_BAD = 0xF800,
                       C_DIM = 0x630C, C_MUTED = 0xA534, C_WARN = RGB565_YELLOW;
-static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
+static constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 // A theme is the background, the rule (also the tiles) and the accent;
-// text, green and red stay. Every clear in the app goes through C_BG, so
-// a theme is three assignments and a repaint. Picked on the Themes page
+// text, green and red stay, so every background has to stay dark enough
+// for white, green and red to read on it -- the accent is where a theme
+// gets its character. Every clear in the app goes through C_BG, so a
+// theme is three assignments and a repaint. Picked on the Themes page
 // (Settings > Theme), kept in NVS.
 struct Theme { const char *name; uint16_t bg, rule, accent; };
 static const Theme THEMES[] = {
-    {"black", 0x0000, 0x2104 /* 32,32,32 */, 0xFD40},
-    {"navy", 0x0084 /* 0,16,32 */, 0x1948 /* 24,40,64 */, 0xFD40},
-    {"forest", 0x00C1 /* 0,24,8 */, 0x1984 /* 24,48,32 */, 0xFD40},
-    {"plum", 0x1803 /* 24,0,24 */, 0x30C6 /* 48,24,48 */, 0xFD40},
-    {"charcoal", 0x18E4 /* 28,28,32 */, 0x39C8 /* 56,56,64 */, 0xFD40},
-    {"slate", 0x10A3 /* 16,20,28 */, 0x2987 /* 40,48,60 */, 0xFD40},
+    {"black", rgb(0, 0, 0), rgb(32, 32, 32), rgb(248, 168, 0)},
+    {"midnight", rgb(0, 20, 48), rgb(24, 48, 88), rgb(80, 200, 255)},
+    {"ocean", rgb(0, 32, 52), rgb(0, 72, 104), rgb(0, 220, 200)},
+    {"forest", rgb(0, 36, 16), rgb(20, 72, 40), rgb(200, 255, 120)},
+    {"terminal", rgb(0, 12, 0), rgb(0, 56, 0), rgb(120, 255, 120)},
+    {"espresso", rgb(36, 20, 10), rgb(72, 44, 24), rgb(255, 180, 60)},
+    {"wine", rgb(48, 8, 20), rgb(96, 24, 44), rgb(255, 150, 170)},
+    {"plum", rgb(40, 0, 44), rgb(80, 24, 88), rgb(255, 120, 220)},
+    {"slate", rgb(24, 32, 44), rgb(52, 66, 88), rgb(120, 180, 255)},
+    {"charcoal", rgb(34, 34, 38), rgb(70, 70, 78), rgb(255, 140, 0)},
 };
 static const uint8_t N_THEMES = sizeof THEMES / sizeof THEMES[0];
 static uint8_t sTheme = 0;
@@ -1135,7 +1141,11 @@ static void drawTabsAndIcons() {
   if (tabsShown) {
     int16_t sum = 0;
     for (uint8_t i = 0; i < 5; i++) sum += textWidth(1, TAB_NAMES[i]);
-    int16_t pad = min<int16_t>(28, (L.iconX - 8 - L.tabX - sum) / 5);  // the air around a name; less on the narrow screen
+    // The air around a name; less on the narrow screen. The tabs stop 12px
+    // short of the tag, whose field clears from tagX: at 28px of air the
+    // names ran to 440 and the tag took the right half of FX.
+    int16_t edge = L.tagX > 0 ? L.tagX - 12 : L.iconX - 8;
+    int16_t pad = min<int16_t>(28, (edge - L.tabX - sum) / 5);
     for (uint8_t i = 0; i < 5; i++) {
       tabX[i] = x;
       tabW[i] = textWidth(1, TAB_NAMES[i]) + pad;
@@ -1742,10 +1752,10 @@ static void drawColumns() {
   drawHint("tap a row to turn it on or off        < settings");
 }
 // The Themes page: a tile per theme in its own colours, with a sample row
-// so the choice is seen before it is made. Three across in landscape, two
+// so the choice is seen before it is made. Four across in landscape, two
 // in portrait. A tap applies, saves and repaints the page in the new theme.
 static void themeRect(uint8_t i, int16_t *x, int16_t *y, int16_t *w, int16_t *h) {
-  uint8_t cols = L.w >= 800 ? 3 : 2, rows = (N_THEMES + cols - 1) / cols;
+  uint8_t cols = L.w >= 800 ? 4 : 2, rows = (N_THEMES + cols - 1) / cols;
   const int16_t gap = 16;
   *w = (L.w - 40 - gap * (cols - 1)) / cols;
   *h = (L.yHint - 8 - L.sY0 - gap * (rows - 1)) / rows;
@@ -1759,14 +1769,14 @@ static void drawThemeTile(uint8_t i) {
   gfx->fillRoundRect(x, y, w, h, 12, t.bg);
   gfx->drawRoundRect(x, y, w, h, 12, i == sTheme ? C_FG : t.rule);
   if (i == sTheme) gfx->drawRoundRect(x + 1, y + 1, w - 2, h - 2, 11, C_FG);
-  textAt(x + 16, y + 14, 2, C_FG, t.name);
-  gfx->fillRect(x + 16, y + 14 + GH(2) + 6, 48, 3, t.accent);
-  int16_t ry = y + h / 2;
-  gfx->drawFastHLine(x + 16, ry - 8, w - 32, t.rule);
-  textAt(x + 16, ry, 2, C_FG, "AAPL");
-  textAt(x + w - 16 - textWidth(2, "+1.2%"), ry, 2, C_GOOD, "+1.2%");
-  textAt(x + 16, ry + GH(2) + 8, 2, C_MUTED, "MSFT");
-  textAt(x + w - 16 - textWidth(2, "-0.6%"), ry + GH(2) + 8, 2, C_BAD, "-0.6%");
+  textAt(x + 14, y + 10, 2, C_FG, t.name);
+  gfx->fillRect(x + 14, y + 10 + GH(2) + 4, 40, 3, t.accent);
+  int16_t ry = y + h / 2 + 2;
+  gfx->drawFastHLine(x + 14, ry - 6, w - 28, t.rule);
+  textAt(x + 14, ry, 2, C_FG, "AAPL");
+  textAt(x + w - 14 - textWidth(2, "+1.2%"), ry, 2, C_GOOD, "+1.2%");
+  textAt(x + 14, ry + GH(2) + 4, 2, C_MUTED, "MSFT");
+  textAt(x + w - 14 - textWidth(2, "-0.6%"), ry + GH(2) + 4, 2, C_BAD, "-0.6%");
 }
 static void drawThemes() {
   drawPanel("THEMES", C_MUTED, nullptr, 0, true, 4, "< THEMES", "colours for every page");
