@@ -12,6 +12,10 @@ Sources, all tested, all keyless:
   coins       https://assets.coincap.io/assets/icons/<label lowercased>@2x.png
   currencies  https://flagcdn.com/w320/<country>.png  (the currency's country)
 
+A symbol whose source picks the wrong mark (PEP comes back as PepsiCo's
+corporate globe, not the Pepsi circle) can name its own PNG in config.json:
+  "logos": {"PEP": "https://assets.parqet.com/logos/symbol/PEP?format=png"}
+
 logo.clearbit.com is dead (DNS no longer resolves) and img.logo.dev wants a
 token, so neither is used.
 
@@ -161,7 +165,10 @@ def is_glyph(p, mode: str) -> bool:
         return min(r, g, b) <= WHITE_BG  # anything not near-white
     if mode == "alpha":
         return a >= 32  # the alpha channel says so
-    return max(r, g, b) > 24  # opaque, no alpha: near-black IS the background
+    # Opaque, no alpha: near-black IS the background. Up to 48, not 24: SpaceX
+    # arrives on a dark grey gradient (11..33 per channel) that read as mark,
+    # so the whole square was inverted to white and the wordmark knocked out.
+    return max(r, g, b) > 48
 
 
 def classify(px, w, h):
@@ -335,7 +342,9 @@ def main() -> int:
     tmp.mkdir(exist_ok=True)
 
     ok = skipped = faint = 0
+    overrides = wl.get("logos", {})
     for label, url, photo in targets:
+        url = overrides.get(label, url)
         print(f"{label}:")
         png = fetch(url)
         if not png:

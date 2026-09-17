@@ -117,5 +117,6 @@
     { "id": "ethereum", "label": "ETH" },
     { "id": "solana", "label": "SOL" },
     { "id": "cardano", "label": "ADA" }
-  ]
+  ],
+  "logos": {"PEP": "https://assets.parqet.com/logos/symbol/PEP?format=png"}
 }
