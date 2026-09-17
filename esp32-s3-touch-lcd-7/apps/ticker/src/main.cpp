@@ -2268,14 +2268,45 @@ static void drawHeat(bool full) {
     drawHint("tap a tile        < search        list >");
     cHeat[0] = '\0';
   }
-  char key[200] = "";
+  // Not until the prices are in: a sweep lands one row a second, and a
+  // relayout per row flickered. A spinner and the count until every stock
+  // has a price (or the first sweep is done, for a symbol that never will);
+  // after that, one repaint per finished sweep.
+  uint8_t total = 0, valid = 0;
   for (uint8_t i = 0; i < nRows; i++) {
-    const Row &r = rows[i];
-    if (r.kind != K_STOCK) continue;
-    char k[8];
-    snprintf(k, sizeof k, "%d,", r.valid ? (int)(r.pct * 10) : -9999);
-    strlcat(key, k, sizeof key);
+    if (rows[i].kind != K_STOCK) continue;
+    total++;
+    if (rows[i].valid) valid++;
   }
+  bool ready = total && (valid == total || lastStock != 0);
+  if (!ready) {
+    static uint32_t spinAt = 0;
+    static uint8_t spinI = 0;
+    int16_t cx = L.w / 2, cy = L.hY0 + 130;
+    if (strcmp(cHeat, "spin") != 0) {
+      strcpy(cHeat, "spin");
+      gfx->fillRect(0, L.hY0, L.w, L.yHint - 8 - L.hY0, C_BG);
+      const char *m = "fetching prices";
+      textAt(cx - textWidth(2, m) / 2, cy + 48, 2, C_MUTED, m);
+      spinAt = 0;
+    }
+    if (millis() - spinAt > 90) {  // eight dots, the head bright, a tail fading behind it
+      spinAt = millis();
+      spinI = (spinI + 1) % 8;
+      for (uint8_t d = 0; d < 8; d++) {
+        float a = d * 3.14159265f / 4;
+        uint8_t back = (spinI + 8 - d) % 8;
+        uint16_t c = back == 0 ? C_FG : back == 1 ? C_MUTED : back == 2 ? C_DIM : C_RULE;
+        gfx->fillCircle(cx + (int16_t)lroundf(26 * cosf(a)), cy + (int16_t)lroundf(26 * sinf(a)), 5, c);
+      }
+      char b[16];
+      snprintf(b, sizeof b, "%u of %u", valid, total);
+      fieldCentre(cx, cy + 48 + GH(2) + 6, 12, 1, C_DIM, b);
+    }
+    return;
+  }
+  char key[32];
+  snprintf(key, sizeof key, "%lu|%u", (unsigned long)lastStock, valid);
   if (strcmp(key, cHeat) == 0) return;
   strcpy(cHeat, key);
   layoutHeat();
