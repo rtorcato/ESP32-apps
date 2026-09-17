@@ -23,11 +23,13 @@
 #define LCD_H 480
 
 // Calibration knobs for the RGB timing. Both sources run 16MHz with an
-// inverted pixel clock; that flickered here even on a still page, so 12MHz
-// (~28 frames a second, plenty for a ticker) asks a quarter less of the
-// PSRAM the panel scans out of. If it still flickers, go lower; if the
-// colours are mirrored (cyan draws yellow), swap the R and B pin groups.
-#define LCD_PCLK_HZ 12000000
+// inverted pixel clock. Not lower: 12MHz (tried to ease the PSRAM load)
+// showed a picture one day and on the next the panel would not lock onto
+// it at all -- white, then its no-signal colour cycle, while the driver
+// reported success (2026-09-17). Flicker is the bounce buffer's job below,
+// not the clock's. If the colours are mirrored (cyan draws yellow), swap
+// the R and B pin groups.
+#define LCD_PCLK_HZ 16000000
 #define LCD_PCLK_NEG 1
 
 // The panel DMA reads its framebuffer from PSRAM; whenever the CPU competes
