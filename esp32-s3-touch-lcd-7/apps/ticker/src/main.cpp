@@ -155,6 +155,7 @@ static const char *const ROT_NAMES[] = {"landscape", "portrait", "landscape, fli
 static uint8_t sRot = 0;
 
 static Arduino_GFX *gfx;
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);  // the pages draw with a few KB of locals; 8KB was one copied table from a reboot
 static bool touchHeld = false;  // set by pollGesture; the list freezes while a finger is down
 
 // ── settings the finger can change ───────────────────────────────────────
@@ -2451,7 +2452,7 @@ static void drawNews(bool full) {
     drawHint(all ? "^ pages        v list" : "< next        v stock        prev >");
     cNews[0] = '\0';
   }
-  NewsItem items[NEWS_N];
+  static NewsItem items[NEWS_N];  // 9KB: the loop task's stack is not the place (it rebooted the board)
   bool ok[NEWS_N];
   uint8_t n, ver;
   bool mine, failed;
