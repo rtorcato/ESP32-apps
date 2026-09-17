@@ -1178,13 +1178,30 @@ static void drawTabsAndIcons() {
 // The header is on every page, drawn right after a page's fillScreen. The
 // right side -- the icons and the clock -- is fixed; the left side is the
 // page's: the section tabs on the list, elsewhere a title (and a note).
+// A title that starts with "< " gets a drawn back mark instead -- the
+// chevron's mirror, its point at `left` -- and the mark and the title are
+// a button: headerTap() sends a tap there back a page.
+static bool headerBack = false;
+static void backMark(int16_t left, int16_t cy, uint16_t c) {
+  for (int8_t d = 0; d < 2; d++) {
+    gfx->drawLine(left + 8 + d, cy - 8, left + d, cy, c);
+    gfx->drawLine(left + d, cy, left + 8 + d, cy + 8, c);
+  }
+}
 static void drawHeader(uint8_t lit, const char *title, const char *note) {
   litIcon = lit;
   tabsShown = title == nullptr;
   drawTabsAndIcons();
+  headerBack = title && strncmp(title, "< ", 2) == 0;
   if (title) {
-    textAt(L.tabX, 10, 2, C_FG, title);
-    if (note) textAt(L.tabX + textWidth(2, title) + 14, 14, 1, C_MUTED, note);
+    const char *t = headerBack ? title + 2 : title;
+    int16_t tx = L.tabX;
+    if (headerBack) {
+      backMark(L.tabX + 2, 10 + FACES[1].cap / 2, C_MUTED);
+      tx += 24;
+    }
+    textAt(tx, 10, 2, C_FG, t);
+    if (note) textAt(tx + textWidth(2, t) + 14, 14, 1, C_MUTED, note);
   }
   cHead[0] = '\0';
 }
@@ -3098,6 +3115,16 @@ static void openSearch();
 static void openHeat();
 static void openNews(uint8_t idx);
 static void headerTap(int16_t x) {
+  if (headerBack && x < L.tabX + 140) {  // the back mark and the title beside it: one page up
+    if (view == View::Columns || view == View::Themes || view == View::Info) {
+      view = View::Settings;
+      pageOpenedAt = millis();
+      drawSettings();
+    } else {
+      backToList();
+    }
+    return;
+  }
   int8_t h = hitHeader(x);
   if (h >= 0 && h < 5) {
     if (h != sect) {
