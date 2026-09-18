@@ -223,6 +223,13 @@ inline Arduino_GFX *boardDisplay() {
   return &gfx;
 }
 inline uint16_t *boardFramebuffer() { return boarddetail::fb; }
+// Put the picture back where it belongs. When the scan-out runs dry -- a
+// JPEG decoding into PSRAM, a flash write -- the frame restarts part way
+// and the image sits rolled until the next restart. This asks the driver
+// to restart the transfer at the next vsync; in sync it changes nothing.
+inline void boardPanelResync() {
+  if (boarddetail::panelHandle) esp_lcd_rgb_panel_restart(boarddetail::panelHandle);
+}
 // Rotation, 0-3 as Arduino_GFX counts them: 0 landscape, 1 portrait (the
 // connector at the bottom), 2 landscape upside down, 3 portrait the other
 // way. The canvas maps each to buffer memory as: 0 line=y col=x;

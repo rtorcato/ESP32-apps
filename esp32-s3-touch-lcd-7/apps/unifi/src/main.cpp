@@ -37,7 +37,7 @@ static char wifiSsid[33] = "", wifiPass[65] = "";
 
 // ── the site, its devices, its clients ───────────────────────────────────
 struct Device {
-  char id[40], name[24], model[12], ip[16];
+  char id[40], name[24], model[32], ip[16];  // 32: "UniFi Dream Machine PRO SE" must survive whole for the gateway match
   bool online, gateway;
   uint32_t uptime;
   float cpu, mem, rx, tx;  // percent, percent, bits per second
@@ -70,11 +70,22 @@ struct Camera { char id[32], name[24], model[24]; bool connected; uint32_t shotA
 static const uint8_t MAX_CAM = 12;
 static Camera cam[MAX_CAM];
 static uint8_t nCam = 0, camPage = 0, camSel = 0;
+static uint8_t camOrder[MAX_CAM], nCamShown = 0;  // the cameras on show: the connected ones, or all (Settings > Cameras)
+static uint8_t sAllCams = 0;
+static const char *const CAMS_NAMES[] = {"online only", "all cameras"};
+static void buildCamOrder() {
+  nCamShown = 0;
+  for (uint8_t i = 0; i < nCam; i++)
+    if (sAllCams || cam[i].connected) camOrder[nCamShown++] = i;
+}
 static uint32_t camAt = 0, camVer = 0;
-static const int16_t TILE_W = 320, TILE_H = 180, FULL_W = 640, FULL_H = 360;
-static uint16_t *tileImg[4], *fullImg = nullptr;  // PSRAM
-static bool tileOk[4], fullOk = false;
+static const int16_t TILE_W = 320, TILE_H = 180, FULL_W = 640, FULL_H = 360, THUMB_W = 160, THUMB_H = 90;
+static uint16_t *tileImg[4], *fullImg = nullptr, *thumbImg[4];  // PSRAM
+static bool tileOk[4], fullOk = false, thumbOk[4];
+static uint32_t thumbAt[4];
 static volatile bool wantFull = false;  // the single view is open: fetch that camera, full size
+static volatile bool homeShowing = false;  // the overview is open: keep its thumbnails fresh
+static volatile bool resyncWanted = false;  // the fetch task did something heavy: the loop resyncs the panel
 static uint16_t *jpegDst = nullptr;
 static int16_t jpegW = 0, jpegH = 0;
 static int jpegDraw(JPEGDRAW *d) {
@@ -106,7 +117,7 @@ static bool decodeJpeg(uint8_t *data, int len, uint16_t *dst, int16_t w, int16_t
 
 // ── fetching (core 0 task) ───────────────────────────────────────────────
 static uint8_t *buf = nullptr;
-static const size_t CAP = 96 * 1024;  // 200 clients is ~60KB
+static const size_t CAP = 64 * 1024;  // internal RAM: the network's writes and the JPEG reads then leave PSRAM to the panel (a snapshot is 45KB at most; 200 clients ~54KB)
 static int apiGet(NetworkClientSecure &client, const char *path, uint8_t *out, size_t cap, const char *app = "network") {
   char url[220];
   snprintf(url, sizeof url, "https://%s/proxy/%s/integration/v1%s", host, app, path);
@@ -299,28 +310,39 @@ static void fetchCameras(NetworkClientSecure &client) {
     n++;
   }
   nCam = n;
+  buildCamOrder();
   camAt = millis();
   camVer++;
   xSemaphoreGive(mux);
   Serial.printf("protect: %u cameras (heap %u)\n", n, ESP.getFreeHeap());
 }
 // One snapshot: the camera's tile (half size) or the single view (full).
-static void fetchSnapshot(NetworkClientSecure &client, uint8_t ci, bool full) {
+// mode 0: the grid tile (half size, slot = position on the page); 1: the single view (full); 2: an overview thumbnail (quarter, slot k)
+static void fetchSnapshot(NetworkClientSecure &client, uint8_t ci, uint8_t mode, uint8_t slot) {
   if (ci >= nCam || !cam[ci].connected) return;
   char path[80];
   snprintf(path, sizeof path, "/cameras/%s/snapshot?highQuality=false", cam[ci].id);
   int len = apiGet(client, path, buf, CAP, "protect");
   if (len <= 0) return;
-  uint8_t slot = ci % 4;
-  if (full) {
+  bool ok = false;
+  if (mode == 1) {
     if (!fullImg) fullImg = (uint16_t *)heap_caps_malloc((size_t)FULL_W * FULL_H * 2, MALLOC_CAP_SPIRAM);
-    if (fullImg && decodeJpeg(buf, len, fullImg, FULL_W, FULL_H, 0)) { fullOk = true; camVer++; }
-  } else {
+    ok = fullImg && decodeJpeg(buf, len, fullImg, FULL_W, FULL_H, 0);
+    if (ok) fullOk = true;
+    cam[ci].shotAt = millis();
+  } else if (mode == 0) {
     if (!tileImg[slot]) tileImg[slot] = (uint16_t *)heap_caps_malloc((size_t)TILE_W * TILE_H * 2, MALLOC_CAP_SPIRAM);
-    if (tileImg[slot] && decodeJpeg(buf, len, tileImg[slot], TILE_W, TILE_H, JPEG_SCALE_HALF)) { tileOk[slot] = true; camVer++; }
+    ok = tileImg[slot] && decodeJpeg(buf, len, tileImg[slot], TILE_W, TILE_H, JPEG_SCALE_HALF);
+    if (ok) tileOk[slot] = true;
+    cam[ci].shotAt = millis();
+  } else {
+    if (!thumbImg[slot]) thumbImg[slot] = (uint16_t *)heap_caps_malloc((size_t)THUMB_W * THUMB_H * 2, MALLOC_CAP_SPIRAM);
+    ok = thumbImg[slot] && decodeJpeg(buf, len, thumbImg[slot], THUMB_W, THUMB_H, JPEG_SCALE_QUARTER);
+    if (ok) thumbOk[slot] = true;
+    thumbAt[slot] = millis();
   }
-  cam[ci].shotAt = millis();
-  Serial.printf("snapshot %s: %d bytes, %s %s (heap %u)\n", cam[ci].name, len, full ? "full" : "tile", (full ? fullOk : tileOk[slot]) ? "ok" : "FAILED", ESP.getFreeHeap());
+  if (ok) camVer++;
+  resyncWanted = true;
 }
 static volatile bool camsShowing = false;  // the grid is open: keep its four tiles fresh
 static void fetchTask(void *) {
@@ -330,16 +352,25 @@ static void fetchTask(void *) {
     vTaskDelay(pdMS_TO_TICKS(500));
     if (WiFi.status() != WL_CONNECTED || !buf || !apiKey[0]) continue;
     // Cameras first while they are on screen: one snapshot a pass, the stalest of the page
-    if (wantFull) { fetchSnapshot(client, camSel, true); vTaskDelay(pdMS_TO_TICKS(1500)); continue; }
-    if (camsShowing && nCam) {
+    if (wantFull) { fetchSnapshot(client, camSel, 1, 0); vTaskDelay(pdMS_TO_TICKS(1500)); continue; }
+    if (camsShowing && nCamShown) {
       int8_t pick = -1;
       uint32_t oldest = 0xFFFFFFFF;
       for (uint8_t k = 0; k < 4; k++) {
-        uint8_t ci = camPage * 4 + k;
-        if (ci >= nCam || !cam[ci].connected) continue;
-        if (cam[ci].shotAt < oldest) { oldest = cam[ci].shotAt; pick = ci; }
+        uint8_t p = camPage * 4 + k;
+        if (p >= nCamShown) continue;
+        uint8_t ci = camOrder[p];
+        if (!cam[ci].connected) continue;
+        if (cam[ci].shotAt < oldest) { oldest = cam[ci].shotAt; pick = p; }
       }
-      if (pick >= 0 && (cam[pick].shotAt == 0 || millis() - cam[pick].shotAt > 2000)) { fetchSnapshot(client, (uint8_t)pick, false); continue; }
+      if (pick >= 0 && (cam[camOrder[pick]].shotAt == 0 || millis() - cam[camOrder[pick]].shotAt > 4000)) { fetchSnapshot(client, camOrder[pick], 0, (uint8_t)(pick % 4)); continue; }
+    }
+    if (homeShowing && nCamShown) {  // the overview's thumbnails, the stalest, every five seconds each
+      int8_t pick = -1;
+      uint32_t oldest = 0xFFFFFFFF;
+      for (uint8_t k = 0; k < 4 && k < nCamShown; k++)
+        if (cam[camOrder[k]].connected && thumbAt[k] < oldest) { oldest = thumbAt[k]; pick = k; }
+      if (pick >= 0 && (thumbAt[pick] == 0 || millis() - thumbAt[pick] > 10000)) { fetchSnapshot(client, camOrder[pick], 2, (uint8_t)pick); continue; }
     }
     if (camAt == 0 || millis() - camAt > 60000) { fetchCameras(client); continue; }
     if (!siteId[0]) { if (!fetchSite(client)) { vTaskDelay(pdMS_TO_TICKS(10000)); continue; } Serial.printf("unifi: site %s\n", siteName); }
@@ -350,12 +381,12 @@ static void fetchTask(void *) {
 }
 
 // ── pages ────────────────────────────────────────────────────────────────
-enum class View { Overview, Devices, Clients, Cameras, Camera, Settings, Themes, Info, Choice, Confirm, Setup, Kb };
+enum class View { Splash, Overview, Devices, Clients, Cameras, Camera, Settings, Themes, Info, Choice, Confirm, Setup, Kb };
 static uint32_t shownCamVer = 0;
 static uint8_t kbField_ = 0;  // 0 the console, 1 the key
 static char editBuf[80];
 static View view = View::Overview, confirmFrom = View::Settings;
-static uint8_t sect = 0, sClock = 0, chN = 0, chSel = 0;
+static uint8_t sect = 0, sClock = 0, chN = 0, chSel = 0, chWhich = 0;
 static uint16_t listTop = 0;
 static const char *const TABS[] = {"OVERVIEW", "DEVICES", "CLIENTS", "CAMERAS"}, *const CLOCK_NAMES[] = {"12-hour", "24-hour"};
 static const uint8_t N_TABS = 4;
@@ -367,6 +398,7 @@ static void saveSettings() {
   prefs.begin("unifi", false);
   prefs.putUChar("bg", sTheme);
   prefs.putUChar("clk", sClock);
+  prefs.putUChar("cams", sAllCams);
   prefs.putString("host", host);
   prefs.putString("key", apiKey);
   prefs.end();
@@ -419,7 +451,6 @@ static void drawHeader() {
     if (on) gfx->fillRect(x + 9, 34, w - 18, 3, C_FG);
     x += w;
   }
-  if (siteName[0]) textAt(x + 20, 14, 1, C_DIM, siteName);
   settingsIcon(676, C_MUTED);
   gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
 }
@@ -437,15 +468,31 @@ static void drawClock() {
   fieldRight(X_RIGHT, 12, 8, 1, C_MUTED, clk);
 }
 static void tile(uint8_t i, const char *label, const char *big, const char *small, uint16_t bigColour) {
-  int16_t x = 20 + i * 256, y = 52, w = 240, h = 132;
+  int16_t x = 20 + i * 256, y = 176, w = 240, h = 120;
   gfx->fillRoundRect(x, y, w, h, 14, towardsWhite(C_BG, 6));
   gfx->drawRoundRect(x, y, w, h, 14, C_RULE);
-  textAt(x + 18, y + 14, 1, C_MUTED, label);
-  textAt(x + 18, y + 40, 3, bigColour, big);
-  textAt(x + 18, y + 96, 1, C_DIM, small);
+  textAt(x + 18, y + 12, 1, C_MUTED, label);
+  textAt(x + 18, y + 36, 3, bigColour, big);
+  textAt(x + 18, y + 88, 1, C_DIM, small);
+}
+static void drawThumbs(bool force) {  // up to four cameras at 160x90 across the middle of the overview
+  static char kTh[4][40];
+  for (uint8_t k = 0; k < 4; k++) {
+    int16_t x = 20 + k * 190, y = 52;
+    char key[40] = "";
+    uint8_t ci = k < nCamShown ? camOrder[k] : 255;
+    if (ci < nCam) snprintf(key, sizeof key, "%s|%lu", cam[ci].name, (unsigned long)(thumbOk[k] ? thumbAt[k] : 0));
+    if (!force && strcmp(key, kTh[k]) == 0) continue;
+    strcpy(kTh[k], key);
+    gfx->fillRect(x, y, 190, THUMB_H + 26, C_BG);
+    if (ci >= nCam) continue;
+    if (thumbOk[k] && thumbImg[k]) gfx->draw16bitRGBBitmap(x, y, thumbImg[k], THUMB_W, THUMB_H);
+    else { gfx->fillRoundRect(x, y, THUMB_W, THUMB_H, 6, towardsWhite(C_BG, 6)); textAt(x + 8, y + THUMB_H / 2 - 8, 1, C_DIM, "loading..."); }
+    textAt(x, y + THUMB_H + 8, 1, C_DIM, cam[ci].name);
+  }
 }
 static void drawChart() {  // the gateway's throughput: rx in green, tx in the accent, the last half hour
-  int16_t x = 20, y = 208, w = LCD_W - 40, h = Y_HINT - 12 - y;
+  int16_t x = 20, y = 314, w = LCD_W - 40, h = Y_HINT - 12 - y;
   gfx->fillRect(x - 1, y - 1, w + 2, h + 2, C_BG);
   gfx->drawRect(x - 1, y - 1, w + 2, h + 2, C_RULE);
   if (nSamples < 2) {
@@ -485,12 +532,13 @@ static void drawOverview(bool full) {
     drawHeader();
     cHead[0] = '\0';
     kOv[0] = '\0';
-    drawHint(apiKey[0] ? "tap a tab        hold the header to shut down" : "put the console's API key in data/config.local.json");
+    drawHint(apiKey[0] ? "" : "put the console's API key in data/config.local.json");
   }
   drawClock();
   uint8_t online = 0;
   const Device *gw = nullptr;
   for (uint8_t i = 0; i < nDev; i++) { if (dev[i].online) online++; if (dev[i].gateway && !gw) gw = &dev[i]; }
+  drawThumbs(full);
   char key[96];
   snprintf(key, sizeof key, "%u|%u|%u|%u|%.0f|%.0f|%lu|%lu|%s", nCli, nWireless, online, nDev, gw ? gw->rx : 0.0f, gw ? gw->tx : 0.0f,
            (unsigned long)(gw ? gw->uptime / 60 : 0), (unsigned long)nSamples, lastErr);
@@ -503,7 +551,9 @@ static void drawOverview(bool full) {
   snprintf(big, sizeof big, "%u / %u", online, nDev);
   snprintf(small, sizeof small, "online / all");
   tile(1, "DEVICES", devAt ? big : "--", devAt ? small : lastErr[0] ? lastErr : "waiting for the console", online == nDev ? C_GOOD : C_WARN);
-  if (gw) {
+  if (gw && gw->uptime == 0) {
+    tile(2, "GATEWAY", gw->name[0] ? gw->name : gw->model, "waiting for its statistics", C_MUTED);
+  } else if (gw) {
     char r[16], t[16], up[16];
     fmtRate(gw->rx, r, sizeof r);
     fmtRate(gw->tx, t, sizeof t);
@@ -529,15 +579,17 @@ static void drawDevRow(uint8_t slot) {
   gfx->fillRect(0, y, LCD_W, ROW_H, C_BG);
   if (i >= nDev) return;
   const Device &d = dev[i];
+  // four columns that cannot meet: the name (cut at 22 letters), the address, uptime, CPU
   gfx->fillCircle(28, y + 22, 6, d.online ? C_GOOD : C_BAD);
-  textAt(50, y + 12, 2, d.online ? C_FG : C_MUTED, d.name[0] ? d.name : d.model);
-  textAt(300, y + 15, 1, C_MUTED, d.model);
-  textAt(400, y + 15, 1, C_DIM, d.ip);
+  char nm[24];
+  snprintf(nm, sizeof nm, "%.22s", d.name[0] ? d.name : d.model);
+  textAt(50, y + 12, 2, d.online ? C_FG : C_MUTED, nm);
+  textAt(380, y + 15, 1, C_DIM, d.ip);
   char b[24];
   if (d.online) {
     fmtUptime(d.uptime, b, sizeof b);
-    textAt(540, y + 15, 1, C_MUTED, b);
-    snprintf(b, sizeof b, "cpu %.0f%%  mem %.0f%%", d.cpu, d.mem);
+    textAt(640 - textWidth(1, b), y + 15, 1, C_MUTED, b);
+    snprintf(b, sizeof b, "cpu %.0f%%", d.cpu);
     textAt(X_RIGHT - textWidth(1, b), y + 15, 1, C_DIM, b);
   } else {
     textAt(X_RIGHT - textWidth(1, "offline"), y + 15, 1, C_BAD, "offline");
@@ -582,7 +634,7 @@ static void drawList(bool full) {
     drawHeader();
     cHead[0] = '\0';
     for (uint8_t s = 0; s < ROWS; s++) cRows[s][0] = '\0';
-    drawHint(sect == 1 ? "drag for more        online, model, address, uptime, load" : "drag for more        newest connection first");
+    drawHint(sect == 1 ? "name, address, uptime, cpu" : "newest connection first");
   }
   drawClock();
   uint16_t n = sect == 1 ? nDev : nCli;
@@ -593,7 +645,7 @@ static void drawList(bool full) {
 // a tap opens one at 640x360, refreshed every couple of seconds.
 static void drawCamTile(uint8_t k, bool force) {
   static char kTile[4][48];
-  uint8_t ci = camPage * 4 + k;
+  uint8_t p = camPage * 4 + k, ci = p < nCamShown ? camOrder[p] : 255;
   int16_t x = 60 + (k % 2) * 360, y = 52 + (k / 2) * 202;
   char key[48] = "";
   if (ci < nCam) snprintf(key, sizeof key, "%s|%d|%lu", cam[ci].name, cam[ci].connected, (unsigned long)(tileOk[k] ? cam[ci].shotAt : 0));
@@ -616,8 +668,8 @@ static void drawCameras(bool full) {
     drawHeader();
     cHead[0] = '\0';
     char h[40];
-    snprintf(h, sizeof h, "%s%s", "tap a camera for the full view", nCam > 4 ? "        ^ v  pages" : "");
-    drawHint(nCam ? h : "no cameras: is Protect on this console?");
+    snprintf(h, sizeof h, "%s%s", "tap a camera for the full view", nCamShown > 4 ? "        ^ v  pages" : "");
+    drawHint(nCamShown ? h : nCam ? "no camera online (Settings > Cameras shows all)" : "no cameras: is Protect on this console?");
   }
   drawClock();
   for (uint8_t k = 0; k < 4; k++) drawCamTile(k, full);
@@ -642,7 +694,7 @@ static void drawCamera(bool full) {
 static int8_t hitCamTile(int16_t tx, int16_t ty) {
   for (uint8_t k = 0; k < 4; k++) {
     int16_t x = 60 + (k % 2) * 360, y = 52 + (k / 2) * 202;
-    if (tx >= x && tx < x + TILE_W && ty >= y && ty < y + TILE_H && camPage * 4 + k < nCam) return k;
+    if (tx >= x && tx < x + TILE_W && ty >= y && ty < y + TILE_H && camPage * 4 + k < nCamShown) return k;
   }
   return -1;
 }
@@ -654,13 +706,23 @@ static void openCamera(uint8_t ci) {
   view = View::Camera;
   drawCamera(true);
 }
+static void drawSplash(const char *status) {
+  gfx->fillScreen(C_BG);
+  const char *name = "NETWORK";
+  textAt((LCD_W - textWidth(5, name)) / 2, (LCD_H - FACES[4].cap) / 2 - 20, 5, C_FG, name);
+  gfx->fillRect(LCD_W / 2 - 40, (LCD_H - FACES[4].cap) / 2 - 20 + FACES[4].cap + 22, 80, 3, C_GOLD);
+  const char *credit = "made by Richard Torcato";
+  textAt((LCD_W - textWidth(1, credit)) / 2, 424, 1, C_MUTED, credit);
+  drawHint(status);
+}
 static void drawSettings() {
   pageHeader("SETTINGS");
   settingRow(0, "Clock", CLOCK_NAMES[sClock]);
-  settingRow(1, "Theme", THEMES[sTheme].name);
-  settingRow(2, "Info", "");
-  settingRow(3, "Console", host);
-  settingRow(4, "Shut down", "", C_BAD);
+  settingRow(1, "Cameras", CAMS_NAMES[sAllCams]);
+  settingRow(2, "Theme", THEMES[sTheme].name);
+  settingRow(3, "Info", "");
+  settingRow(4, "Console", host);
+  settingRow(5, "Shut down", "", C_BAD);
   drawHint("< overview");
 }
 static void drawInfo() {
@@ -679,6 +741,7 @@ static void drawInfo() {
 }
 static void drawCurrent(bool full) {
   camsShowing = view == View::Cameras;
+  homeShowing = view == View::Overview;
   if (view == View::Overview) drawOverview(full);
   else if (view == View::Cameras) drawCameras(full);
   else drawList(full);
@@ -736,7 +799,7 @@ void setup() {
   delay(300);
   bool xp = boardBegin();
   mux = xSemaphoreCreateMutex();
-  buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_SPIRAM);  // 96KB: internal RAM could not spare it (7.9KB of heap left, Wi-Fi would not join)
+  buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // with the 20-line bounce buffers there is room for it inside
   cli = (NetClient *)heap_caps_calloc(MAX_CLI, sizeof(NetClient), MALLOC_CAP_SPIRAM);
   for (const char *path : {"/config.json", "/config.local.json"}) {  // the committed one, then yours (gitignored) on top
     if (!cfgLoad(path)) continue;
@@ -756,6 +819,7 @@ void setup() {
   prefs.begin("unifi", true);
   sTheme = prefs.getUChar("bg", 0) % N_THEMES;
   sClock = prefs.getUChar("clk", 0) % 2;
+  sAllCams = prefs.getUChar("cams", 0) % 2;
   if (prefs.isKey("key")) {  // typed on the board: beats the files
     prefs.getString("host", host, sizeof host);
     prefs.getString("key", apiKey, sizeof apiKey);
@@ -769,8 +833,12 @@ void setup() {
   Serial.printf("board: expander %s, panel %s, psram %u free\n", xp ? "ok" : "NO ACK", ok ? "ok" : "FAILED", ESP.getFreePsram());
   boardSetRotation(0);
   gfx->setTextWrap(false);
-  if (apiKey[0]) drawOverview(true);
-  else { view = View::Setup; drawSetup(); }
+  if (apiKey[0]) {
+    view = View::Splash;
+    char st[48];
+    snprintf(st, sizeof st, "connecting to %.24s", wifiSsid[0] ? wifiSsid : "(no network)");
+    drawSplash(st);
+  } else { view = View::Setup; drawSetup(); }
   backlight(255);
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
@@ -786,16 +854,22 @@ void loop() {
   int16_t tx, ty, ddy = 0;
   Gesture g = pollGesture(&tx, &ty, &ddy);
   static uint32_t headerHoldAt = 0;
-  if (g == Gesture::LongPress && ty < Y_ROW0 && view != View::Confirm) headerHoldAt = millis();
+  if (g == Gesture::LongPress && ty < Y_ROW0 && view != View::Confirm && view != View::Splash) headerHoldAt = millis();
   if (!touchHeld) headerHoldAt = 0;
   if (headerHoldAt && millis() - headerHoldAt > 1300) { headerHoldAt = 0; openConfirm(); g = Gesture::None; }
-  if (view == View::Camera) {
+  if (view == View::Splash) {  // until the site answers, or a tap
+    static bool said = false;
+    if (WiFi.status() == WL_CONNECTED && !said) { said = true; drawHint("asking the console..."); }
+    if (siteId[0] || g == Gesture::TapUp) { view = View::Overview; sect = 0; drawCurrent(true); }
+  } else if (view == View::Camera) {
     if (g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140) || (g == Gesture::TapUp && ty >= Y_ROW0)) {
       wantFull = false;
       view = View::Cameras;
       drawCurrent(true);
-    } else if ((g == Gesture::SwipeLeft || g == Gesture::SwipeRight) && nCam) {
-      openCamera((camSel + (g == Gesture::SwipeLeft ? 1 : nCam - 1)) % nCam);
+    } else if ((g == Gesture::SwipeLeft || g == Gesture::SwipeRight) && nCamShown) {
+      uint8_t p = 0;
+      for (uint8_t i = 0; i < nCamShown; i++) if (camOrder[i] == camSel) p = i;
+      openCamera(camOrder[(p + (g == Gesture::SwipeLeft ? 1 : nCamShown - 1)) % nCamShown]);
     } else if (shownCamVer != camVer) {
       shownCamVer = camVer;
       drawCamera(false);
@@ -806,9 +880,9 @@ void loop() {
     uint16_t n = sect == 1 ? nDev : nCli;
     if (view == View::Cameras && g == Gesture::TapUp && ty >= Y_ROW0) {
       int8_t k = hitCamTile(tx, ty);
-      if (k >= 0) openCamera((uint8_t)(camPage * 4 + k));
-    } else if (view == View::Cameras && (g == Gesture::SwipeUp || g == Gesture::SwipeDown) && nCam > 4) {
-      uint8_t pages = (nCam + 3) / 4;
+      if (k >= 0) openCamera(camOrder[camPage * 4 + k]);
+    } else if (view == View::Cameras && (g == Gesture::SwipeUp || g == Gesture::SwipeDown) && nCamShown > 4) {
+      uint8_t pages = (nCamShown + 3) / 4;
       camPage = (camPage + (g == Gesture::SwipeUp ? 1 : pages - 1)) % pages;
       memset(tileOk, 0, sizeof tileOk);
       for (uint8_t i = 0; i < nCam; i++) cam[i].shotAt = 0;
@@ -875,12 +949,13 @@ void loop() {
   } else if (view == View::Settings) {
     if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = viewOf(sect); drawCurrent(true); }
     else if (g == Gesture::TapUp) {
-      int8_t i = hitSettingRow(ty, 5);
-      if (i == 0) { chN = 2; chSel = sClock; view = View::Choice; drawChoiceSheet("CLOCK", CLOCK_NAMES, chN, chSel); }
-      else if (i == 1) { view = View::Themes; drawThemesPage(); }
-      else if (i == 2) { view = View::Info; drawInfo(); }
-      else if (i == 3) { view = View::Setup; drawSetup(); }
-      else if (i == 4) openConfirm();
+      int8_t i = hitSettingRow(ty, 6);
+      if (i == 0) { chWhich = 0; chN = 2; chSel = sClock; view = View::Choice; drawChoiceSheet("CLOCK", CLOCK_NAMES, chN, chSel); }
+      else if (i == 1) { chWhich = 1; chN = 2; chSel = sAllCams; view = View::Choice; drawChoiceSheet("CAMERAS", CAMS_NAMES, chN, chSel); }
+      else if (i == 2) { view = View::Themes; drawThemesPage(); }
+      else if (i == 3) { view = View::Info; drawInfo(); }
+      else if (i == 4) { view = View::Setup; drawSetup(); }
+      else if (i == 5) openConfirm();
     }
   } else if (view == View::Themes) {
     if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = View::Settings; drawSettings(); }
@@ -890,17 +965,30 @@ void loop() {
   } else if (view == View::Choice) {
     if (g == Gesture::TapUp || g == Gesture::Tap) {
       int8_t i = hitChoice(tx, ty, chN);
-      if (i >= 0 && i != chSel) { sClock = (uint8_t)i; saveSettings(); }
+      if (i >= 0 && i != chSel) {
+        if (chWhich == 0) sClock = (uint8_t)i;
+        else { sAllCams = (uint8_t)i; xSemaphoreTake(mux, portMAX_DELAY); buildCamOrder(); xSemaphoreGive(mux); camPage = 0; memset(tileOk, 0, sizeof tileOk); memset(thumbOk, 0, sizeof thumbOk); for (uint8_t k = 0; k < 4; k++) thumbAt[k] = 0; for (uint8_t c = 0; c < nCam; c++) cam[c].shotAt = 0; }
+        saveSettings();
+      }
       if (i >= 0 || !inSheet(tx, ty)) { sheetClose(); view = View::Settings; drawSettings(); }
     } else if (g == Gesture::SwipeDown || g == Gesture::SwipeLeft) { sheetClose(); view = View::Settings; }
   } else if (view == View::Confirm) {
     if (g == Gesture::TapUp || g == Gesture::Tap) { if (hitPill(tx, ty)) shutDown(); else closeConfirm(); }
     else if (g == Gesture::SwipeDown || g == Gesture::SwipeLeft) closeConfirm();
   }
+  // The panel back in sync after anything heavy, and once a second regardless: a
+  // rolled picture (the header at the bottom) lasts under a second.
+  if (resyncWanted) {  // only after a decode: a restart is itself a glitch, once a second was a flicker
+    resyncWanted = false;
+    boardPanelResync();
+  }
   static uint32_t lastLog = 0;
   if (millis() - lastLog > 60000) {
     lastLog = millis();
-    Serial.printf("heap %u  psram %u  wifi %s  devices %u clients %u samples %u\n", ESP.getFreeHeap(), ESP.getFreePsram(), WiFi.status() == WL_CONNECTED ? "up" : "DOWN", nDev, nCli, nSamples);
+    const Device *gw = nullptr;
+    for (uint8_t i = 0; i < nDev; i++) if (dev[i].gateway && !gw) gw = &dev[i];
+    Serial.printf("heap %u  psram %u  wifi %s  devices %u clients %u samples %u  gateway %s up %lu rx %.0f tx %.0f\n", ESP.getFreeHeap(), ESP.getFreePsram(),
+                  WiFi.status() == WL_CONNECTED ? "up" : "DOWN", nDev, nCli, nSamples, gw ? gw->name : "NONE", (unsigned long)(gw ? gw->uptime : 0), gw ? gw->rx : 0.0f, gw ? gw->tx : 0.0f);
   }
   delay(20);
 }
