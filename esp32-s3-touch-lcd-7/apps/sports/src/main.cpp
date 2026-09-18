@@ -279,6 +279,9 @@ static void takeGames() {
 // football, a puck, a basketball with its seams, a baseball with stitches,
 // a soccer ball with a pentagon. Anything else gets a plain ball.
 static void sportIcon(const char *sport, int16_t cx, int16_t cy, int16_t r, uint16_t c) {
+  char key[20];  // the sport's picture (Twemoji, made by the tool with --sports) when there is one
+  snprintf(key, sizeof key, "sport_%s", sport);
+  if (blitLogo(cx - r, cy - r, (uint8_t)(2 * r), key)) return;
   if (strcmp(sport, "football") == 0) {
     gfx->fillEllipse(cx, cy, r + r / 4, r * 2 / 3, c);
     gfx->drawFastHLine(cx - r / 2, cy, r, C_BG);
@@ -330,7 +333,14 @@ static void drawTabs() {
     tabW[i] = w;
     if (i == 0) textAt(x + 13, 12, 1, on ? C_FG : C_DIM, "ALL");
     else if (i == 1) starGlyph(x + 26, 20, 12, on ? C_GOLD : C_DIM);
-    else sportIcon(sports[i - 2], x + 26, 20, 12, on ? C_FG : C_DIM);
+    else {
+      sportIcon(sports[i - 2], x + 26, 19, 14, on ? C_FG : C_DIM);  // 28px: the picture, or the glyph
+      if (!on) {  // a picture cannot be dimmed like a glyph: a veil over it instead
+        uint16_t *fb = boardFramebuffer();
+        for (int16_t yy = 5; yy < 33; yy++)
+          for (int16_t xx = x + 12; xx < x + 40; xx++) fb[yy * LCD_W + xx] = (fb[yy * LCD_W + xx] >> 1) & 0x7BEF;
+      }
+    }
     if (on) gfx->fillRect(x + 9, 34, w - 18, 3, C_FG);
     x += w;
   }
@@ -481,33 +491,19 @@ static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "GAME DAY";
   textAt((LCD_W - textWidth(5, name)) / 2, 44, 5, C_FG, name);
-  // the sports as words, a gold dot between (the glyphs read at 28px in the tabs, not at 56)
-  int16_t x = 0, total = 0, wy = 44 + FACES[4].cap + 22;
-  const int16_t sep = 40;
-  char up[MAX_LEAGUES][12];
-  for (uint8_t i = 0; i < nSports; i++) {
-    snprintf(up[i], sizeof up[i], "%s", sports[i]);
-    for (char *c = up[i]; *c; c++) *c = toupper((unsigned char)*c);
-    total += textWidth(2, up[i]);
-  }
-  x = (LCD_W - total - sep * (nSports - 1)) / 2;
-  for (uint8_t i = 0; i < nSports; i++) {
-    textAt(x, wy, 2, C_MUTED, up[i]);
-    x += textWidth(2, up[i]);
-    if (i + 1 < nSports) gfx->fillCircle(x + sep / 2, wy + GH(2) / 2 - 2, 3, C_GOLD);
-    x += sep;
-  }
-  // a scoreboard: a dark panel, HOME and AWAY, the digits in the accent, the clock in green
-  int16_t px = 120, py = wy + 60, pw = 560, ph = 170;
+  // the sports as pictures, 56px, 96px apart
+  int16_t wy = 44 + FACES[4].cap + 26, step = 96;
+  int16_t x = LCD_W / 2 - (nSports - 1) * step / 2;
+  for (uint8_t i = 0; i < nSports; i++, x += step) sportIcon(sports[i], x, wy + 28, 28, C_MUTED);
+  // a scoreboard: a dark panel, the score in the accent, the clock in green
+  int16_t px = 160, py = wy + 80, pw = 480, ph = 150;
   gfx->fillRoundRect(px, py, pw, ph, 16, towardsWhite(C_BG, 6));
   gfx->drawRoundRect(px, py, pw, ph, 16, C_RULE);
-  textAt(px + 40, py + 24, 2, C_MUTED, "HOME");
-  textAt(px + pw - 40 - textWidth(2, "AWAY"), py + 24, 2, C_MUTED, "AWAY");
-  textAt(px + 40, py + 54, 4, C_GOLD, "24");
-  textAt(px + pw - 40 - textWidth(4, "17"), py + 54, 4, C_GOLD, "17");
-  textAt(LCD_W / 2 - textWidth(3, ":") / 2, py + 68, 3, C_DIM, ":");
+  textAt(px + 60, py + 28, 4, C_GOLD, "24");
+  textAt(px + pw - 60 - textWidth(4, "17"), py + 28, 4, C_GOLD, "17");
+  textAt(LCD_W / 2 - textWidth(3, ":") / 2, py + 42, 3, C_DIM, ":");
   const char *clk = "12:00   4TH";
-  textAt(LCD_W / 2 - textWidth(2, clk) / 2, py + 128, 2, C_GOOD, clk);
+  textAt(LCD_W / 2 - textWidth(2, clk) / 2, py + 104, 2, C_GOOD, clk);
   const char *credit = "made by Richard Torcato";
   textAt((LCD_W - textWidth(1, credit)) / 2, 424, 1, C_MUTED, credit);
   drawHint(status);

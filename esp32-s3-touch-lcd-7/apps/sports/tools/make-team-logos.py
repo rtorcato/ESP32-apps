@@ -24,6 +24,11 @@ ml = importlib.util.module_from_spec(ML)
 ML.loader.exec_module(ml)
 
 HEADER = "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport={}&league={}"
+# The sports' own pictures, for the splash and the tabs: Twemoji (CC-BY 4.0),
+# a coloured graphic each, converted like a logo. --sports makes these.
+TWEMOJI = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{}.png"
+SPORT_EMOJI = {"football": "1f3c8", "hockey": "1f3d2", "basketball": "1f3c0", "baseball": "26be", "soccer": "26bd",
+               "tennis": "1f3be", "golf": "26f3", "rugby": "1f3c9", "cricket": "1f3cf", "volleyball": "1f3d0"}
 
 
 def teams(sport: str, league: str):
@@ -45,12 +50,31 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--size", type=int, default=32)
     ap.add_argument("--out", type=pathlib.Path, default=HERE / "data" / "logo")
+    ap.add_argument("--sports", action="store_true", help="the sports' pictures (sport_<name>.565) instead of the teams")
     args = ap.parse_args()
     cfg = json.loads((HERE / "data" / "config.json").read_text())
     args.out.mkdir(parents=True, exist_ok=True)
     tmp = pathlib.Path("/tmp/sports-logos")
     tmp.mkdir(exist_ok=True)
     ok = skipped = 0
+    if args.sports:
+        sports = sorted({lg["sport"] for lg in cfg.get("leagues", [])})
+        for sp in sports:
+            code = SPORT_EMOJI.get(sp)
+            if not code:
+                print(f"{sp}: no picture known, the board draws its own")
+                continue
+            png = ml.fetch(TWEMOJI.format(code))
+            if not png:
+                skipped += 1
+                continue
+            w, h, px = ml.bmp_to_rgba(ml.to_bmp(png, ml.WORK, tmp))
+            px, _ = ml.crop_fit(px, w, h, "alpha", False, args.size)
+            (args.out / f"sport_{sp}.565").write_bytes(ml.to_rgb565(px, args.size, args.size, "alpha", False))
+            print(f"{sp}: {args.size}px")
+            ok += 1
+        print(f"\n{ok} picture(s), {skipped} skipped -> {args.out}")
+        return 0 if ok else 1
     for lg in cfg.get("leagues", []):
         try:
             tm = teams(lg["sport"], lg["id"])
