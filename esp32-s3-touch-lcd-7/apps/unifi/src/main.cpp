@@ -539,7 +539,7 @@ void setup() {
   delay(300);
   bool xp = boardBegin();
   mux = xSemaphoreCreateMutex();
-  buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_SPIRAM);  // 96KB: internal RAM could not spare it (7.9KB of heap left, Wi-Fi would not join)
   cli = (NetClient *)heap_caps_calloc(MAX_CLI, sizeof(NetClient), MALLOC_CAP_SPIRAM);
   for (const char *path : {"/config.json", "/config.local.json"}) {  // the committed one, then yours (gitignored) on top
     if (!cfgLoad(path)) continue;
