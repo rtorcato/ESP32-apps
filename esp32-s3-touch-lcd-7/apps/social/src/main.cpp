@@ -29,7 +29,7 @@ enum : uint8_t { S_BLUESKY, S_MASTODON, S_GITHUB, S_NPM, S_YOUTUBE, N_SERVICES }
 static const char *const SVC_NAMES[] = {"bluesky", "mastodon", "github", "npm", "youtube"};
 static const char *const SVC_TABS[] = {"BLUESKY", "MASTODON", "GITHUB", "NPM", "YOUTUBE"};
 static const uint16_t SVC_COLOUR[] = {rgb(17, 133, 254), rgb(99, 100, 255), rgb(240, 240, 240), rgb(203, 56, 55), rgb(255, 0, 0)};
-static const uint8_t MAX_ACC = 16, HIST_N = 31;
+static const uint8_t MAX_ACC = 64, HIST_N = 31;
 struct Account {
   uint8_t svc;
   bool repo, valid;
@@ -42,7 +42,7 @@ struct Account {
   uint8_t n;
   uint32_t at;
 };
-static Account acc[MAX_ACC];  // the fetch task writes, the UI reads, under mux
+static Account *acc = nullptr;  // MAX_ACC, in PSRAM; the fetch task writes, the UI reads, under mux
 static uint8_t nAcc = 0;
 static uint32_t refreshMs = 600000, accVer = 0;
 static char tzString[48] = "EST5EDT,M3.2.0/2,M11.1.0/2";
@@ -239,7 +239,9 @@ static void fetchTask(void *) {
     vTaskDelay(pdMS_TO_TICKS(500));
     if (WiFi.status() != WL_CONNECTED || !buf) continue;
     for (uint8_t i = 0; i < nAcc; i++) {
-      if (acc[i].at && millis() - acc[i].at < refreshMs) continue;
+      // GitHub allows sixty requests an hour without a token: its accounts go round hourly, whatever the config says
+      uint32_t every = acc[i].svc == S_GITHUB ? max<uint32_t>(refreshMs, 3600000UL) : refreshMs;
+      if (acc[i].at && millis() - acc[i].at < every) continue;
       Account a;
       xSemaphoreTake(mux, portMAX_DELAY);
       a = acc[i];
@@ -259,12 +261,12 @@ static void fetchTask(void *) {
 }
 
 // ── pages ────────────────────────────────────────────────────────────────
-enum class View { Splash, List, Detail, Settings, Themes, Info, Choice, Confirm };
+enum class View { Splash, Home, List, Detail, Settings, Themes, Info, Choice, Confirm };
 static View view = View::Splash, confirmFrom = View::Settings;
 static uint8_t sect = 0, listTop = 0, detailIdx = 0, sClock = 0, chN = 0, chSel = 0;
 static const char *const CLOCK_NAMES[] = {"12-hour", "24-hour"};
 static uint8_t order[MAX_ACC], nShown = 0;
-static Account shown[MAX_ACC];
+static Account *shown = nullptr;  // MAX_ACC, in PSRAM
 static uint32_t shownVer = 0;
 static char cHead[16], cRows[ROWS][80];
 static int16_t tabX[N_SERVICES + 1], tabW[N_SERVICES + 1];
@@ -293,7 +295,8 @@ static void takeAccounts() {
 }
 static void drawTabs() {
   gfx->fillRect(0, 0, 640, Y_ROW0 - 1, C_BG);
-  int16_t x = 12;
+  backMark(14, 22, C_MUTED);  // home
+  int16_t x = 36;
   for (uint8_t i = 0; i < nTabs; i++) {
     const char *name = i == 0 ? "ALL" : SVC_TABS[tabSvc[i]];
     int16_t w = textWidth(1, name) + 26;
@@ -320,7 +323,34 @@ static void drawClock() {
   strcpy(cHead, clk);
   fieldRight(X_RIGHT, 12, 8, 1, C_MUTED, clk);
 }
-static void svcMark(int16_t x, int16_t y, uint8_t size, uint8_t svc) {  // a tile in the service's colour, its letter
+// Logos: /logo/N/svc_<service>.565 (tools/make-service-logos.py), cached in PSRAM.
+struct LogoCache { uint8_t size; char label[16]; uint16_t *px; };
+static LogoCache logoCache[24];
+static uint8_t nLogoCache = 0;
+static uint16_t *logoLoad(uint8_t size, const char *label) {
+  for (uint8_t i = 0; i < nLogoCache; i++)
+    if (logoCache[i].size == size && strcmp(logoCache[i].label, label) == 0) return logoCache[i].px;
+  if (nLogoCache >= 24) return nullptr;
+  char path[40];
+  snprintf(path, sizeof path, "/logo/%u/%s.565", size, label);
+  File f = LittleFS.open(path, "r");
+  if (!f) return nullptr;
+  const size_t want = (size_t)size * size * 2;
+  uint16_t *px = f.size() == want ? (uint16_t *)heap_caps_malloc(want, MALLOC_CAP_SPIRAM) : nullptr;
+  bool ok = px && f.read((uint8_t *)px, want) == want;
+  f.close();
+  if (!ok) { if (px) free(px); return nullptr; }
+  LogoCache &c = logoCache[nLogoCache++];
+  c.size = size;
+  snprintf(c.label, sizeof c.label, "%s", label);
+  c.px = px;
+  return px;
+}
+static void svcMark(int16_t x, int16_t y, uint8_t size, uint8_t svc) {  // the logo, or a tile in the service's colour with its letter
+  char key[20];
+  snprintf(key, sizeof key, "svc_%s", SVC_NAMES[svc]);
+  uint16_t *px = logoLoad(size, key);
+  if (px) { gfx->draw16bitRGBBitmap(x, y, px, size, size); return; }
   gfx->fillRoundRect(x, y, size, size, size / 5, SVC_COLOUR[svc]);
   char c[2] = {(char)toupper(SVC_NAMES[svc][0]), 0};
   uint8_t f = size >= 64 ? 3 : 2;
@@ -467,6 +497,67 @@ static void drawDetail(bool full) {
     if (nums[0]) textAt(20, 326 + n * 20 + 6, 2, C_GOLD, nums);
   }
 }
+// The home: a tile per service in use -- its logo, its name, the first
+// account's number -- and a tap opens it: the account when there is one,
+// the list of them when there are more.
+static char kHome[N_SERVICES][32];
+static void homeTile(uint8_t i, bool force) {
+  uint8_t svc = tabSvc[i + 1];
+  int16_t x, y, w, h;
+  tileRect(i, nTabs - 1, nTabs - 1 > 3 ? 3 : nTabs - 1, &x, &y, &w, &h);
+  const Account *first = nullptr;
+  uint8_t count = 0;
+  for (uint8_t k = 0; k < nAcc; k++)
+    if (shown[k].svc == svc) { if (!first) first = &shown[k]; count++; }
+  char key[32];
+  snprintf(key, sizeof key, "%d|%.0f|%u", first && first->valid, first ? first->count : 0, count);
+  if (!force && strcmp(key, kHome[i]) == 0) return;
+  strcpy(kHome[i], key);
+  gfx->fillRoundRect(x, y, w, h, 14, towardsWhite(C_BG, 6));
+  gfx->drawRoundRect(x, y, w, h, 14, C_RULE);
+  svcMark(x + (w - 96) / 2, y + 16, 96, svc);
+  textAt(x + (w - textWidth(2, SVC_TABS[svc])) / 2, y + 124, 2, C_FG, SVC_TABS[svc]);
+  char b[40] = "fetching...";
+  if (first && first->valid) {
+    char n[16];
+    fmtCount(first->count, n, sizeof n);
+    snprintf(b, sizeof b, "%s %s", n, first->what);
+  }
+  fieldCentre(x + w / 2, y + 152, 22, 1, C_MUTED, b);
+  if (count > 1) {
+    snprintf(b, sizeof b, "%u accounts", count);
+    fieldCentre(x + w / 2, y + 172, 12, 1, C_DIM, b);
+  }
+}
+static void drawHome(bool full) {
+  if (full) {
+    gfx->fillScreen(C_BG);
+    textAt(20, 10, 2, C_FG, "SOCIAL");
+    settingsIcon(676, C_MUTED);
+    gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
+    cHead[0] = '\0';
+    drawHint("tap a service");
+  }
+  drawClock();
+  if (shownVer != accVer) takeAccounts();
+  for (uint8_t i = 0; i + 1 < nTabs; i++) homeTile(i, full);
+}
+static int8_t hitHome(int16_t tx, int16_t ty) {
+  for (uint8_t i = 0; i + 1 < nTabs; i++) {
+    int16_t x, y, w, h;
+    tileRect(i, nTabs - 1, nTabs - 1 > 3 ? 3 : nTabs - 1, &x, &y, &w, &h);
+    if (tx >= x && tx < x + w && ty >= y && ty < y + h) return i;
+  }
+  return -1;
+}
+static void openService(uint8_t tab) {  // tab: index into tabSvc, 1..
+  sect = tab;
+  listTop = 0;
+  shownVer = 0;
+  takeAccounts();
+  if (nShown == 1) { detailIdx = 0; view = View::Detail; drawDetail(true); }
+  else { view = View::List; drawList(true); }
+}
 static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "SOCIAL";  // the name alone, centred; nothing else to look at
@@ -483,7 +574,7 @@ static void drawSettings() {
   settingRow(2, "Info", "");
   settingRow(3, "Wi-Fi", wifiSsid[0] ? wifiSsid : "not set");
   settingRow(4, "Shut down", "", C_BAD);
-  drawHint("< list        Wi-Fi is set up in Ticker Tape");
+  drawHint("< home        Wi-Fi is set up in Ticker Tape");
 }
 static void drawInfo() {
   pageHeader("INFO");
@@ -499,7 +590,7 @@ static void drawInfo() {
 }
 static void openConfirm() {
   confirmFrom = view;
-  if (view == View::List) { gfx->fillScreen(C_BG); drawTabs(); }
+  if (view == View::List || view == View::Home) { gfx->fillScreen(C_BG); if (view == View::List) drawTabs(); }
   view = View::Confirm;
   drawShutdownSheet();
 }
@@ -507,6 +598,7 @@ static void closeConfirm() {
   sheetClose();
   view = confirmFrom;
   if (view == View::List) drawList(true);
+  else if (view == View::Home) drawHome(true);
 }
 static void shutDown() {
   drawHint("shutting down. BOOT button turns it on", C_WARN);
@@ -547,7 +639,11 @@ void setup() {
   bool xp = boardBegin();
   mux = xSemaphoreCreateMutex();
   buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_SPIRAM);
-  if (cfgLoad()) {
+  acc = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);
+  shown = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);
+  // config.json (committed, a demo) and then config.local.json (yours, gitignored), the same shape
+  for (const char *path : {"/config.json", "/config.local.json"}) {
+    if (!cfgLoad(path)) continue;
     for (JsonObject o : cfgArr("accounts")) {
       if (nAcc >= MAX_ACC) break;
       const char *svc = o["service"] | "";
@@ -560,9 +656,11 @@ void setup() {
       a.repo = o["repo"] | false;
       snprintf(a.id, sizeof a.id, "%s", o["id"] | "");
       snprintf(a.label, sizeof a.label, "%s", o["label"] | a.id);
-      if (a.id[0]) { svcUsed[s] = true; nAcc++; }
+      bool dup = false;  // the same account in both files: once
+      for (uint8_t k = 0; k < nAcc && !dup; k++) dup = acc[k].svc == a.svc && strcmp(acc[k].id, a.id) == 0;
+      if (a.id[0] && !dup) { svcUsed[s] = true; nAcc++; }
     }
-    refreshMs = (uint32_t)cfgInt("refreshMinutes", 10, 1, 1440) * 60000UL;
+    refreshMs = (uint32_t)cfgInt("refreshMinutes", refreshMs / 60000, 1, 1440) * 60000UL;
     cfgStr("tz", tzString, sizeof tzString);
     cfgRelease();
   }
@@ -611,7 +709,13 @@ void loop() {
   if (view == View::Splash) {
     static bool said = false;
     if (WiFi.status() == WL_CONNECTED && !said) { said = true; drawHint("fetching..."); }
-    if (accVer || g == Gesture::TapUp) { view = View::List; drawList(true); }
+    if (accVer || g == Gesture::TapUp) { view = View::Home; drawHome(true); }
+  } else if (view == View::Home) {
+    if (g == Gesture::TapUp) {
+      if (ty < Y_ROW0 && tx >= 660 && tx < 724) { view = View::Settings; drawSettings(); }
+      else { int8_t i = hitHome(tx, ty); if (i >= 0) openService((uint8_t)(i + 1)); }
+    }
+    if (view == View::Home) drawHome(false);
   } else if (view == View::List) {
     if (g == Gesture::Drag && ddy) {
       static int16_t acc_ = 0;
@@ -622,7 +726,8 @@ void loop() {
       if (listTop + ROWS >= nShown && acc_ < 0) acc_ = 0;
     } else if (g == Gesture::TapUp) {
       if (ty < Y_ROW0) {
-        if (tx >= 660 && tx < 724) { view = View::Settings; drawSettings(); }
+        if (tx < 36) { view = View::Home; drawHome(true); }
+        else if (tx >= 660 && tx < 724) { view = View::Settings; drawSettings(); }
         else { int8_t t = hitTab(tx); if (t >= 0 && t != sect) { sect = (uint8_t)t; listTop = 0; shownVer = 0; drawList(true); } }
       } else {
         int16_t r = hitRow(ty);
@@ -637,7 +742,7 @@ void loop() {
     else if (g == Gesture::SwipeRight && nShown) { detailIdx = (detailIdx + nShown - 1) % nShown; drawDetail(true); }
     if (view == View::Detail) { if (shownVer != accVer) takeAccounts(); drawDetail(false); }
   } else if (view == View::Settings) {
-    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = View::List; drawList(true); }
+    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = View::Home; drawHome(true); }
     else if (g == Gesture::TapUp) {
       int8_t i = hitSettingRow(ty, 5);
       if (i == 0) { chN = 2; chSel = sClock; view = View::Choice; drawChoiceSheet("CLOCK", CLOCK_NAMES, chN, chSel); }

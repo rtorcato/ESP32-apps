@@ -14,3 +14,5 @@ esp32-2432s028r-cyd/apps/ticker/data/logo/
 esp32-s3-touch-lcd-7/apps/ticker/data/logo/
 __pycache__/
 esp32-s3-touch-lcd-7/apps/sports/data/logo/
+esp32-s3-touch-lcd-7/apps/social/data/config.local.json
+esp32-s3-touch-lcd-7/apps/social/data/logo/

@@ -58,6 +58,10 @@ pio run -e social -t upload
 
 ## On the board
 
+- **Home.** A tile per service in use: its logo (Simple Icons, made by
+  `tools/make-service-logos.py`), its name, the first account's number,
+  how many accounts. A tap opens the account when there is one, the list
+  when there are more.
 - **List.** A row per account: the service's tile, the label, what the
   number is, a 30-day sparkline, the count, today's change (green, red, or
   "new" until there is a yesterday). Tabs ALL and one per service in use; a
@@ -74,6 +78,9 @@ pio run -e social -t upload
   ticker's), Shut down (a sheet, or two seconds on the header).
 
 The shipped config names demo accounts (the official Bluesky and Mastodon
-accounts, rtorcato on GitHub and npm, a large YouTube channel): replace
-them with yours. The open question stands: if your numbers live on
+accounts, rtorcato on GitHub and npm, a large YouTube channel). Your own
+go in `data/config.local.json`, the same shape, merged on top and
+gitignored; `tools/my-github.py <user>` fills it with a GitHub user and
+every public repo. GitHub accounts refresh hourly whatever `refreshMinutes`
+says: sixty requests an hour is the limit without a token. The open question stands: if your numbers live on
 Instagram, TikTok or X, the board cannot read them.
