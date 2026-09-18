@@ -1,0 +1,5 @@
+{
+  "unifi": { "host": "unifi", "apiKey": "" },
+  "refresh": { "statsSeconds": 10, "devicesSeconds": 30, "clientsSeconds": 60 },
+  "tz": "EST5EDT,M3.2.0/2,M11.1.0/2"
+}

@@ -16,3 +16,4 @@ __pycache__/
 esp32-s3-touch-lcd-7/apps/sports/data/logo/
 esp32-s3-touch-lcd-7/apps/social/data/config.local.json
 esp32-s3-touch-lcd-7/apps/social/data/logo/
+esp32-s3-touch-lcd-7/apps/unifi/data/config.local.json
