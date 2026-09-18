@@ -23,12 +23,15 @@ draws for a symbol without a logo file.
 
 | | |
 |---|---|
-| [preview.svg](preview.svg) | The list: tabs, icons, nine rows with badge (a flag for a currency, none for an index), sparkline, price, percent |
+| [preview.svg](preview.svg) | The list: seven glyph tabs, search and settings, nine rows with badge (a flag for a currency, none for an index), sparkline, price, percent |
 | [preview-splash.svg](preview-splash.svg) | Boot: TICKER over three bands of symbol chips |
 | [preview-detail.svg](preview-detail.svg) | A stock's page, two columns: price and ranges left, chart, range chips and headlines right |
 | [preview-settings.svg](preview-settings.svg) | Settings: label, value in grey, chevron; every row opens a page |
 | [preview-themes.svg](preview-themes.svg) | Themes: twelve tiles, each in its own colours, the chosen one outlined |
 | [preview-orientation.svg](preview-orientation.svg) | Orientation: four miniatures of the list, the cable edge marked |
+| [preview-news.svg](preview-news.svg) | News: cards with picture, headline, source and age; the next row peeks under the full ones |
+| [preview-heatmap.svg](preview-heatmap.svg) | Heatmap: a treemap of the stocks, area by the day's move |
+| [preview-chart.svg](preview-chart.svg) | The full chart page: candles with volume, the four chart tabs, the range chips |
 
 ## What changed for this board
 

@@ -1534,7 +1534,7 @@ static void drawCandlesAt(const Row &r, const Series &s, int16_t bx, int16_t by,
     vmax = max(vmax, V[i]);
   }
   // mode 0: the price band, a volume band, 12px for the times; mode 1: volume takes the band
-  const int16_t priceH = mode ? bh - 12 : bh - 56, volH = mode ? priceH - 8 : 36, volY = mode ? by + 4 : by + priceH + 8;
+  const int16_t priceH = mode ? bh - 12 : bh - 56, volH = mode ? priceH - 8 : 36, volY = mode ? by + 4 : by + priceH + 4;
   gfx->drawRect(bx - 1, by - 1, bw + 2, bh + 2, C_RULE);
   int16_t cw = (bw - 8) / m, x0 = bx + 4 + ((bw - 8) - cw * m) / 2;
   if (!mode && s.prev > 0) {
