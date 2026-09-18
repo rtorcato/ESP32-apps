@@ -1,0 +1,12 @@
+{
+  "accounts": [
+    { "service": "bluesky", "id": "bsky.app", "label": "@bsky.app" },
+    { "service": "mastodon", "id": "mastodon.social/Gargron", "label": "@Gargron" },
+    { "service": "github", "id": "rtorcato", "label": "rtorcato" },
+    { "service": "github", "id": "rtorcato/js-common", "label": "js-common", "repo": true },
+    { "service": "npm", "id": "@rtorcato/js-common", "label": "js-common" },
+    { "service": "youtube", "id": "UCBJycsmduvYEL83R_U4JriQ", "label": "MKBHD" }
+  ],
+  "refreshMinutes": 10,
+  "tz": "EST5EDT,M3.2.0/2,M11.1.0/2"
+}

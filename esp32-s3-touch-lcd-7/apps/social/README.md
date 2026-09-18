@@ -1,4 +1,4 @@
-# social — idea (2026-09-18)
+# social — **built as a demo** (first flash 2026-09-18)
 
 A ticker for your own numbers: followers, stars, downloads, views, and the
 likes on whatever you posted last, one row per account, each with a
@@ -51,6 +51,29 @@ ticker's fetch path. config.json names the accounts:
 ] }
 ```
 
-Open question before building: which of these do you actually post on?
-If the answer is mostly Instagram, TikTok or X, the board cannot read
-them and the app has no rows worth having.
+```sh
+pio run -e social -t upload
+./push-config social
+```
+
+## On the board
+
+- **List.** A row per account: the service's tile, the label, what the
+  number is, a 30-day sparkline, the count, today's change (green, red, or
+  "new" until there is a yesterday). Tabs ALL and one per service in use; a
+  drag scrolls, a swipe changes the tab, a tap opens the account.
+- **Account.** The count in the tall digits, the change today and this
+  week, the second number (posts, forks, repos, downloads a day), the
+  history as a chart, and the latest post with its likes, reposts and
+  replies -- or the latest video with its views, or a repo's description
+  and open issues.
+- **History.** `/history.json` on the data partition: one number a day per
+  account, thirty kept. The first day shows "new"; the deltas and the lines
+  appear from the second day on.
+- **Settings.** Clock, Theme (the twelve), Info, Wi-Fi (read-only, the
+  ticker's), Shut down (a sheet, or two seconds on the header).
+
+The shipped config names demo accounts (the official Bluesky and Mastodon
+accounts, rtorcato on GitHub and npm, a large YouTube channel): replace
+them with yours. The open question stands: if your numbers live on
+Instagram, TikTok or X, the board cannot read them.
