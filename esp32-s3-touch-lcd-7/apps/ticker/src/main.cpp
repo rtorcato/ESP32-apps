@@ -559,6 +559,8 @@ struct Series {
   int32_t t[SERIES_N];
 };
 static uint8_t sCandle = 0;  // the stock page's chart: 0 a line, 1 candles with volume (NVS "cand"); a tap on the chart flips it
+static uint8_t sChartType = 0;  // the full chart page's tab: LINE AREA CANDLES VOLUME (NVS "ctyp")
+static const char *const CHART_NAMES[] = {"LINE", "AREA", "CANDLES", "VOLUME"};
 static Series *series = nullptr;  // N_RANGES of them, 15KB, in PSRAM (setup); written by the fetch task, read by the UI, under mux
 static volatile uint8_t seriesWant = 0;  // bitmask of ranges still to fetch for seriesIdx
 static volatile uint8_t seriesIdx = 0;
@@ -722,6 +724,11 @@ static int8_t hitSetting(int16_t y) {
 static int8_t hitRange(int16_t x, int16_t y) {
   if (y < L.chY + L.chH || y >= L.dYNews || x < L.chX) return -1;
   int8_t i = (x - L.chX) / L.rStep;
+  return i >= N_RANGES ? -1 : i;
+}
+static int8_t hitRangeAt(int16_t x, int16_t y, int16_t x0, int16_t y0) {  // the chips drawn at x0,y0
+  if (y < y0 || y >= y0 + L.rH || x < x0) return -1;
+  int8_t i = (x - x0) / L.rStep;
   return i >= N_RANGES ? -1 : i;
 }
 // Value to pixel row inside a box; a flat series sits mid-box, not on the floor.
@@ -1448,30 +1455,39 @@ static void drawRange(const Row &r, int16_t y, const char *label, float lo, floa
   fieldRight(L.barX + L.barW, y + 34, 9, 1, C_DIM, b);
 }
 
-static void drawRangeChips() {
+static void drawRangeChipsAt(int16_t x0, int16_t y0) {
   for (uint8_t i = 0; i < N_RANGES; i++) {
-    int16_t x = L.chX + i * L.rStep;
+    int16_t x = x0 + i * L.rStep;
     bool on = i == rangeSel;
-    gfx->fillRoundRect(x, L.rY, L.rW, L.rH, 8, on ? C_DIM : C_BG);
-    gfx->drawRoundRect(x, L.rY, L.rW, L.rH, 8, on ? C_MUTED : C_RULE);
-    textAt(x + (L.rW - textWidth(2, RANGES[i].label)) / 2, L.rY + (L.rH - FACES[1].cap) / 2, 2, on ? C_FG : C_MUTED,
+    gfx->fillRoundRect(x, y0, L.rW, L.rH, 8, on ? C_DIM : C_BG);
+    gfx->drawRoundRect(x, y0, L.rW, L.rH, 8, on ? C_MUTED : C_RULE);
+    textAt(x + (L.rW - textWidth(2, RANGES[i].label)) / 2, y0 + (L.rH - FACES[1].cap) / 2, 2, on ? C_FG : C_MUTED,
            RANGES[i].label);
   }
 }
+static void drawRangeChips() { drawRangeChipsAt(L.chX, L.rY); }
 
-static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint16_t fg) {
+static void drawLineChart(const Row &r, const float *cl, uint8_t n, float prev, uint16_t fg, int16_t bx, int16_t by, int16_t bw,
+                          int16_t bh, bool area) {
   float lo = prev, hi = prev;
   for (uint8_t i = 0; i < n; i++) {
     lo = min(lo, cl[i]);
     hi = max(hi, cl[i]);
   }
-  gfx->drawRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_RULE);
-  int16_t yp = sparkY(prev, lo, hi, L.chY, L.chH);
-  for (int16_t x = L.chX; x < L.chX + L.chW; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
-  int16_t px = L.chX, py = sparkY(cl[0], lo, hi, L.chY, L.chH);
+  gfx->drawRect(bx - 1, by - 1, bw + 2, bh + 2, C_RULE);
+  int16_t yp = sparkY(prev, lo, hi, by, bh);
+  for (int16_t x = bx; x < bx + bw; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
+  int16_t px = bx, py = sparkY(cl[0], lo, hi, by, bh);
   for (uint8_t i = 1; i < n; i++) {
-    int16_t nx = L.chX + (int32_t)i * (L.chW - 1) / (n - 1);
-    int16_t ny = sparkY(cl[i], lo, hi, L.chY, L.chH);
+    int16_t nx = bx + (int32_t)i * (bw - 1) / (n - 1);
+    int16_t ny = sparkY(cl[i], lo, hi, by, bh);
+    if (area) {  // the fill first, a column at a time, the line over it
+      uint16_t fc = mix(C_BG, fg, 16);
+      for (int16_t x = px; x <= nx; x++) {
+        int16_t yy = nx == px ? py : py + (int32_t)(ny - py) * (x - px) / (nx - px);
+        gfx->drawFastVLine(x, yy, by + bh - yy, fc);
+      }
+    }
     gfx->drawLine(px, py, nx, ny, fg);
     px = nx;
     py = ny;
@@ -1480,17 +1496,20 @@ static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint
   // whatever the line does there: the row of chips below wanted the space.
   char b[12];
   priceStr(r, hi, b, sizeof b);
-  field(L.chX + 6, L.chY + 4, 9, 1, C_DIM, b);
+  field(bx + 6, by + 4, 9, 1, C_DIM, b);
   priceStr(r, lo, b, sizeof b);
-  field(L.chX + 6, L.chY + L.chH - GH(1) - 4, 9, 1, C_DIM, b);
+  field(bx + 6, by + bh - GH(1) - 4, 9, 1, C_DIM, b);
+}
+static void drawChart(const Row &r, const float *cl, uint8_t n, float prev, uint16_t fg) {
+  drawLineChart(r, cl, n, prev, fg, L.chX, L.chY, L.chW, L.chH, false);
 }
 
 // Candles with volume under them, the way a trading screen draws a day:
 // bars merged in groups so they fit four pixels apart, the previous close
 // dashed, the last close tagged at the right edge, high and low in the
 // corners, three times along the bottom.
-static void drawCandles(const Row &r, const Series &s) {
-  const uint8_t maxBars = (L.chW - 8) / 4;
+static void drawCandlesAt(const Row &r, const Series &s, int16_t bx, int16_t by, int16_t bw, int16_t bh, uint8_t mode) {
+  const uint8_t maxBars = (bw - 8) / 4;
   uint8_t k = (s.n + maxBars - 1) / maxBars;
   if (!k) k = 1;
   uint8_t m = (s.n + k - 1) / k;
@@ -1514,38 +1533,48 @@ static void drawCandles(const Row &r, const Series &s) {
     hi = max(hi, H[i]);
     vmax = max(vmax, V[i]);
   }
-  const int16_t priceH = L.chH - 56, volH = 36, volY = L.chY + priceH + 8;  // then 12px for the times
-  gfx->drawRect(L.chX - 1, L.chY - 1, L.chW + 2, L.chH + 2, C_RULE);
-  int16_t cw = (L.chW - 8) / m, x0 = L.chX + 4 + ((L.chW - 8) - cw * m) / 2;
-  if (s.prev > 0) {
-    int16_t yp = sparkY(s.prev, lo, hi, L.chY, priceH);
-    for (int16_t x = L.chX; x < L.chX + L.chW; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
+  // mode 0: the price band, a volume band, 12px for the times; mode 1: volume takes the band
+  const int16_t priceH = mode ? bh - 12 : bh - 56, volH = mode ? priceH - 8 : 36, volY = mode ? by + 4 : by + priceH + 8;
+  gfx->drawRect(bx - 1, by - 1, bw + 2, bh + 2, C_RULE);
+  int16_t cw = (bw - 8) / m, x0 = bx + 4 + ((bw - 8) - cw * m) / 2;
+  if (!mode && s.prev > 0) {
+    int16_t yp = sparkY(s.prev, lo, hi, by, priceH);
+    for (int16_t x = bx; x < bx + bw; x += 6) gfx->drawFastHLine(x, yp, 3, C_MUTED);
   }
   for (uint8_t i = 0; i < m; i++) {
     int16_t x = x0 + i * cw, cx = x + cw / 2;
     uint16_t c = C[i] >= O[i] ? C_GOOD : C_BAD;
-    int16_t yh = sparkY(H[i], lo, hi, L.chY, priceH), yl = sparkY(Lo[i], lo, hi, L.chY, priceH);
-    int16_t yo = sparkY(O[i], lo, hi, L.chY, priceH), yc = sparkY(C[i], lo, hi, L.chY, priceH);
-    gfx->drawFastVLine(cx, yh, yl - yh + 1, c);
-    int16_t top = min(yo, yc), bh = abs(yc - yo) + 1;
-    if (cw >= 4) gfx->fillRect(x + 1, top, cw - 2, bh, c);
-    else gfx->drawFastVLine(cx, top, bh, c);
+    int16_t yh = sparkY(H[i], lo, hi, by, priceH), yl = sparkY(Lo[i], lo, hi, by, priceH);
+    int16_t yo = sparkY(O[i], lo, hi, by, priceH), yc = sparkY(C[i], lo, hi, by, priceH);
+    if (!mode) {
+      gfx->drawFastVLine(cx, yh, yl - yh + 1, c);
+      int16_t top = min(yo, yc), bodyH = abs(yc - yo) + 1;
+      if (cw >= 4) gfx->fillRect(x + 1, top, cw - 2, bodyH, c);
+      else gfx->drawFastVLine(cx, top, bodyH, c);
+    }
     if (vmax > 0) {
       int16_t vh = (int16_t)(V[i] / vmax * volH);
       if (vh < 1 && V[i] > 0) vh = 1;
-      gfx->fillRect(x + 1, volY + volH - vh, max<int16_t>(1, cw - 2), vh, mix(C_BG, c, 55));
+      gfx->fillRect(x + 1, volY + volH - vh, max<int16_t>(1, cw - 2), vh, mix(C_BG, c, mode ? 85 : 55));
     }
   }
   char b[12];
-  priceStr(r, C[m - 1], b, sizeof b);  // the last close, tagged at the right edge
-  int16_t yc = sparkY(C[m - 1], lo, hi, L.chY, priceH), tw = textWidth(1, b) + 10;
-  uint16_t lc = C[m - 1] >= (s.prev > 0 ? s.prev : O[0]) ? C_GOOD : C_BAD;
-  gfx->fillRoundRect(L.chX + L.chW - tw - 4, yc - 9, tw, 18, 4, lc);
-  textAt(L.chX + L.chW - tw + 1, yc - 7, 1, C_BG, b);
-  priceStr(r, hi, b, sizeof b);
-  field(L.chX + 6, L.chY + 4, 9, 1, C_DIM, b);
-  priceStr(r, lo, b, sizeof b);
-  field(L.chX + 6, L.chY + priceH - GH(1) - 4, 9, 1, C_DIM, b);
+  if (!mode) {
+    priceStr(r, C[m - 1], b, sizeof b);  // the last close, tagged at the right edge
+    int16_t yc = sparkY(C[m - 1], lo, hi, by, priceH), tw = textWidth(1, b) + 10;
+    uint16_t lc = C[m - 1] >= (s.prev > 0 ? s.prev : O[0]) ? C_GOOD : C_BAD;
+    gfx->fillRoundRect(bx + bw - tw - 4, yc - 9, tw, 18, 4, lc);
+    textAt(bx + bw - tw + 1, yc - 7, 1, C_BG, b);
+    priceStr(r, hi, b, sizeof b);
+    field(bx + 6, by + 4, 9, 1, C_DIM, b);
+    priceStr(r, lo, b, sizeof b);
+    field(bx + 6, by + priceH - GH(1) - 4, 9, 1, C_DIM, b);
+  } else {
+    char vb[12];
+    fmtVolume(vmax, vb, sizeof vb);
+    snprintf(b, sizeof b, "vol %s", vb);
+    field(bx + 6, by + 4, 11, 1, C_DIM, b);
+  }
   const char *fmt = rangeSel == 0 ? "%H:%M" : rangeSel == 1 ? "%a %H:%M" : "%m/%d";
   for (uint8_t j = 0; j < 3; j++) {
     uint8_t i = j == 0 ? 0 : j == 1 ? m / 2 : m - 1;
@@ -1556,9 +1585,10 @@ static void drawCandles(const Row &r, const Series &s) {
     char lb[16];
     strftime(lb, sizeof lb, fmt, &tmv);
     int16_t w = textWidth(1, lb), x = x0 + i * cw + cw / 2 - (j == 0 ? 0 : j == 1 ? w / 2 : w);
-    textAt(x, L.chY + L.chH - GH(1) + 2, 1, C_DIM, lb);
+    textAt(x, by + bh - GH(1) + 2, 1, C_DIM, lb);
   }
 }
+static void drawCandles(const Row &r, const Series &s) { drawCandlesAt(r, s, L.chX, L.chY, L.chW, L.chH, 0); }
 
 static uint8_t wrapText(const char *s, int16_t w, char out[][64], uint8_t lines);
 static void drawDetail(bool full) {
@@ -1685,6 +1715,12 @@ static void drawDetail(bool full) {
     } else {
       drawChart(r, cl, n, prev, fg);
     }
+    // the expand mark, top right: two corner brackets; a tap there opens the full chart page
+    int16_t ex = L.chX + L.chW - 22, ey = L.chY + 5;
+    gfx->drawFastHLine(ex + 10, ey, 7, C_MUTED);
+    gfx->drawFastVLine(ex + 16, ey, 7, C_MUTED);
+    gfx->drawFastHLine(ex, ey + 16, 7, C_MUTED);
+    gfx->drawFastVLine(ex, ey + 10, 7, C_MUTED);
   }
 
   // Headlines under the chips: three, one line each, cut to the column.
@@ -1891,6 +1927,7 @@ static void loadSettings() {
     applyTheme();
     sNewsOn = prefs.getUChar("nsrc", 0xFF);
     sCandle = prefs.getUChar("cand", 0) & 1;
+    sChartType = prefs.getUChar("ctyp", 0) % 4;
     prefs.getString("cur", sCur, sizeof sCur);
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
@@ -1921,6 +1958,7 @@ static void saveSettings() {
   prefs.putUChar("bg", sTheme);
   prefs.putUChar("nsrc", sNewsOn);
   prefs.putUChar("cand", sCandle);
+  prefs.putUChar("ctyp", sChartType);
   prefs.putString("cur", sCur);
   prefs.putUChar("sect", sect);
   prefs.end();
@@ -3552,7 +3590,7 @@ static void selfCheck() {
 enum class State { Boot, NoConfig, NoWifi, NoData, Running };
 static uint32_t joinStarted = 0;  // the splash holds for 20s of joining, then the panel says why
 static uint16_t wifiRetries = 0;  // failed joins in a row; three of them open setup by themselves
-enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient, Choice, NewsSrc, Story };
+enum class View { List, Detail, Settings, Info, News, Search, Splash, Heat, Confirm, Columns, Themes, Orient, Choice, NewsSrc, Story, Chart };
 static uint32_t removeArmedUntil = 0;  // a long press on a stock's page arms removal for a few seconds
 static State state = State::Boot;
 static View view = View::List;
@@ -3729,6 +3767,12 @@ static void headerTap(int16_t x) {
       openNews(detailIdx);
       return;
     }
+    if (view == View::Chart) {  // back to the stock
+      view = View::Detail;
+      detailOpenedAt = millis();
+      drawDetail(true);
+      return;
+    }
     if (view == View::News && detailIdx != NEWS_ALL) {  // a stock's news: back to the stock
       view = View::Detail;
       detailOpenedAt = millis();
@@ -3810,6 +3854,82 @@ static void closeConfirm() {
   view = confirmFrom;
   if (view == View::List) backToList();
   else pageOpenedAt = millis();
+}
+// ── the full chart page: the chart alone, a tab for its kind, the ranges ──
+static char kFull[64];
+static void chartRect(int16_t *x, int16_t *y, int16_t *w, int16_t *h) {
+  *x = 20;
+  *y = 98;
+  *w = L.w - 40;
+  *h = L.yHint - 8 - L.rH - 14 - 98;
+}
+static void drawChartTabs() {
+  const int16_t tw = min<int16_t>(130, (L.w - 40) / 4);
+  for (uint8_t i = 0; i < 4; i++) {
+    int16_t x = 20 + i * tw;
+    bool on = i == sChartType;
+    gfx->fillRoundRect(x, 52, tw - 10, 32, 8, on ? C_DIM : C_BG);
+    gfx->drawRoundRect(x, 52, tw - 10, 32, 8, on ? C_MUTED : C_RULE);
+    textAt(x + (tw - 10 - textWidth(1, CHART_NAMES[i])) / 2, 52 + (32 - FACES[0].cap) / 2, 1, on ? C_FG : C_MUTED, CHART_NAMES[i]);
+  }
+}
+static int8_t hitChartTab(int16_t x, int16_t y) {
+  const int16_t tw = min<int16_t>(130, (L.w - 40) / 4);
+  if (y < 52 || y >= 84 || x < 20) return -1;
+  int8_t i = (x - 20) / tw;
+  return i < 4 ? i : -1;
+}
+static void drawChartPage(bool full) {
+  Row r = rowCopy(detailIdx);
+  int16_t x, y, w, h;
+  chartRect(&x, &y, &w, &h);
+  if (full) {
+    gfx->fillScreen(C_BG);
+    char head[16];
+    snprintf(head, sizeof head, "< %s", r.label);
+    drawHeader(0, head, r.name[0] ? r.name : nullptr);
+    drawChartTabs();
+    drawRangeChipsAt(20, L.yHint - 8 - L.rH);
+    drawHint("< next        v stock        prev >");
+    kFull[0] = '\0';
+  }
+  Series sr;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  sr = series[rangeSel];
+  xSemaphoreGive(mux);
+  bool mine = sr.idx == detailIdx && sr.range == rangeSel;
+  uint8_t n = mine ? sr.n : 0;
+  char key[48];
+  snprintf(key, sizeof key, "%u|%u|%u|%d|%.2f", rangeSel, sChartType, n, mine && !sr.valid, n ? sr.close[n - 1] : 0.0f);
+  if (strcmp(key, kFull) == 0) return;
+  strcpy(kFull, key);
+  gfx->fillRect(x - 1, y - 1, w + 2, h + 2, C_BG);
+  char m[24];
+  if (mine && !sr.valid) {
+    snprintf(m, sizeof m, "no %s series", RANGES[rangeSel].label);
+    field(x + 8, y + h / 2 - 8, 24, 1, C_DIM, m);
+  } else if (n < 2) {
+    snprintf(m, sizeof m, "loading %s...", RANGES[rangeSel].label);
+    field(x + 8, y + h / 2 - 8, 24, 1, C_DIM, m);
+  } else {
+    uint16_t fg = sr.close[n - 1] >= (sr.prev > 0 ? sr.prev : sr.close[0]) ? C_GOOD : C_BAD;
+    if (sChartType == 0) drawLineChart(r, sr.close, n, sr.prev, fg, x, y, w, h, false);
+    else if (sChartType == 1) drawLineChart(r, sr.close, n, sr.prev, fg, x, y, w, h, true);
+    else drawCandlesAt(r, sr, x, y, w, h, sChartType == 3 ? 1 : 0);
+  }
+}
+static void openChart(uint8_t idx) {
+  if (idx != detailIdx) {  // a neighbour: its series, selected range first
+    detailIdx = idx;
+    seriesIdx = idx;
+    uint8_t want = 0;
+    for (uint8_t rg = 0; rg < N_RANGES; rg++)
+      if (!seriesHeld(idx, rg)) want |= 1 << rg;
+    seriesWant = want;
+  }
+  view = View::Chart;
+  detailOpenedAt = millis();
+  drawChartPage(true);
 }
 static void openSearch() {
   view = View::Search;
@@ -3943,6 +4063,7 @@ void loop() {
       else if (view == View::Orient) drawOrient();
       else if (view == View::NewsSrc) drawNewsSrc();
       else if (view == View::Story) drawStory();
+      else if (view == View::Chart) drawChartPage(true);
       else drawDetail(true);
     }
   }
@@ -3988,6 +4109,8 @@ void loop() {
     drawInfo(false);
   } else if (view == View::Detail) {
     drawDetail(false);
+  } else if (view == View::Chart) {
+    drawChartPage(false);
   } else if (view == View::News) {
     drawNews(false);
   } else if (view == View::Search) {
@@ -4029,7 +4152,7 @@ void loop() {
   // Settings: left is the list. Info: left the list, down settings.
   bool swipe = g == Gesture::SwipeLeft || g == Gesture::SwipeRight || g == Gesture::SwipeDown || g == Gesture::SwipeUp;
   if (swipe && state == State::Running) {
-    bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail ||
+    bool acts = (view == View::List && (g == Gesture::SwipeRight || g == Gesture::SwipeLeft)) || view == View::Detail || view == View::Chart ||
                 (view == View::News && g != Gesture::SwipeUp) ||
                 (view == View::Settings && g == Gesture::SwipeLeft) || (view == View::Confirm && (g == Gesture::SwipeDown || g == Gesture::SwipeLeft)) ||
                 ((view == View::Columns || view == View::Themes || view == View::Orient || view == View::Choice || view == View::NewsSrc) && (g == Gesture::SwipeLeft || g == Gesture::SwipeDown)) ||
@@ -4060,6 +4183,10 @@ void loop() {
       else if (g == Gesture::SwipeRight) openDetail((detailIdx + nRows - 1) % nRows);
       else if (g == Gesture::SwipeDown) backToList();
       else if (g == Gesture::SwipeUp) openNews(detailIdx);
+    } else if (view == View::Chart) {
+      if (g == Gesture::SwipeLeft) openChart((detailIdx + 1) % nRows);
+      else if (g == Gesture::SwipeRight) openChart((detailIdx + nRows - 1) % nRows);
+      else if (g == Gesture::SwipeDown) { view = View::Detail; detailOpenedAt = millis(); drawDetail(true); }
     } else if (view == View::News && detailIdx != NEWS_ALL) {  // vertical is the scroll; the page's own news: left and right are the neighbours
       if (g == Gesture::SwipeLeft) openNews((detailIdx + 1) % nRows);
       else if (g == Gesture::SwipeRight) openNews((detailIdx + nRows - 1) % nRows);
@@ -4252,6 +4379,20 @@ void loop() {
       view = View::Info;
       pageOpenedAt = millis();
       drawInfo(true);
+    } else if (view == View::Chart) {
+      int8_t t = hitChartTab(tx, ty);
+      int8_t rg = hitRangeAt(tx, ty, 20, L.yHint - 8 - L.rH);
+      if (t >= 0 && t != sChartType) {
+        sChartType = (uint8_t)t;
+        saveSettings();
+        drawChartTabs();
+        kFull[0] = '\0';
+      } else if (rg >= 0 && rg != rangeSel) {
+        rangeSel = (uint8_t)rg;
+        if (!seriesHeld(detailIdx, rg)) seriesWant = seriesWant | (1 << rg);
+        drawRangeChipsAt(20, L.yHint - 8 - L.rH);
+        kFull[0] = '\0';
+      }
     } else {
       int8_t rg = hitRange(tx, ty);
       if (rg >= 0 && rg != rangeSel) {
@@ -4259,6 +4400,8 @@ void loop() {
         if (!seriesHeld(detailIdx, rg)) seriesWant = seriesWant | (1 << rg);  // failed earlier: retry
         drawRangeChips();
         kChartReset = true;  // the chart must redraw for the new range
+      } else if (view == View::Detail && rg < 0 && tx >= L.chX + L.chW - 40 && ty >= L.chY && ty < L.chY + 40) {
+        openChart(detailIdx);  // the expand mark
       } else if (view == View::Detail && rg < 0 && tx >= L.chX && tx < L.chX + L.chW && ty >= L.chY && ty < L.chY + L.chH) {
         sCandle = !sCandle;  // the chart itself: line or candles
         saveSettings();
@@ -4269,7 +4412,8 @@ void loop() {
     Serial.printf("tap %d,%d -> view %u %s\n", tx, ty, (unsigned)view, view == View::Detail ? rows[detailIdx].label : "");
   }
 
-  if ((view == View::Detail || view == View::News || view == View::Story) && returnMs && !touchHeld && millis() - detailOpenedAt > returnMs)
+  if ((view == View::Detail || view == View::News || view == View::Story || view == View::Chart) && returnMs && !touchHeld &&
+      millis() - detailOpenedAt > returnMs)
     backToList();
   // Only the pages the crawl is interrupted for come back on their own: a
   // stock, its headlines, the heatmap. Settings, search and the rest were
