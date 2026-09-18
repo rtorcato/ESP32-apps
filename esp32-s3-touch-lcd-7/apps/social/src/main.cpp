@@ -469,12 +469,9 @@ static void drawDetail(bool full) {
 }
 static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
-  const char *name = "SOCIAL";
-  textAt((LCD_W - textWidth(5, name)) / 2, 60, 5, C_FG, name);
-  int16_t x = LCD_W / 2 - 2 * 96, y = 190;
-  for (uint8_t s = 0; s < N_SERVICES; s++, x += 96) svcMark(x - 28, y, 56, s);
-  const char *line = "followers  ·  stars  ·  downloads  ·  views  ·  likes";
-  textAt((LCD_W - textWidth(2, line)) / 2, 290, 2, C_MUTED, line);
+  const char *name = "SOCIAL";  // the name alone, centred; nothing else to look at
+  textAt((LCD_W - textWidth(5, name)) / 2, (LCD_H - FACES[4].cap) / 2 - 20, 5, C_FG, name);
+  gfx->fillRect(LCD_W / 2 - 40, (LCD_H - FACES[4].cap) / 2 - 20 + FACES[4].cap + 22, 80, 3, C_GOLD);
   const char *credit = "made by Richard Torcato";
   textAt((LCD_W - textWidth(1, credit)) / 2, 424, 1, C_MUTED, credit);
   drawHint(status);
