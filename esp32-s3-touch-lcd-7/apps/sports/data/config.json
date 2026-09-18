@@ -1,12 +1,69 @@
 {
   "leagues": [
-    { "id": "nfl", "sport": "football", "label": "NFL" },
-    { "id": "nhl", "sport": "hockey", "label": "NHL" },
-    { "id": "nba", "sport": "basketball", "label": "NBA" },
-    { "id": "mlb", "sport": "baseball", "label": "MLB" },
-    { "id": "usa.1", "sport": "soccer", "label": "MLS" }
+    {
+      "id": "nfl",
+      "sport": "football",
+      "label": "NFL"
+    },
+    {
+      "id": "nhl",
+      "sport": "hockey",
+      "label": "NHL"
+    },
+    {
+      "id": "nba",
+      "sport": "basketball",
+      "label": "NBA"
+    },
+    {
+      "id": "mlb",
+      "sport": "baseball",
+      "label": "MLB"
+    },
+    {
+      "id": "usa.1",
+      "sport": "soccer",
+      "label": "MLS"
+    },
+    {
+      "id": "eng.1",
+      "sport": "soccer",
+      "label": "EPL"
+    },
+    {
+      "id": "esp.1",
+      "sport": "soccer",
+      "label": "LaLiga"
+    },
+    {
+      "id": "ger.1",
+      "sport": "soccer",
+      "label": "Bund."
+    },
+    {
+      "id": "ita.1",
+      "sport": "soccer",
+      "label": "SerieA"
+    },
+    {
+      "id": "fra.1",
+      "sport": "soccer",
+      "label": "Ligue1"
+    },
+    {
+      "id": "uefa.champions",
+      "sport": "soccer",
+      "label": "UCL"
+    }
   ],
-  "teams": ["TOR", "BUF", "DET"],
-  "refresh": { "liveSeconds": 60, "idleSeconds": 600 },
+  "teams": [
+    "TOR",
+    "BUF",
+    "DET"
+  ],
+  "refresh": {
+    "liveSeconds": 60,
+    "idleSeconds": 600
+  },
   "tz": "EST5EDT,M3.2.0/2,M11.1.0/2"
 }

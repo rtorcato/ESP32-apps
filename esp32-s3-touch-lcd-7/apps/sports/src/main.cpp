@@ -1,18 +1,17 @@
-// sports -- a scores board for the Waveshare ESP32-S3-Touch-LCD-7.
+// GAME DAY -- a scores board for the Waveshare ESP32-S3-Touch-LCD-7.
 //
 // Every game today across the leagues in config.json, from ESPN's own site
 // scoreboard (site.web.api.espn.com/apis/v2/scoreboard/header, keyless; the
 // public api host refuses, this one answers): live first with the clock,
 // then today's fixtures by start time, then finals; favourite teams first
-// in each. A tab per league, a page per game. The Wi-Fi network is the one
-// the ticker saved (NVS "ticker": ssid/pass), so one setup serves both.
-//
-// ponytail: the text, header, gesture and fetch helpers are the ticker's,
-// copied; hoist them into lib/ui.h when the third app wants them.
+// in each. A tab per sport, a page per game, the ticker's themes and sheets
+// from lib/ui. The Wi-Fi network is the one the ticker saved (NVS "ticker":
+// ssid/pass), so one setup serves both.
 #include <appcfg.h>
 #include <board.h>
 #include <helv.h>
 #include <netjoin.h>
+#include <ui.h>
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -21,60 +20,12 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
+#include <esp_sleep.h>
 #include <time.h>
 
-// ── colours, faces ───────────────────────────────────────────────────────
-static const uint16_t C_BG = 0x0000, C_FG = 0xFFFF, C_GOOD = 0x07E0, C_BAD = 0xF800, C_DIM = 0x630C, C_MUTED = 0xA534,
-                      C_RULE = 0x2104, C_GOLD = 0xFD40, C_WARN = 0xFFE0;
-static constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
-struct Face { const uint8_t *font; uint8_t cap, desc; };
-static const Face FACES[] = {{u8g2_font_helvR14_tr, 14, 4}, {u8g2_font_helvB18_tr, 19, 5}, {u8g2_font_helvB24_tr, 25, 7},
-                             {u8g2_font_logisoso50_tn, 50, 13}, {u8g2_font_logisoso58_tr, 58, 15}};
-static const uint8_t GWS[] = {8, 11, 14, 28, 34};
-#define GW(s) (GWS[(s) - 1])
-#define GH(s) (FACES[(s) - 1].cap + FACES[(s) - 1].desc)
-static Arduino_GFX *gfx;
-SET_LOOP_TASK_STACK_SIZE(16 * 1024);
-
 // ── layout (landscape) ───────────────────────────────────────────────────
-static const int16_t Y_ROW0 = 40, ROW_H = 52, Y_HINT = 452, X_RIGHT = 788;
+static const int16_t Y_ROW0 = UI_Y_ROW0, ROW_H = 52, Y_HINT = UI_Y_HINT, X_RIGHT = 788, LOGO_BIG = 96;
 static const uint8_t ROWS = (Y_HINT - 8 - Y_ROW0) / ROW_H;  // 7
-
-// ── text ─────────────────────────────────────────────────────────────────
-static int16_t textWidth(uint8_t size, const char *s) {
-  int16_t x1, y1;
-  uint16_t w, h;
-  gfx->setFont(FACES[size - 1].font);
-  gfx->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
-  return (int16_t)w;
-}
-static void textAt(int16_t x, int16_t y, uint8_t size, uint16_t fg, const char *s) {
-  gfx->setFont(FACES[size - 1].font);
-  gfx->setTextColor(fg);
-  gfx->setCursor(x, y + FACES[size - 1].cap);
-  gfx->print(s);
-}
-static void field(int16_t x, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
-  gfx->fillRect(x, y, GW(size) * chars, GH(size), C_BG);
-  textAt(x, y, size, fg, s);
-}
-static void fieldRight(int16_t right, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
-  int16_t w = GW(size) * chars;
-  gfx->fillRect(right - w, y, min<int16_t>(w + 6, LCD_W - (right - w)), GH(size), C_BG);
-  textAt(right - textWidth(size, s), y, size, fg, s);
-}
-static void fieldCentre(int16_t cx, int16_t y, uint8_t chars, uint8_t size, uint16_t fg, const char *s) {
-  int16_t w = GW(size) * chars;
-  gfx->fillRect(cx - w / 2, y, w, GH(size), C_BG);
-  textAt(cx - textWidth(size, s) / 2, y, size, fg, s);
-}
-static void drawHint(const char *s, uint16_t c = C_DIM) { fieldCentre(LCD_W / 2, Y_HINT, 80, 1, c, s); }
-static void backMark(int16_t left, int16_t cy, uint16_t c) {
-  for (int8_t d = 0; d < 2; d++) {
-    gfx->drawLine(left + 8 + d, cy - 8, left + d, cy, c);
-    gfx->drawLine(left + d, cy, left + 8 + d, cy + 8, c);
-  }
-}
 
 // ── logos: /logo/32/ABBR.565 and /logo/128/ABBR.565, cached in PSRAM ──────
 struct LogoCache { uint8_t size; char label[16]; uint16_t *px; };
@@ -121,8 +72,12 @@ static void teamMark(int16_t x, int16_t y, uint8_t size, const char *lg, const c
 }
 
 // ── the leagues and the games ────────────────────────────────────────────
-struct League { char id[10], sport[12], label[6]; };
-static const uint8_t MAX_LEAGUES = 6, MAX_GAMES = 64;
+struct League { char id[16], sport[12], label[8]; };
+static const uint8_t MAX_LEAGUES = 14, MAX_GAMES = 160;  // a UEFA matchday alone is 75 games
+// The tabs are sports, not leagues: every league with the same `sport` in
+// config.json sits under one tab (soccer holds seven), the league named on the row.
+static char sports[MAX_LEAGUES][12];
+static uint8_t nSports = 0;
 static League leagues[MAX_LEAGUES];
 static uint8_t nLeagues = 0;
 static char favs[12][6];
@@ -139,7 +94,7 @@ struct Game {
   bool awayWin, homeWin, fav;
   time_t start;
 };
-static Game games[MAX_GAMES];  // all leagues, in order; the fetch task rebuilds, the UI reads, under mux
+static Game *games = nullptr;  // MAX_GAMES, in PSRAM; all leagues in order; the fetch task rebuilds, the UI reads, under mux
 static uint8_t nGames = 0;
 static uint32_t gamesAt[MAX_LEAGUES], gamesVer = 0;
 static bool lgFailed[MAX_LEAGUES];
@@ -175,49 +130,16 @@ static int gameOrder(const Game &a, const Game &b) {
 
 // ── fetching (core 0 task) ───────────────────────────────────────────────
 static const char *UA = "Mozilla/5.0 (esp32-sports)";
-static const size_t BUF_CAP = 640 * 1024;  // a league's header feed is 70-260KB; PSRAM has room
+static const size_t BUF_CAP = 1024 * 1024;  // a league's header feed is 10-260KB, a UEFA matchday 725KB; PSRAM has room
 static uint8_t *buf = nullptr;
-static int fetchBytes(NetworkClientSecure &client, const char *url, uint8_t *out, size_t cap, const char *tag) {
-  HTTPClient http;
-  http.setConnectTimeout(8000);
-  http.setTimeout(8000);
-  http.useHTTP10(true);
-  if (!http.begin(client, url)) return -1;
-  http.addHeader("User-Agent", UA);
-  int code = http.GET();
-  if (code != 200) {
-    Serial.printf("%s http %d\n", tag, code);
-    http.end();
-    return -1;
-  }
-  size_t len = 0;
-  NetworkClient *st = http.getStreamPtr();
-  uint32_t last = millis();
-  while (millis() - last < 8000 && len < cap) {
-    int n = st->available();
-    if (n > 0) {
-      n = st->read(out + len, min((size_t)n, cap - len));
-      if (n > 0) {
-        len += n;
-        last = millis();
-      }
-    } else if (!st->connected()) {
-      break;
-    } else {
-      delay(5);
-    }
-  }
-  http.end();
-  return (int)len;
-}
 static void fetchLeague(uint8_t li) {
   char url[160];
   snprintf(url, sizeof url, "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&league=%s", leagues[li].sport,
            leagues[li].id);
   NetworkClientSecure client;
   client.setInsecure();
-  int len = fetchBytes(client, url, buf, BUF_CAP - 1, leagues[li].label);
-  static Game got[MAX_GAMES];
+  int len = fetchBytes(client, url, UA, buf, BUF_CAP - 1, leagues[li].label);
+  static Game *got = (Game *)heap_caps_calloc(MAX_GAMES, sizeof(Game), MALLOC_CAP_SPIRAM);
   uint8_t n = 0;
   bool ok = false;
   if (len > 0) {
@@ -262,7 +184,7 @@ static void fetchLeague(uint8_t li) {
   // Rebuild the shared list: the other leagues' games kept, this one's replaced, then sorted.
   xSemaphoreTake(mux, portMAX_DELAY);
   uint8_t m = 0;
-  static Game merged[MAX_GAMES];
+  static Game *merged = (Game *)heap_caps_calloc(MAX_GAMES, sizeof(Game), MALLOC_CAP_SPIRAM);
   for (uint8_t i = 0; i < nGames && m < MAX_GAMES; i++)
     if (games[i].lg != li) merged[m++] = games[i];
   for (uint8_t i = 0; i < n && m < MAX_GAMES; i++) merged[m++] = got[i];
@@ -299,91 +221,22 @@ static void fetchTask(void *) {
   }
 }
 
-// ── touch ────────────────────────────────────────────────────────────────
-static bool touchHeld = false;
-enum class Gesture : uint8_t { None, Tap, TapUp, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
-static const uint32_t TAP_MS = 100, LONG_MS = 700;
-static const int16_t AXIS_PX = 24, SWIPE_PX = 50;
-static bool tapUpQuick = false;
-static Gesture pollGesture(int16_t *x, int16_t *y, int16_t *dy) {
-  static int16_t x0 = 0, y0 = 0, lx = 0, ly = 0;
-  static uint32_t t0 = 0, lastTap = 0;
-  static uint8_t axis = 0, gap = 0;
-  static bool tapped = false, longed = false, dragging = false;
-  int16_t cx, cy;
-  bool contact = touchRead(&cx, &cy);
-  if (contact) gap = 0;
-  else if (touchHeld && ++gap < 3) return Gesture::None;
-  bool now = contact;
-  Gesture g = Gesture::None;
-  if (now && !touchHeld) {
-    x0 = lx = cx;
-    y0 = ly = cy;
-    t0 = millis();
-    axis = 0;
-    tapped = longed = dragging = false;
-  } else if (now) {
-    int16_t ddx = cx - x0, ddy = cy - y0;
-    if (!axis && (abs(ddx) >= AXIS_PX || abs(ddy) >= AXIS_PX)) {
-      if (abs(ddx) * 2 >= abs(ddy) * 3) axis = 1;
-      else if (abs(ddy) * 2 >= abs(ddx) * 3) axis = 2;
-    }
-    if (axis == 2) {
-      static float sy = 0;
-      static int16_t applied = 0;
-      if (!dragging) {
-        sy = cy;
-        applied = cy;
-      }
-      sy += (cy - sy) * 0.5f;
-      int16_t target = (int16_t)lroundf(sy);
-      *dy = abs(target - applied) >= 2 ? target - applied : 0;
-      if (*dy) applied = target;
-      dragging = true;
-      g = Gesture::Drag;
-    } else if (!axis && !tapped && millis() - t0 >= TAP_MS && millis() - lastTap > 150) {
-      tapped = true;
-      lastTap = millis();
-      *x = x0;
-      *y = y0;
-      g = Gesture::Tap;
-    } else if (!axis && tapped && !longed && millis() - t0 >= LONG_MS) {
-      longed = true;
-      *x = x0;
-      *y = y0;
-      g = Gesture::LongPress;
-    }
-    lx = cx;
-    ly = cy;
-  } else if (touchHeld) {
-    int16_t ddx = lx - x0, ddy = ly - y0;
-    if (axis == 1) {
-      if (ddx >= SWIPE_PX) g = Gesture::SwipeRight;
-      else if (ddx <= -SWIPE_PX) g = Gesture::SwipeLeft;
-    } else if (axis == 2) {
-      if (ddy >= SWIPE_PX) g = Gesture::SwipeDown;
-      else if (ddy <= -SWIPE_PX) g = Gesture::SwipeUp;
-    } else {
-      tapUpQuick = !tapped;
-      lastTap = millis();
-      *x = x0;
-      *y = y0;
-      g = Gesture::TapUp;
-    }
-  }
-  touchHeld = now;
-  return g;
-}
-
 // ── pages ────────────────────────────────────────────────────────────────
-enum class View { List, Game };
-static View view = View::List;
-static uint8_t sect = 0;  // 0 ALL, else league index + 1
+enum class View { Splash, List, Game, Settings, Themes, Confirm };
+static View view = View::Splash;
+static View confirmFrom = View::Settings;
+static Preferences prefs;
+static void saveTheme() {
+  prefs.begin("sports", false);
+  prefs.putUChar("bg", sTheme);
+  prefs.end();
+}
+static uint8_t sect = 0;  // 0 ALL, else sport index + 1
 static uint8_t listTop = 0, gameIdx = 0;
 static char cHead[48], cRows[ROWS][64];
 static int16_t tabX[MAX_LEAGUES + 1], tabW[MAX_LEAGUES + 1];
-static uint8_t order[MAX_GAMES], nShown = 0;
-static Game shown[MAX_GAMES];  // the UI's copy, taken under mux when the version moves
+static uint8_t order[MAX_GAMES], nShown = 0;  // (uint8_t: MAX_GAMES stays under 256)
+static Game *shown = nullptr;  // MAX_GAMES, in PSRAM: the UI's copy, taken under mux when the version moves
 static uint32_t shownVer = 0;
 
 static void takeGames() {
@@ -394,14 +247,17 @@ static void takeGames() {
   xSemaphoreGive(mux);
   nShown = 0;
   for (uint8_t i = 0; i < n; i++)
-    if (sect == 0 || shown[i].lg == sect - 1) order[nShown++] = i;
+    if (sect == 0 || strcmp(leagues[shown[i].lg].sport, sports[sect - 1]) == 0) order[nShown++] = i;
 }
 static void drawTabs() {
   gfx->fillRect(0, 0, 560, Y_ROW0 - 1, C_BG);
   int16_t x = 12;
-  for (uint8_t i = 0; i <= nLeagues; i++) {
-    const char *name = i == 0 ? "ALL" : leagues[i - 1].label;
-    int16_t w = textWidth(1, name) + 26;
+  for (uint8_t i = 0; i <= nSports; i++) {
+    char up[12];
+    snprintf(up, sizeof up, "%s", i == 0 ? "ALL" : sports[i - 1]);
+    for (char *c = up; *c; c++) *c = toupper((unsigned char)*c);
+    const char *name = up;
+    int16_t w = textWidth(1, name) + 24;
     tabX[i] = x;
     tabW[i] = w;
     bool on = i == sect;
@@ -409,10 +265,11 @@ static void drawTabs() {
     if (on) gfx->fillRect(x + 9, 34, w - 18, 3, C_FG);
     x += w;
   }
+  settingsIcon(676, C_MUTED);  // by the clock
   gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
 }
 static int8_t hitTab(int16_t x) {
-  for (uint8_t i = 0; i <= nLeagues; i++)
+  for (uint8_t i = 0; i <= nSports; i++)
     if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
   return -1;
 }
@@ -465,7 +322,7 @@ static void drawRow(uint8_t slot, bool force) {
   teamMark(260, y + 10, 32, leagues[g.lg].id, g.home, hc);
   textAt(302, y + 15, 2, hc, g.home);
   if (g.hScore[0]) textAt(440 - textWidth(2, g.hScore), y + 15, 2, hc, g.hScore);
-  if (sect == 0) textAt(480, y + 17, 1, C_DIM, leagues[g.lg].label);
+  textAt(480, y + 17, 1, C_DIM, leagues[g.lg].label);  // the league, always: a sport holds several
   char st[28];
   if (live) snprintf(st, sizeof st, "%s", g.summary[0] ? g.summary : "live");
   else if (done) snprintf(st, sizeof st, "%s", g.summary[0] ? g.summary : "Final");
@@ -528,12 +385,12 @@ static void drawGame(bool full) {
   bool live = g.state == 1, done = g.state == 2;
   uint16_t ac = done && !g.awayWin ? C_MUTED : C_FG, hc = done && !g.homeWin ? C_MUTED : C_FG;
   // away on the left, home on the right, the state in the middle
-  teamMark(60, 80, 128, leagues[g.lg].id, g.away, ac);
-  fieldCentre(124, 222, 12, 2, ac, g.away);
-  fieldCentre(124, 252, 24, 1, C_MUTED, g.awayName);
-  teamMark(612, 80, 128, leagues[g.lg].id, g.home, hc);
-  fieldCentre(676, 222, 12, 2, hc, g.home);
-  fieldCentre(676, 252, 24, 1, C_MUTED, g.homeName);
+  teamMark(76, 88, LOGO_BIG, leagues[g.lg].id, g.away, ac);
+  fieldCentre(124, 200, 12, 2, ac, g.away);
+  fieldCentre(124, 230, 24, 1, C_MUTED, g.awayName);
+  teamMark(628, 88, LOGO_BIG, leagues[g.lg].id, g.home, hc);
+  fieldCentre(676, 200, 12, 2, hc, g.home);
+  fieldCentre(676, 230, 24, 1, C_MUTED, g.homeName);
   if (g.aScore[0] || g.hScore[0]) {
     textAt(300 - textWidth(4, g.aScore[0] ? g.aScore : "0"), 96, 4, ac, g.aScore[0] ? g.aScore : "0");
     textAt(500, 96, 4, hc, g.hScore[0] ? g.hScore : "0");
@@ -548,6 +405,69 @@ static void drawGame(bool full) {
   fieldCentre(400, 196, 20, 2, live ? C_GOOD : C_MUTED, st);
   if (g.broadcast[0]) fieldCentre(400, 232, 20, 1, C_DIM, g.broadcast);
   if (g.fav) fieldCentre(400, 300, 20, 1, C_GOLD, "your team");
+}
+
+// ── the splash: GAME DAY, the sports, a scoreboard ────────────────────────
+static void drawSplash(const char *status) {
+  gfx->fillScreen(C_BG);
+  const char *name = "GAME DAY";
+  textAt((LCD_W - textWidth(5, name)) / 2, 44, 5, C_FG, name);
+  int16_t x = 0, total = 0, wy = 44 + FACES[4].cap + 22;
+  const int16_t sep = 40;
+  for (uint8_t i = 0; i < nSports; i++) total += textWidth(2, sports[i]);
+  x = (LCD_W - total - sep * (nSports - 1)) / 2;
+  for (uint8_t i = 0; i < nSports; i++) {
+    char up[12];
+    snprintf(up, sizeof up, "%s", sports[i]);
+    for (char *c = up; *c; c++) *c = toupper((unsigned char)*c);
+    textAt(x, wy, 2, C_MUTED, up);
+    x += textWidth(2, sports[i]);
+    if (i + 1 < nSports) gfx->fillCircle(x + sep / 2, wy + GH(2) / 2 - 2, 3, C_GOLD);
+    x += sep;
+  }
+  // a scoreboard: a dark panel, HOME and AWAY, the digits in the accent, the clock in green
+  int16_t px = 120, py = wy + 60, pw = 560, ph = 170;
+  gfx->fillRoundRect(px, py, pw, ph, 16, towardsWhite(C_BG, 6));
+  gfx->drawRoundRect(px, py, pw, ph, 16, C_RULE);
+  textAt(px + 40, py + 24, 2, C_MUTED, "HOME");
+  textAt(px + pw - 40 - textWidth(2, "AWAY"), py + 24, 2, C_MUTED, "AWAY");
+  textAt(px + 40, py + 54, 4, C_GOLD, "24");
+  textAt(px + pw - 40 - textWidth(4, "17"), py + 54, 4, C_GOLD, "17");
+  textAt(LCD_W / 2 - textWidth(3, ":") / 2, py + 68, 3, C_DIM, ":");
+  const char *clk = "12:00   4TH";
+  textAt(LCD_W / 2 - textWidth(2, clk) / 2, py + 128, 2, C_GOOD, clk);
+  const char *credit = "made by Richard Torcato";
+  textAt((LCD_W - textWidth(1, credit)) / 2, 424, 1, C_MUTED, credit);
+  drawHint(status);
+}
+// ── settings: Theme, Shutdown; the themes page; the shutdown sheet ───────
+static void drawSettings() {
+  pageHeader("SETTINGS");
+  settingRow(0, "Theme", THEMES[sTheme].name);
+  settingRow(1, "Shut down", "", C_BAD);
+  drawHint("< scores");
+}
+static void openConfirm() {
+  confirmFrom = view;
+  if (view == View::List) {
+    gfx->fillScreen(C_BG);
+    drawTabs();
+  }
+  view = View::Confirm;
+  drawShutdownSheet();
+}
+static void closeConfirm() {
+  sheetClose();
+  view = confirmFrom;
+  if (view == View::List) drawList(true);
+}
+static void shutDown() {
+  drawHint("shutting down. BOOT button turns it on", C_WARN);
+  delay(600);
+  backlight(0);
+  WiFi.disconnect(true);
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);  // the BOOT button: free once the panel is off
+  esp_deep_sleep_start();
 }
 
 // ── wifi ─────────────────────────────────────────────────────────────────
@@ -582,6 +502,8 @@ void setup() {
   bool xp = boardBegin();
   mux = xSemaphoreCreateMutex();
   buf = (uint8_t *)heap_caps_malloc(BUF_CAP, MALLOC_CAP_SPIRAM);
+  games = (Game *)heap_caps_calloc(MAX_GAMES, sizeof(Game), MALLOC_CAP_SPIRAM);
+  shown = (Game *)heap_caps_calloc(MAX_GAMES, sizeof(Game), MALLOC_CAP_SPIRAM);
   if (cfgLoad()) {
     for (JsonObject o : cfgArr("leagues")) {
       if (nLeagues >= MAX_LEAGUES) break;
@@ -590,6 +512,11 @@ void setup() {
       snprintf(l.sport, sizeof l.sport, "%s", o["sport"] | "");
       snprintf(l.label, sizeof l.label, "%s", o["label"] | l.id);
       if (l.id[0] && l.sport[0]) nLeagues++;
+    }
+    for (uint8_t i = 0; i < nLeagues; i++) {  // the sports, in the order the leagues first name them
+      bool seen = false;
+      for (uint8_t j = 0; j < nSports && !seen; j++) seen = strcmp(sports[j], leagues[i].sport) == 0;
+      if (!seen) snprintf(sports[nSports++], sizeof sports[0], "%s", leagues[i].sport);
     }
     for (JsonVariant v : cfgArr("teams")) {
       const char *t = v.as<const char *>();
@@ -600,7 +527,7 @@ void setup() {
     cfgStr("tz", tzString, sizeof tzString);
     cfgRelease();
   }
-  Serial.printf("sports: %u leagues, %u favourite teams, refresh %lus live / %lus idle\n", nLeagues, nFavs,
+  Serial.printf("game day: %u leagues in %u sports, %u favourite teams, refresh %lus live / %lus idle\n", nLeagues, nSports, nFavs,
                 (unsigned long)(liveMs / 1000), (unsigned long)(idleMs / 1000));
   Preferences prefs;  // the ticker's network: one setup on the board serves both apps
   prefs.begin("ticker", true);
@@ -610,13 +537,18 @@ void setup() {
   if (!wifiSsid[0]) Serial.println("no network in NVS: run the ticker once and set it up there");
   setenv("TZ", tzString, 1);
   tzset();
+  prefs.begin("sports", true);
+  sTheme = prefs.getUChar("bg", 0) % N_THEMES;
+  prefs.end();
+  applyTheme();
   gfx = boardDisplay();
   bool ok = gfx->begin();
   Serial.printf("board: expander %s, panel %s, psram %u free\n", xp ? "ok" : "NO ACK", ok ? "ok" : "FAILED", ESP.getFreePsram());
   boardSetRotation(0);
   gfx->setTextWrap(false);
-  gfx->fillScreen(C_BG);
-  drawList(true);
+  char st[48];
+  snprintf(st, sizeof st, "connecting to %.24s", wifiSsid[0] ? wifiSsid : "(no network)");
+  drawSplash(st);
   backlight(255);
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
@@ -631,8 +563,29 @@ void loop() {
   netTick();
   int16_t tx, ty, ddy = 0;
   Gesture g = pollGesture(&tx, &ty, &ddy);
-  if (view == View::List) {
-    if (g == Gesture::Drag && ddy) {  // a row per 26px
+  // A finger held on the header for two seconds: the shutdown sheet.
+  static uint32_t headerHoldAt = 0;
+  if (g == Gesture::LongPress && ty < Y_ROW0 && view != View::Confirm && view != View::Splash) headerHoldAt = millis();
+  if (!touchHeld) headerHoldAt = 0;
+  if (headerHoldAt && millis() - headerHoldAt > 1300) {
+    headerHoldAt = 0;
+    openConfirm();
+    g = Gesture::None;
+  }
+  if (view == View::Splash) {  // until the first league lands, or a tap
+    bool any = false;
+    for (uint8_t li = 0; li < nLeagues; li++) any |= gamesAt[li] != 0;
+    static bool said = false;
+    if (WiFi.status() == WL_CONNECTED && !said) {
+      said = true;
+      drawHint("fetching scores...");
+    }
+    if (any || g == Gesture::TapUp) {
+      view = View::List;
+      drawList(true);
+    }
+  } else if (view == View::List) {
+    if (g == Gesture::Drag && ddy) {  // a row per half a row of movement
       static int16_t acc = 0;
       acc += ddy;
       while (acc <= -ROW_H / 2 && listTop + ROWS < nShown) { acc += ROW_H / 2; listTop++; for (uint8_t s = 0; s < ROWS; s++) drawRow(s, false); }
@@ -641,12 +594,17 @@ void loop() {
       if (listTop + ROWS >= nShown && acc < 0) acc = 0;
     } else if (g == Gesture::TapUp) {
       if (ty < Y_ROW0) {
-        int8_t t = hitTab(tx);
-        if (t >= 0 && t != sect) {
-          sect = (uint8_t)t;
-          listTop = 0;
-          shownVer = 0;  // retake with the new section
-          drawList(true);
+        if (tx >= 660 && tx < 724) {
+          view = View::Settings;
+          drawSettings();
+        } else {
+          int8_t t = hitTab(tx);
+          if (t >= 0 && t != sect) {
+            sect = (uint8_t)t;
+            listTop = 0;
+            shownVer = 0;
+            drawList(true);
+          }
         }
       } else {
         int16_t r = hitRow(ty);
@@ -656,19 +614,19 @@ void loop() {
           drawGame(true);
         }
       }
-    } else if (g == Gesture::SwipeLeft && nLeagues) {
-      sect = (sect + 1) % (nLeagues + 1);
+    } else if (g == Gesture::SwipeLeft && nSports) {
+      sect = (sect + 1) % (nSports + 1);
       listTop = 0;
       shownVer = 0;
       drawList(true);
-    } else if (g == Gesture::SwipeRight && nLeagues) {
-      sect = (sect + nLeagues) % (nLeagues + 1);
+    } else if (g == Gesture::SwipeRight && nSports) {
+      sect = (sect + nSports) % (nSports + 1);
       listTop = 0;
       shownVer = 0;
       drawList(true);
     }
-    drawList(false);
-  } else {
+    if (view == View::List) drawList(false);
+  } else if (view == View::Game) {
     if (g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) {
       view = View::List;
       drawList(true);
@@ -679,13 +637,48 @@ void loop() {
       gameIdx = (gameIdx + nShown - 1) % nShown;
       drawGame(true);
     }
-    if (shownVer != gamesVer) {  // fresh scores: the same game, if it is still there
-      const Game was = shown[order[gameIdx]];
-      takeGames();
-      for (uint8_t i = 0; i < nShown; i++)
-        if (strcmp(shown[order[i]].away, was.away) == 0 && strcmp(shown[order[i]].home, was.home) == 0) gameIdx = i;
+    if (view == View::Game) {
+      if (shownVer != gamesVer) {  // fresh scores: the same game, if it is still there
+        const Game was = shown[order[gameIdx]];
+        takeGames();
+        for (uint8_t i = 0; i < nShown; i++)
+          if (strcmp(shown[order[i]].away, was.away) == 0 && strcmp(shown[order[i]].home, was.home) == 0) gameIdx = i;
+      }
+      drawGame(false);
     }
-    drawGame(false);
+  } else if (view == View::Settings) {
+    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) {
+      view = View::List;
+      drawList(true);
+    } else if (g == Gesture::TapUp) {
+      int8_t i = hitSettingRow(ty, 2);
+      if (i == 0) {
+        view = View::Themes;
+        drawThemesPage();
+      } else if (i == 1) {
+        openConfirm();
+      }
+    }
+  } else if (view == View::Themes) {
+    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) {
+      view = View::Settings;
+      drawSettings();
+    } else if (g == Gesture::TapUp) {
+      int8_t i = hitTheme(tx, ty);
+      if (i >= 0 && i != sTheme) {
+        sTheme = (uint8_t)i;
+        applyTheme();
+        saveTheme();
+        drawThemesPage();
+      }
+    }
+  } else if (view == View::Confirm) {
+    if (g == Gesture::TapUp || g == Gesture::Tap) {
+      if (hitPill(tx, ty)) shutDown();
+      else closeConfirm();
+    } else if (g == Gesture::SwipeDown || g == Gesture::SwipeLeft) {
+      closeConfirm();
+    }
   }
   static uint32_t lastLog = 0;
   if (millis() - lastLog > 60000) {

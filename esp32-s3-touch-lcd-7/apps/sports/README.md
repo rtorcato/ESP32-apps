@@ -1,13 +1,13 @@
-# sports — **built** (first flash 2026-09-18)
+# sports — **Game Day**, built (first flash 2026-09-18)
 
 A scores board: every game today across the leagues you follow, live ones
 first with the clock, then the day's fixtures by start time, then finals,
-your teams first in each. A tab per league, a page per game with the two
+your teams first in each. A tab per sport (soccer holds MLS, the Premier League, LaLiga, the Bundesliga, Serie A, Ligue 1 and the Champions League), the league named on each row, a page per game with the two
 logos large and the score in the tall digits.
 
 ```sh
 python3 tools/make-team-logos.py --size 32 --out data/logo/32     # the teams playing this week
-python3 tools/make-team-logos.py --size 128 --out data/logo/128
+python3 tools/make-team-logos.py --size 96 --out data/logo/96
 pio run -e sports -t upload
 ./push-config sports                                              # config + logos
 ```
@@ -17,7 +17,7 @@ pio run -e sports -t upload
 ESPN's own site scoreboard, `site.web.api.espn.com/apis/v2/scoreboard/header`,
 keyless. (The public `site.api.espn.com` host refuses every request with an
 Akamai denial; this one, the strip at the top of espn.com, answers.) One
-request per league, 10KB to 260KB each, read whole into a 640KB PSRAM buffer
+request per league, 10KB to 260KB each, read whole into a 1MB PSRAM buffer (a Champions League matchday is 725KB, 75 games)
 and parsed through an ArduinoJson filter with the nesting limit raised to 40.
 Each event carries the two teams (abbreviation, name, score, winner), the
 state (pre / in / post), a summary ("Final", "3rd 4:12", "9/20 - 1:00 PM
@@ -31,7 +31,7 @@ stays live between.
 
 | key | what |
 |---|---|
-| `leagues` | `{id, sport, label}` each, in tab order: `nfl/football`, `nhl/hockey`, `nba/basketball`, `mlb/baseball`, `usa.1/soccer` (MLS); any league espn.com shows works the same way |
+| `leagues` | `{id, sport, label}` each; the tabs are the distinct `sport`s in the order first named. Shipped: `nfl/football`, `nhl/hockey`, `nba/basketball`, `mlb/baseball`, and under soccer `usa.1` `eng.1` `esp.1` `ger.1` `ita.1` `fra.1` `uefa.champions`; any league espn.com shows works the same way |
 | `teams` | abbreviations of your teams; their games sort first and wear a gold bar |
 | `refresh` | `liveSeconds`, `idleSeconds` |
 | `tz` | POSIX zone for the clock and the start times |
@@ -45,21 +45,29 @@ the board up once through the ticker's portal and both apps use it.
 team playing this week with its logo URL, and converts them through the
 ticker's `make-logos.py` pipeline. Files are `<league>_<ABBR>.565` because
 TOR is a different team in the NHL and the NBA. A team without a file gets a
-tile with its letters. Sixty-six teams at both sizes is 2.3MB of the 3.4MB
-data partition.
+tile with its letters. The big mark is 96px: 112 teams at 32 and 96 is 2.4MB of the 3.4MB data partition (128px overflowed it).
 
 ## On the panel
 
-- **List.** Text tabs ALL and one per league; rows of 52px: away mark,
+- **List.** Text tabs ALL and one per sport; rows of 52px: away mark,
   letters and score, home the same, the league in ALL, the state on the
   right (green while live, the broadcaster under it before the game). A drag
   scrolls; a swipe left or right changes the tab; a tap opens the game.
-- **Game.** Both marks at 128px, the names, the scores in the 50px digits,
+- **Game.** Both marks at 96px, the names, the scores in the 50px digits,
   the state between, the broadcaster, "your team" for a favourite. Left and
   right step through the games; down or the header's mark return.
 
+- **Splash.** GAME DAY in Logisoso, the sports under it, a scoreboard panel;
+  it stays until the first league lands.
+- **Settings.** The sliders icon by the clock: Theme (the ticker's twelve, a
+  page of tiles, kept in NVS `sports`/bg) and Shut down (a sheet; also a
+  two-second hold on the header). BOOT wakes it.
+
+`lib/ui/ui.h` holds what this app and the ticker share -- faces, text, the
+themes, the header's marks, the sheet, the tile page, the gesture recogniser,
+the body reader -- lifted from the ticker on 2026-09-18. The ticker still
+carries its own copies; migrate it when it is next open.
+
 Not yet: line scores per period (the header feed has none; the full
 scoreboard at `cdn.espn.com/core/<league>/scoreboard?xhr=1` does, at 500KB),
-settings, themes, sleep, the crawl. The ticker has all of those and this app
-copies its helpers rather than sharing them -- hoist into `lib/ui.h` when the
-third app arrives.
+sleep, the crawl.
