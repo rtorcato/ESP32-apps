@@ -28,7 +28,7 @@ static const char *UA = "Mozilla/5.0 (esp32-social)";
 enum : uint8_t { S_BLUESKY, S_MASTODON, S_GITHUB, S_NPM, S_YOUTUBE, N_SERVICES };
 static const char *const SVC_NAMES[] = {"bluesky", "mastodon", "github", "npm", "youtube"};
 static const char *const SVC_TABS[] = {"BLUESKY", "MASTODON", "GITHUB", "NPM", "YOUTUBE"};
-static const uint16_t SVC_COLOUR[] = {rgb(17, 133, 254), rgb(99, 100, 255), rgb(240, 240, 240), rgb(203, 56, 55), rgb(255, 0, 0)};
+static const uint16_t SVC_COLOUR[] = {rgb(17, 133, 254), rgb(99, 100, 255), rgb(36, 41, 46), rgb(203, 56, 55), rgb(255, 0, 0)};
 static const uint8_t MAX_ACC = 64, HIST_N = 31;
 struct Account {
   uint8_t svc;
@@ -237,7 +237,7 @@ static bool fetchAccount(Account &a) {
 }
 static void fetchTask(void *) {
   for (;;) {
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(3000));  // a breath between fetches: a burst of them starved the scan-out
     if (WiFi.status() != WL_CONNECTED || !buf) continue;
     for (uint8_t i = 0; i < nAcc; i++) {
       // GitHub allows sixty requests an hour without a token: its accounts go round hourly, whatever the config says
@@ -357,12 +357,16 @@ static uint16_t *logoLoad(uint8_t size, const char *label) {
   c.px = px;
   return px;
 }
-static void svcMark(int16_t x, int16_t y, uint8_t size, uint8_t svc) {  // the logo, or a tile in the service's colour with its letter
-  char key[20];
-  snprintf(key, sizeof key, "svc_%s", SVC_NAMES[svc]);
-  uint16_t *px = logoLoad(size, key);
-  if (px) { gfx->draw16bitRGBBitmapWithTranColor(x, y, px, 0x0000, size, size); return; }  // black is the mark's transparency
+// An app icon: a rounded plate in the brand's colour with a thin border,
+// the white mark on it at two thirds the size -- or the letter, without a file.
+static void svcMark(int16_t x, int16_t y, uint8_t size, uint8_t svc) {
   gfx->fillRoundRect(x, y, size, size, size / 5, SVC_COLOUR[svc]);
+  gfx->drawRoundRect(x, y, size, size, size / 5, towardsWhite(SVC_COLOUR[svc], 35));
+  char key[20];
+  uint8_t inner = size * 2 / 3;
+  snprintf(key, sizeof key, "svc_%s", SVC_NAMES[svc]);
+  uint16_t *px = logoLoad(inner, key);
+  if (px) { gfx->draw16bitRGBBitmapWithTranColor(x + (size - inner) / 2, y + (size - inner) / 2, px, 0x0000, inner, inner); return; }
   char c[2] = {(char)toupper(SVC_NAMES[svc][0]), 0};
   uint8_t f = size >= 64 ? 3 : 2;
   textAt(x + (size - textWidth(f, c)) / 2, y + (size - FACES[f - 1].cap) / 2, f, svc == S_GITHUB ? 0x0000 : C_FG, c);
@@ -649,7 +653,7 @@ void setup() {
   delay(300);
   bool xp = boardBegin();
   mux = xSemaphoreCreateMutex();
-  buf = (uint8_t *)malloc(CAP);
+  buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // malloc over 16KB lands in PSRAM by itself
   acc = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);
   shown = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);
   // config.json (committed, a demo) and then config.local.json (yours, gitignored), the same shape

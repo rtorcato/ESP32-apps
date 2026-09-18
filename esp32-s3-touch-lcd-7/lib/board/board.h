@@ -37,7 +37,10 @@
 // and the picture glitches. A bounce buffer in internal RAM is Espressif's
 // fix: the DMA reads SRAM and an interrupt refills it in bursts. 20 lines:
 // 2 x 32KB of SRAM, and worth every byte on a 768KB framebuffer.
-#define LCD_BOUNCE_PX (LCD_W * 20)
+#ifndef LCD_BOUNCE_LINES
+#define LCD_BOUNCE_LINES 20  // an app with heap to spare builds with -D LCD_BOUNCE_LINES=40: twice the stall it can ride out
+#endif
+#define LCD_BOUNCE_PX (LCD_W * LCD_BOUNCE_LINES)
 
 #define I2C_SDA 8
 #define I2C_SCL 9

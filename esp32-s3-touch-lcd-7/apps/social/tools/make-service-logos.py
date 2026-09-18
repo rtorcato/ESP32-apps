@@ -3,7 +3,8 @@
 
 Simple Icons (CC0) serves each brand mark as an SVG in a colour of your
 choosing; macOS renders it to PNG (qlmanage) and the ticker's make-logos
-pipeline packs it. GitHub's mark is white here because the panel is dark.
+pipeline packs it. Every mark is white: the board puts it on a rounded
+plate in the brand's colour, an app icon, which reads on any theme.
 
     python3 tools/make-service-logos.py --size 96 --out data/logo/96
     python3 tools/make-service-logos.py --size 32 --out data/logo/32
@@ -20,7 +21,7 @@ ML = importlib.util.spec_from_file_location("ml", HERE.parent / "ticker" / "tool
 ml = importlib.util.module_from_spec(ML)
 ML.loader.exec_module(ml)
 
-SERVICES = {"bluesky": "1185fe", "mastodon": "6364ff", "github": "ffffff", "npm": "cb3837", "youtube": "ff0000"}
+SERVICES = ["bluesky", "mastodon", "github", "npm", "youtube"]  # every mark white: the board draws it on a plate in the brand colour
 
 
 def main() -> int:
@@ -32,9 +33,9 @@ def main() -> int:
     tmp = pathlib.Path("/tmp/social-logos")
     tmp.mkdir(exist_ok=True)
     ok = 0
-    for name, colour in SERVICES.items():
+    for name in SERVICES:
         svg = tmp / f"{name}.svg"
-        req = urllib.request.Request(f"https://cdn.simpleicons.org/{name}/{colour}", headers={"User-Agent": "Mozilla/5.0 (esp32-social logo fetch)"})
+        req = urllib.request.Request(f"https://cdn.simpleicons.org/{name}/ffffff", headers={"User-Agent": "Mozilla/5.0 (esp32-social logo fetch)"})
         with urllib.request.urlopen(req, timeout=20) as r:
             svg.write_bytes(r.read())
         subprocess.run(["qlmanage", "-t", "-s", "256", "-o", str(tmp), str(svg)], check=True, capture_output=True)
