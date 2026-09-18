@@ -333,14 +333,7 @@ static void drawTabs() {
     tabW[i] = w;
     if (i == 0) textAt(x + 13, 12, 1, on ? C_FG : C_DIM, "ALL");
     else if (i == 1) starGlyph(x + 26, 20, 12, on ? C_GOLD : C_DIM);
-    else {
-      sportIcon(sports[i - 2], x + 26, 19, 14, on ? C_FG : C_DIM);  // 28px: the picture, or the glyph
-      if (!on) {  // a picture cannot be dimmed like a glyph: a veil over it instead
-        uint16_t *fb = boardFramebuffer();
-        for (int16_t yy = 5; yy < 33; yy++)
-          for (int16_t xx = x + 12; xx < x + 40; xx++) fb[yy * LCD_W + xx] = (fb[yy * LCD_W + xx] >> 1) & 0x7BEF;
-      }
-    }
+    else sportIcon(sports[i - 2], x + 26, 19, 14, on ? C_FG : C_DIM);  // 28px, in colour; the underline says which is open
     if (on) gfx->fillRect(x + 9, 34, w - 18, 3, C_FG);
     x += w;
   }
@@ -491,19 +484,11 @@ static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "GAME DAY";
   textAt((LCD_W - textWidth(5, name)) / 2, 44, 5, C_FG, name);
-  // the sports as pictures, 56px, 96px apart
-  int16_t wy = 44 + FACES[4].cap + 26, step = 96;
+  // the sports as pictures, 64px, 120px apart, on a rule
+  int16_t cy = 250, step = 120;
   int16_t x = LCD_W / 2 - (nSports - 1) * step / 2;
-  for (uint8_t i = 0; i < nSports; i++, x += step) sportIcon(sports[i], x, wy + 28, 28, C_MUTED);
-  // a scoreboard: a dark panel, the score in the accent, the clock in green
-  int16_t px = 160, py = wy + 80, pw = 480, ph = 150;
-  gfx->fillRoundRect(px, py, pw, ph, 16, towardsWhite(C_BG, 6));
-  gfx->drawRoundRect(px, py, pw, ph, 16, C_RULE);
-  textAt(px + 60, py + 28, 4, C_GOLD, "24");
-  textAt(px + pw - 60 - textWidth(4, "17"), py + 28, 4, C_GOLD, "17");
-  textAt(LCD_W / 2 - textWidth(3, ":") / 2, py + 42, 3, C_DIM, ":");
-  const char *clk = "12:00   4TH";
-  textAt(LCD_W / 2 - textWidth(2, clk) / 2, py + 104, 2, C_GOOD, clk);
+  for (uint8_t i = 0; i < nSports; i++, x += step) sportIcon(sports[i], x, cy, 32, C_MUTED);
+  gfx->drawFastHLine(LCD_W / 8, 330, LCD_W * 3 / 4, C_RULE);
   const char *credit = "made by Richard Torcato";
   textAt((LCD_W - textWidth(1, credit)) / 2, 424, 1, C_MUTED, credit);
   drawHint(status);
@@ -900,6 +885,19 @@ void loop() {
     } else if (g == Gesture::SwipeDown || g == Gesture::SwipeLeft) {
       sheetClose();
       view = View::Settings;
+    }
+  } else if (view == View::Themes) {
+    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) {
+      view = View::Settings;
+      drawSettings();
+    } else if (g == Gesture::TapUp) {
+      int8_t i = hitTheme(tx, ty);
+      if (i >= 0 && i != sTheme) {
+        sTheme = (uint8_t)i;
+        applyTheme();
+        saveSettings();
+        drawThemesPage();
+      }
     }
   } else if (view == View::Confirm) {
     if (g == Gesture::TapUp || g == Gesture::Tap) {
