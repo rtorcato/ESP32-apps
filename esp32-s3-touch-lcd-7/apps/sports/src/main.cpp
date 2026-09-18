@@ -56,7 +56,7 @@ static uint16_t *logoLoad(uint8_t size, const char *label) {
 static bool blitLogo(int16_t x, int16_t y, uint8_t size, const char *label) {
   uint16_t *px = logoLoad(size, label);
   if (!px) return false;
-  gfx->draw16bitRGBBitmap(x, y, px, size, size);
+  gfx->draw16bitRGBBitmapWithTranColor(x, y, px, 0x0000, size, size);  // black is the mark's transparency: no square on a theme
   return true;
 }
 // A team's mark at x,y: its logo (/logo/N/<league>_<ABBR>.565, made by

@@ -120,8 +120,9 @@ static float deltaToday(const Account &a) {
 }
 
 // ── fetching (core 0 task) ───────────────────────────────────────────────
-static uint8_t *buf = nullptr;
+static uint8_t *buf = nullptr;  // internal RAM, not PSRAM: parsing out of PSRAM starved the scan-out and the panel flickered
 static const size_t CAP = 48 * 1024;
+static volatile bool histDirty = false;
 static void stripHtml(char *s) {  // Mastodon's content is HTML: tags out, a few entities back, </p> a space
   char *w = s;
   bool in = false;
@@ -254,8 +255,18 @@ static void fetchTask(void *) {
       accVer++;
       xSemaphoreGive(mux);
       Serial.printf("%s %s: %s %.0f%s (heap %u)\n", SVC_NAMES[a.svc], a.label, ok ? a.what : "FAILED", a.count, ok ? "" : " -", ESP.getFreeHeap());
-      if (ok) histSave();
-      break;  // one an pass
+      if (ok) histDirty = true;
+      break;  // one a pass
+    }
+    // The history file, at most once a minute: a flash write stalls the panel's
+    // scan-out for a moment, and twenty-four of them in a row at boot flickered.
+    static uint32_t savedAt = 0;
+    if (histDirty && millis() - savedAt > 60000) {
+      xSemaphoreTake(mux, portMAX_DELAY);
+      histSave();
+      xSemaphoreGive(mux);
+      histDirty = false;
+      savedAt = millis();
     }
   }
 }
@@ -350,7 +361,7 @@ static void svcMark(int16_t x, int16_t y, uint8_t size, uint8_t svc) {  // the l
   char key[20];
   snprintf(key, sizeof key, "svc_%s", SVC_NAMES[svc]);
   uint16_t *px = logoLoad(size, key);
-  if (px) { gfx->draw16bitRGBBitmap(x, y, px, size, size); return; }
+  if (px) { gfx->draw16bitRGBBitmapWithTranColor(x, y, px, 0x0000, size, size); return; }  // black is the mark's transparency
   gfx->fillRoundRect(x, y, size, size, size / 5, SVC_COLOUR[svc]);
   char c[2] = {(char)toupper(SVC_NAMES[svc][0]), 0};
   uint8_t f = size >= 64 ? 3 : 2;
@@ -638,7 +649,7 @@ void setup() {
   delay(300);
   bool xp = boardBegin();
   mux = xSemaphoreCreateMutex();
-  buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_SPIRAM);
+  buf = (uint8_t *)malloc(CAP);
   acc = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);
   shown = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);
   // config.json (committed, a demo) and then config.local.json (yours, gitignored), the same shape
