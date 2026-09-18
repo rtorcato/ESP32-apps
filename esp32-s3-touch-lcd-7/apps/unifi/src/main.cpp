@@ -249,7 +249,9 @@ static void fetchTask(void *) {
 }
 
 // ── pages ────────────────────────────────────────────────────────────────
-enum class View { Overview, Devices, Clients, Settings, Themes, Info, Choice, Confirm };
+enum class View { Overview, Devices, Clients, Settings, Themes, Info, Choice, Confirm, Setup, Kb };
+static uint8_t kbField_ = 0;  // 0 the console, 1 the key
+static char editBuf[80];
 static View view = View::Overview, confirmFrom = View::Settings;
 static uint8_t sect = 0, sClock = 0, chN = 0, chSel = 0;
 static uint16_t listTop = 0;
@@ -262,8 +264,30 @@ static void saveSettings() {
   prefs.begin("unifi", false);
   prefs.putUChar("bg", sTheme);
   prefs.putUChar("clk", sClock);
+  prefs.putString("host", host);
+  prefs.putString("key", apiKey);
   prefs.end();
 }
+// The setup page: where the key comes from, the two fields, Connect.
+// Shown at boot until there is a key; Settings > Console opens it again.
+static void drawSetup() {
+  pageHeader("SET UP", "the console's API key");
+  const char *steps[] = {"1. In UniFi OS (not the Network app) open Settings > Control Plane > Integrations.",
+                         "2. Create API Key, name it for this board, copy the key: it shows only once.",
+                         "3. Tap the key row below and type it in, then Connect."};
+  for (uint8_t i = 0; i < 3; i++) textAt(20, 56 + i * 24, 1, i == 2 ? C_FG : C_MUTED, steps[i]);
+  char masked[24] = "not set";
+  size_t l = strlen(apiKey);
+  if (l) snprintf(masked, sizeof masked, "%s%.4s", l > 4 ? "**** " : "", apiKey + (l > 4 ? l - 4 : 0));  // the last four, the rest hidden
+  settingRow(2, "Console", host);
+  settingRow(3, "API key", masked);
+  gfx->fillRoundRect(LCD_W / 2 - 120, 270, 240, 48, 24, apiKey[0] ? C_GOLD : C_RULE);
+  textAt(LCD_W / 2 - textWidth(2, "Connect") / 2, 270 + (48 - FACES[1].cap) / 2, 2, apiKey[0] ? 0x0000 : C_DIM, "Connect");
+  textAt(20, 340, 1, C_DIM, "Or put it in data/config.local.json and push it: the README says how.");
+  if (lastErr[0]) textAt(20, 364, 1, C_BAD, lastErr);
+  drawHint(apiKey[0] ? "< overview" : "no key yet");
+}
+static bool hitConnect(int16_t x, int16_t y) { return y >= 270 && y < 318 && x >= LCD_W / 2 - 120 && x < LCD_W / 2 + 120; }
 static void fmtRate(float bps, char *out, size_t n) {  // 12.3 Mbps
   if (bps >= 1e9f) snprintf(out, n, "%.2f Gbps", bps / 1e9f);
   else if (bps >= 1e6f) snprintf(out, n, "%.1f Mbps", bps / 1e6f);
@@ -469,7 +493,7 @@ static void drawSettings() {
   settingRow(2, "Info", "");
   settingRow(3, "Console", host);
   settingRow(4, "Shut down", "", C_BAD);
-  drawHint("< overview        the console and its key are in data/config.local.json");
+  drawHint("< overview");
 }
 static void drawInfo() {
   pageHeader("INFO");
@@ -559,6 +583,10 @@ void setup() {
   prefs.begin("unifi", true);
   sTheme = prefs.getUChar("bg", 0) % N_THEMES;
   sClock = prefs.getUChar("clk", 0) % 2;
+  if (prefs.isKey("key")) {  // typed on the board: beats the files
+    prefs.getString("host", host, sizeof host);
+    prefs.getString("key", apiKey, sizeof apiKey);
+  }
   prefs.end();
   applyTheme();
   setenv("TZ", tzString, 1);
@@ -568,7 +596,8 @@ void setup() {
   Serial.printf("board: expander %s, panel %s, psram %u free\n", xp ? "ok" : "NO ACK", ok ? "ok" : "FAILED", ESP.getFreePsram());
   boardSetRotation(0);
   gfx->setTextWrap(false);
-  drawOverview(true);
+  if (apiKey[0]) drawOverview(true);
+  else { view = View::Setup; drawSetup(); }
   backlight(255);
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
@@ -612,6 +641,39 @@ void loop() {
       if (shownVer != ver) { shownVer = ver; drawCurrent(false); }
       else drawClock();
     }
+  } else if (view == View::Setup) {
+    if (g == Gesture::TapUp) {
+      int8_t i = hitSettingRow(ty, 4);
+      if (ty < Y_ROW0 && tx < 140 && apiKey[0]) { view = View::Overview; sect = 0; drawCurrent(true); }
+      else if (i == 2 || i == 3) {
+        kbField_ = i == 2 ? 0 : 1;
+        snprintf(editBuf, sizeof editBuf, "%s", kbField_ ? apiKey : host);
+        kbOpen(kbField_ ? "API KEY" : "CONSOLE", editBuf, kbField_ ? sizeof apiKey : sizeof host);
+        view = View::Kb;
+        kbDraw(kbField_ ? "the key, exactly as shown; it is case sensitive" : "address or name, 10.0.10.1 or unifi");
+      } else if (hitConnect(tx, ty) && apiKey[0]) {
+        saveSettings();
+        siteId[0] = '\0';
+        lastErr[0] = '\0';
+        devAt = cliAt = statsAt = 0;
+        view = View::Overview;
+        sect = 0;
+        drawCurrent(true);
+      }
+    }
+  } else if (view == View::Kb) {
+    if (g == Gesture::TapUp || g == Gesture::Tap) {
+      uint8_t r = kbTap(tx, ty);
+      if (r == 2) {
+        if (kbField_) snprintf(apiKey, sizeof apiKey, "%s", editBuf);
+        else snprintf(host, sizeof host, "%s", editBuf);
+        view = View::Setup;
+        drawSetup();
+      } else if (r == 3) {
+        view = View::Setup;
+        drawSetup();
+      }
+    }
   } else if (view == View::Settings) {
     if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = sect == 0 ? View::Overview : sect == 1 ? View::Devices : View::Clients; drawCurrent(true); }
     else if (g == Gesture::TapUp) {
@@ -619,6 +681,7 @@ void loop() {
       if (i == 0) { chN = 2; chSel = sClock; view = View::Choice; drawChoiceSheet("CLOCK", CLOCK_NAMES, chN, chSel); }
       else if (i == 1) { view = View::Themes; drawThemesPage(); }
       else if (i == 2) { view = View::Info; drawInfo(); }
+      else if (i == 3) { view = View::Setup; drawSetup(); }
       else if (i == 4) openConfirm();
     }
   } else if (view == View::Themes) {

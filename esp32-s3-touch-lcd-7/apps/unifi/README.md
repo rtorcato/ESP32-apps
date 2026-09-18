@@ -18,8 +18,14 @@ needs the internet and a different key, and not the old cookie-and-CSRF
 controller API.) Read only: `/sites`, `/sites/{id}/devices`,
 `/sites/{id}/devices/{id}/statistics/latest`, `/sites/{id}/clients`.
 
-Make the key in UniFi Network > Settings > Control Plane > Integrations >
-Create API Key, and put it where the repo will not see it:
+Make the key in **UniFi OS**, not the Network application: click the
+console's name at the top left to leave Network, open Settings, then
+Control Plane > Integrations > Create API Key (Network 10.6 moved it there;
+older versions had it under Network > Settings > Control Plane). It shows
+once. Then either type it on the board -- the app boots into a setup page
+with an on-screen keyboard until it has a key, and Settings > Console opens
+that page again; the key goes to NVS -- or put it where the repo will not
+see it:
 
 ```json
 // data/config.local.json  (gitignored)

@@ -366,3 +366,88 @@ inline int fetchBytes(NetworkClientSecure &client, const char *url, const char *
   http.end();
   return (int)len;
 }
+
+// ── an on-screen keyboard, for the one secret an app needs typed once ──────
+// kbOpen(title, buffer, cap) then kbDraw(); feed taps to kbTap(): 0 nothing,
+// 1 the text changed (redraw the field), 2 Done, 3 the back mark. Four rows
+// of ten 76px keys, a shift that lets go after one letter, a symbols layer,
+// and a bottom row of shift, symbols, space, backspace, Done.
+inline char *kbBuf = nullptr;
+inline size_t kbCap = 0;
+inline bool kbShift = false, kbSym = false;
+inline const char *kbTitle = "";
+inline const char *const KB_ROWS[4] = {"1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"};
+inline const char *const KB_SYM[4] = {"!@#$%^&*()", "-_=+[]{}\\|", "~`;:'\",.<>", "/?"};
+inline const int16_t KB_X0 = 20, KB_Y0 = 150, KB_W = 76, KB_H = 52;
+inline void kbField() {
+  gfx->fillRoundRect(20, 96, LCD_W - 40, 44, 8, towardsWhite(C_BG, 8));
+  gfx->drawRoundRect(20, 96, LCD_W - 40, 44, 8, C_RULE);
+  size_t len = strlen(kbBuf);
+  const char *tail = kbBuf;
+  while (textWidth(2, tail) > LCD_W - 80 && *tail) tail++;  // the end of a long key, not the start
+  textAt(34, 96 + (44 - GH(2)) / 2, 2, C_FG, tail);
+  int16_t cx = 34 + textWidth(2, tail) + 3;
+  gfx->fillRect(cx, 104, 2, 28, C_GOLD);
+  char n[16];
+  snprintf(n, sizeof n, "%u", (unsigned)len);
+  textAt(LCD_W - 34 - textWidth(1, n), 96 + (44 - GH(1)) / 2, 1, C_DIM, n);
+}
+inline void kbKey(int16_t x, int16_t y, int16_t w, const char *label, bool on = false) {
+  gfx->fillRoundRect(x, y, w - 6, KB_H - 6, 8, on ? C_DIM : towardsWhite(C_BG, 10));
+  gfx->drawRoundRect(x, y, w - 6, KB_H - 6, 8, C_RULE);
+  textAt(x + (w - 6 - textWidth(2, label)) / 2, y + (KB_H - 6 - GH(2)) / 2, 2, C_FG, label);
+}
+inline void kbDrawKeys() {
+  for (uint8_t r = 0; r < 4; r++) {
+    const char *row = kbSym ? KB_SYM[r] : KB_ROWS[r];
+    for (uint8_t c = 0; row[c]; c++) {
+      char l[2] = {kbShift && !kbSym ? (char)toupper((unsigned char)row[c]) : row[c], 0};
+      kbKey(KB_X0 + c * KB_W, KB_Y0 + r * KB_H, KB_W, l);
+    }
+    for (uint8_t c = strlen(row); c < 10; c++) gfx->fillRect(KB_X0 + c * KB_W, KB_Y0 + r * KB_H, KB_W, KB_H, C_BG);
+  }
+  int16_t y = KB_Y0 + 4 * KB_H;
+  kbKey(KB_X0, y, 110, kbShift ? "SHIFT" : "shift", kbShift);
+  kbKey(KB_X0 + 110, y, 110, kbSym ? "abc" : "#+=", kbSym);
+  kbKey(KB_X0 + 220, y, 230, "space");
+  kbKey(KB_X0 + 450, y, 120, "<-");
+  gfx->fillRoundRect(KB_X0 + 570, y, 190 - 6, KB_H - 6, 8, C_GOLD);
+  textAt(KB_X0 + 570 + (184 - textWidth(2, "Done")) / 2, y + (KB_H - 6 - GH(2)) / 2, 2, 0x0000, "Done");
+}
+inline void kbOpen(const char *title, char *buffer, size_t cap) {
+  kbTitle = title;
+  kbBuf = buffer;
+  kbCap = cap;
+  kbShift = kbSym = false;
+}
+inline void kbDraw(const char *note = nullptr) {
+  pageHeader(kbTitle, note);
+  kbField();
+  kbDrawKeys();
+  drawHint("tap Done when it is all in        < back");
+}
+inline uint8_t kbTap(int16_t x, int16_t y) {
+  if (y < UI_Y_ROW0 && x < 140) return 3;
+  if (y < KB_Y0 || x < KB_X0 || x >= KB_X0 + 10 * KB_W) return 0;
+  uint8_t r = (y - KB_Y0) / KB_H;
+  size_t len = strlen(kbBuf);
+  if (r < 4) {
+    const char *row = kbSym ? KB_SYM[r] : KB_ROWS[r];
+    uint8_t c = (x - KB_X0) / KB_W;
+    if (c >= strlen(row)) return 0;
+    if (len + 1 >= kbCap) return 0;
+    char ch = kbShift && !kbSym ? (char)toupper((unsigned char)row[c]) : row[c];
+    kbBuf[len] = ch;
+    kbBuf[len + 1] = '\0';
+    if (kbShift) { kbShift = false; kbDrawKeys(); }
+    kbField();
+    return 1;
+  }
+  if (r != 4) return 0;
+  int16_t rx = x - KB_X0;
+  if (rx < 110) { kbShift = !kbShift; kbDrawKeys(); return 0; }
+  if (rx < 220) { kbSym = !kbSym; kbDrawKeys(); return 0; }
+  if (rx < 450) { if (len + 1 < kbCap) { kbBuf[len] = ' '; kbBuf[len + 1] = '\0'; kbField(); return 1; } return 0; }
+  if (rx < 570) { if (len) { kbBuf[len - 1] = '\0'; kbField(); return 1; } return 0; }
+  return 2;
+}
