@@ -224,6 +224,38 @@ inline void drawShutdownSheet() {
   textAt(cx - textWidth(2, "Cancel") / 2, shY + 268 + (48 - FACES[1].cap) / 2, 2, C_MUTED, "Cancel");
 }
 inline bool hitPill(int16_t x, int16_t y) { return y >= pillY && y < pillY + 48 && x >= pillX && x < pillX + pillW; }
+// A picker sheet: a title, a row per value, a check on the current one.
+inline const int16_t SH_ROW = 44;
+inline void drawChoiceSheet(const char *title, const char *const *names, uint8_t n, uint8_t sel) {
+  sheetOpen(SH_ROW + n * SH_ROW + 16);
+  textAt(shX + 20, shY + (SH_ROW - GH(2)) / 2, 2, C_MUTED, title);
+  for (uint8_t i = 0; i < n; i++) {
+    int16_t y = shY + SH_ROW + i * SH_ROW, x = shX + 20, w = shW - 40;
+    textAt(x, y + (SH_ROW - GH(2)) / 2, 2, i == sel ? C_FG : C_MUTED, names[i]);
+    if (i == sel) checkMark(x + w, y + SH_ROW / 2, C_GOOD);
+    gfx->drawFastHLine(x, y + SH_ROW - 1, w, C_RULE);
+  }
+}
+inline int8_t hitChoice(int16_t x, int16_t y, uint8_t n) {
+  int16_t y0 = shY + SH_ROW;
+  if (x < shX || x >= shX + shW || y < y0 || y >= y0 + n * SH_ROW) return -1;
+  return (y - y0) / SH_ROW;
+}
+// A five-point star centred at cx,cy with outer radius r.
+inline void starGlyph(int16_t cx, int16_t cy, int16_t r, uint16_t c) {
+  int16_t px[10], py[10];
+  for (uint8_t k = 0; k < 10; k++) {
+    float a = -1.5708f + k * 0.62832f, rr = k % 2 ? r * 0.42f : r;
+    px[k] = cx + (int16_t)lroundf(rr * cosf(a));
+    py[k] = cy + (int16_t)lroundf(rr * sinf(a));
+  }
+  for (uint8_t k = 0; k < 10; k++) gfx->fillTriangle(cx, cy, px[k], py[k], px[(k + 1) % 10], py[(k + 1) % 10], c);
+}
+// "9:05 PM" or "21:05".
+inline void clockStr(const struct tm &t, bool h24, char *out, size_t n) {
+  if (h24) snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
+  else snprintf(out, n, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min, t.tm_hour < 12 ? "AM" : "PM");
+}
 
 // ── touch: tap, tap-up, long press, vertical drag, horizontal swipe ───────
 enum class Gesture : uint8_t { None, Tap, TapUp, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };

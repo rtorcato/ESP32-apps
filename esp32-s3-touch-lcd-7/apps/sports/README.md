@@ -32,7 +32,7 @@ stays live between.
 | key | what |
 |---|---|
 | `leagues` | `{id, sport, label}` each; the tabs are the distinct `sport`s in the order first named. Shipped: `nfl/football`, `nhl/hockey`, `nba/basketball`, `mlb/baseball`, and under soccer `usa.1` `eng.1` `esp.1` `ger.1` `ita.1` `fra.1` `uefa.champions`; any league espn.com shows works the same way |
-| `teams` | abbreviations of your teams; their games sort first and wear a gold bar |
+| `teams` | your teams, `"TOR"` (every league's TOR) or `"nhl:TOR"`; their games sort first, wear a gold bar and fill the star tab. Once a star is tapped on the device the Teams page's list (NVS) replaces this one |
 | `refresh` | `liveSeconds`, `idleSeconds` |
 | `tz` | POSIX zone for the clock and the start times |
 
@@ -49,7 +49,7 @@ tile with its letters. The big mark is 96px: 112 teams at 32 and 96 is 2.4MB of 
 
 ## On the panel
 
-- **List.** Text tabs ALL and one per sport; rows of 52px: away mark,
+- **List.** Tabs: ALL, a star for your teams, a glyph per sport; rows of 52px: away mark,
   letters and score, home the same, the league in ALL, the state on the
   right (green while live, the broadcaster under it before the game). A drag
   scrolls; a swipe left or right changes the tab; a tap opens the game.
@@ -59,9 +59,13 @@ tile with its letters. The big mark is 96px: 112 teams at 32 and 96 is 2.4MB of 
 
 - **Splash.** GAME DAY in Logisoso, the sports under it, a scoreboard panel;
   it stays until the first league lands.
-- **Settings.** The sliders icon by the clock: Theme (the ticker's twelve, a
-  page of tiles, kept in NVS `sports`/bg) and Shut down (a sheet; also a
-  two-second hold on the header). BOOT wakes it.
+- **Settings.** The sliders icon by the clock. Teams (every team in this
+  week's games by league, a star each), Clock (12/24h), Auto return (the
+  game page comes back to the scores after 15s, 60s or never), Sleep (never,
+  or dark 23:00-06:00 with a touch lighting it for a minute), Theme (the
+  ticker's twelve, a page of tiles), Info, Wi-Fi (read-only: set up in
+  Ticker Tape), Shut down (a sheet; also a two-second hold on the header).
+  All in NVS `sports`. BOOT wakes it.
 
 `lib/ui/ui.h` holds what this app and the ticker share -- faces, text, the
 themes, the header's marks, the sheet, the tile page, the gesture recogniser,

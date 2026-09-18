@@ -80,8 +80,17 @@ static char sports[MAX_LEAGUES][12];
 static uint8_t nSports = 0;
 static League leagues[MAX_LEAGUES];
 static uint8_t nLeagues = 0;
-static char favs[12][6];
+// Favourite teams: keys "nhl_TOR"; a bare "TOR" from config.json means every
+// league's TOR. NVS "favs" (a comma list from the Teams page) replaces the
+// config's list once it exists.
+static const uint8_t MAX_FAVS = 32;
+static char favs[MAX_FAVS][14];
 static uint8_t nFavs = 0;
+static bool favsFromNvs = false;
+static uint8_t sClock = 0, sRet = 1, sSleep = 0;  // 12/24h; 15s/60s/never; never/night
+static const char *const CLOCK_NAMES[] = {"12-hour", "24-hour"}, *const RET_NAMES[] = {"15s", "60s", "never"},
+                  *const SLEEP_NAMES[] = {"never", "night (23-06)"};
+static const uint32_t RET_MS[] = {15000, 60000, 0};
 static uint32_t liveMs = 60000, idleMs = 600000;
 static char tzString[48] = "EST5EDT,M3.2.0/2,M11.1.0/2";
 static char wifiSsid[33] = "", wifiPass[65] = "";
@@ -100,9 +109,11 @@ static uint32_t gamesAt[MAX_LEAGUES], gamesVer = 0;
 static bool lgFailed[MAX_LEAGUES];
 static SemaphoreHandle_t mux;
 
-static bool isFav(const char *abbr) {
+static bool isFav(const char *lg, const char *abbr) {
+  char key[20];
+  snprintf(key, sizeof key, "%s_%s", lg, abbr);
   for (uint8_t i = 0; i < nFavs; i++)
-    if (strcmp(favs[i], abbr) == 0) return true;
+    if (strcmp(favs[i], key) == 0 || (!favsFromNvs && strcmp(favs[i], abbr) == 0)) return true;
   return false;
 }
 // Days since the epoch for a civil date (Howard Hinnant), for "2026-09-20T17:00:00Z".
@@ -176,7 +187,7 @@ static void fetchLeague(uint8_t li) {
           else g.awayWin = c["winner"] | false;
         }
         if (!g.away[0] || !g.home[0]) continue;
-        g.fav = isFav(g.away) || isFav(g.home);
+        g.fav = isFav(leagues[li].id, g.away) || isFav(leagues[li].id, g.home);
         n++;
       }
     }
@@ -222,19 +233,33 @@ static void fetchTask(void *) {
 }
 
 // ── pages ────────────────────────────────────────────────────────────────
-enum class View { Splash, List, Game, Settings, Themes, Confirm };
+enum class View { Splash, List, Game, Settings, Themes, Teams, Info, Choice, Confirm };
+static uint8_t chWhich = 0, chN = 0, chSel = 0;  // the open picker: 0 clock, 1 return, 2 sleep
+static const char *const *chNames = nullptr;
+static uint32_t pageOpenedAt = 0;
 static View view = View::Splash;
 static View confirmFrom = View::Settings;
 static Preferences prefs;
-static void saveTheme() {
+static void saveSettings() {
   prefs.begin("sports", false);
   prefs.putUChar("bg", sTheme);
+  prefs.putUChar("clk", sClock);
+  prefs.putUChar("ret", sRet);
+  prefs.putUChar("slp", sSleep);
+  if (favsFromNvs) {
+    char list[MAX_FAVS * 14] = "";
+    for (uint8_t i = 0; i < nFavs; i++) {
+      if (list[0]) strlcat(list, ",", sizeof list);
+      strlcat(list, favs[i], sizeof list);
+    }
+    prefs.putString("favs", list);
+  }
   prefs.end();
 }
-static uint8_t sect = 0;  // 0 ALL, else sport index + 1
+static uint8_t sect = 0;  // 0 ALL, 1 favourites, else sport index + 2
 static uint8_t listTop = 0, gameIdx = 0;
 static char cHead[48], cRows[ROWS][64];
-static int16_t tabX[MAX_LEAGUES + 1], tabW[MAX_LEAGUES + 1];
+static int16_t tabX[MAX_LEAGUES + 2], tabW[MAX_LEAGUES + 2];
 static uint8_t order[MAX_GAMES], nShown = 0;  // (uint8_t: MAX_GAMES stays under 256)
 static Game *shown = nullptr;  // MAX_GAMES, in PSRAM: the UI's copy, taken under mux when the version moves
 static uint32_t shownVer = 0;
@@ -247,7 +272,8 @@ static void takeGames() {
   xSemaphoreGive(mux);
   nShown = 0;
   for (uint8_t i = 0; i < n; i++)
-    if (sect == 0 || strcmp(leagues[shown[i].lg].sport, sports[sect - 1]) == 0) order[nShown++] = i;
+    if (sect == 0 || (sect == 1 && shown[i].fav) || (sect >= 2 && strcmp(leagues[shown[i].lg].sport, sports[sect - 2]) == 0))
+      order[nShown++] = i;
 }
 // A sport's glyph, centred at cx,cy with half-size r, in c on C_BG: a laced
 // football, a puck, a basketball with its seams, a baseball with stitches,
@@ -297,13 +323,14 @@ static void sportIcon(const char *sport, int16_t cx, int16_t cy, int16_t r, uint
 static void drawTabs() {
   gfx->fillRect(0, 0, 560, Y_ROW0 - 1, C_BG);
   int16_t x = 12;
-  for (uint8_t i = 0; i <= nSports; i++) {  // ALL as a word, then a glyph per sport, 52px each
+  for (uint8_t i = 0; i <= nSports + 1; i++) {  // ALL as a word, a star for the favourites, a glyph per sport, 52px each
     bool on = i == sect;
     int16_t w = i == 0 ? textWidth(1, "ALL") + 26 : 52;
     tabX[i] = x;
     tabW[i] = w;
     if (i == 0) textAt(x + 13, 12, 1, on ? C_FG : C_DIM, "ALL");
-    else sportIcon(sports[i - 1], x + 26, 20, 12, on ? C_FG : C_DIM);
+    else if (i == 1) starGlyph(x + 26, 20, 12, on ? C_GOLD : C_DIM);
+    else sportIcon(sports[i - 2], x + 26, 20, 12, on ? C_FG : C_DIM);
     if (on) gfx->fillRect(x + 9, 34, w - 18, 3, C_FG);
     x += w;
   }
@@ -311,14 +338,14 @@ static void drawTabs() {
   gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
 }
 static int8_t hitTab(int16_t x) {
-  for (uint8_t i = 0; i <= nSports; i++)
+  for (uint8_t i = 0; i <= nSports + 1; i++)
     if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
   return -1;
 }
 static void drawClock() {
   struct tm t;
   char clk[12] = "";
-  if (getLocalTime(&t, 0)) snprintf(clk, sizeof clk, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min, t.tm_hour < 12 ? "AM" : "PM");
+  if (getLocalTime(&t, 0)) clockStr(t, sClock, clk, sizeof clk);
   if (strcmp(clk, cHead) == 0) return;
   strcpy(cHead, clk);
   fieldRight(X_RIGHT, 12, 8, 1, C_MUTED, clk);
@@ -332,7 +359,7 @@ static void whenStr(time_t start, char *out, size_t n) {
   localtime_r(&nt, &now);
   bool today = nt > 1000000000L && t.tm_yday == now.tm_yday && t.tm_year == now.tm_year;
   char hm[12];
-  snprintf(hm, sizeof hm, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min, t.tm_hour < 12 ? "AM" : "PM");
+  clockStr(t, sClock, hm, sizeof hm);
   if (today) snprintf(out, n, "%s", hm);
   else {
     char day[8];
@@ -390,7 +417,7 @@ static void drawList(bool full) {
   if (!nShown) {
     bool any = false, failed = false;
     for (uint8_t li = 0; li < nLeagues; li++) { any |= gamesAt[li] != 0; failed |= lgFailed[li]; }
-    snprintf(e, sizeof e, "%s", !any ? "fetching scores..." : failed ? "no scores (fetch failed)" : "no games today");
+    snprintf(e, sizeof e, "%s", !any ? "fetching scores..." : sect == 1 ? "no games for your teams today" : failed ? "no scores (fetch failed)" : "no games today");
   }
   if (strcmp(e, cEmpty) != 0) {
     strcpy(cEmpty, e);
@@ -454,12 +481,24 @@ static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "GAME DAY";
   textAt((LCD_W - textWidth(5, name)) / 2, 44, 5, C_FG, name);
-  // the sports as glyphs, 56px, 100px apart
-  int16_t wy = 44 + FACES[4].cap + 24, step = 100;
-  int16_t x = LCD_W / 2 - (nSports - 1) * step / 2;
-  for (uint8_t i = 0; i < nSports; i++, x += step) sportIcon(sports[i], x, wy + 28, 28, C_MUTED);
+  // the sports as words, a gold dot between (the glyphs read at 28px in the tabs, not at 56)
+  int16_t x = 0, total = 0, wy = 44 + FACES[4].cap + 22;
+  const int16_t sep = 40;
+  char up[MAX_LEAGUES][12];
+  for (uint8_t i = 0; i < nSports; i++) {
+    snprintf(up[i], sizeof up[i], "%s", sports[i]);
+    for (char *c = up[i]; *c; c++) *c = toupper((unsigned char)*c);
+    total += textWidth(2, up[i]);
+  }
+  x = (LCD_W - total - sep * (nSports - 1)) / 2;
+  for (uint8_t i = 0; i < nSports; i++) {
+    textAt(x, wy, 2, C_MUTED, up[i]);
+    x += textWidth(2, up[i]);
+    if (i + 1 < nSports) gfx->fillCircle(x + sep / 2, wy + GH(2) / 2 - 2, 3, C_GOLD);
+    x += sep;
+  }
   // a scoreboard: a dark panel, HOME and AWAY, the digits in the accent, the clock in green
-  int16_t px = 120, py = wy + 76, pw = 560, ph = 170;
+  int16_t px = 120, py = wy + 60, pw = 560, ph = 170;
   gfx->fillRoundRect(px, py, pw, ph, 16, towardsWhite(C_BG, 6));
   gfx->drawRoundRect(px, py, pw, ph, 16, C_RULE);
   textAt(px + 40, py + 24, 2, C_MUTED, "HOME");
@@ -476,9 +515,121 @@ static void drawSplash(const char *status) {
 // ── settings: Theme, Shutdown; the themes page; the shutdown sheet ───────
 static void drawSettings() {
   pageHeader("SETTINGS");
-  settingRow(0, "Theme", THEMES[sTheme].name);
-  settingRow(1, "Shut down", "", C_BAD);
-  drawHint("< scores");
+  char n[8];
+  snprintf(n, sizeof n, "%u", nFavs);
+  settingRow(0, "Teams", n);
+  settingRow(1, "Clock", CLOCK_NAMES[sClock]);
+  settingRow(2, "Auto return", RET_NAMES[sRet]);
+  settingRow(3, "Sleep", SLEEP_NAMES[sSleep]);
+  settingRow(4, "Theme", THEMES[sTheme].name);
+  settingRow(5, "Info", "");
+  settingRow(6, "Wi-Fi", wifiSsid[0] ? wifiSsid : "not set");
+  settingRow(7, "Shut down", "", C_BAD);
+  drawHint("< scores        Wi-Fi is set up in Ticker Tape");
+}
+static void openChoice(uint8_t which) {
+  chWhich = which;
+  chNames = which == 0 ? CLOCK_NAMES : which == 1 ? RET_NAMES : SLEEP_NAMES;
+  chN = which == 1 ? 3 : 2;
+  chSel = which == 0 ? sClock : which == 1 ? sRet : sSleep;
+  view = View::Choice;
+  drawChoiceSheet(which == 0 ? "CLOCK" : which == 1 ? "AUTO RETURN" : "SLEEP", chNames, chN, chSel);
+}
+static void applyChoice(uint8_t i) {
+  if (chWhich == 0) sClock = i;
+  else if (chWhich == 1) sRet = i;
+  else sSleep = i;
+  saveSettings();
+}
+// The Teams page: every team in this week's games, by league, a star each.
+struct TeamRow { uint8_t lg; char abbr[6], name[24]; };
+static TeamRow *teamRows = nullptr;  // MAX_GAMES*2, PSRAM
+static uint8_t nTeamRows = 0, teamTop = 0;
+static const uint8_t TEAM_ROWS = (Y_HINT - 8 - UI_S_Y0) / 44;  // 8
+static void buildTeamRows() {
+  nTeamRows = 0;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  for (uint8_t i = 0; i < nGames && nTeamRows < MAX_GAMES * 2 - 1; i++) {
+    for (uint8_t side = 0; side < 2; side++) {
+      const char *ab = side ? games[i].home : games[i].away, *nm = side ? games[i].homeName : games[i].awayName;
+      bool seen = false;
+      for (uint8_t k = 0; k < nTeamRows && !seen; k++) seen = teamRows[k].lg == games[i].lg && strcmp(teamRows[k].abbr, ab) == 0;
+      if (seen) continue;
+      TeamRow &r = teamRows[nTeamRows++];
+      r.lg = games[i].lg;
+      snprintf(r.abbr, sizeof r.abbr, "%s", ab);
+      snprintf(r.name, sizeof r.name, "%s", nm);
+    }
+  }
+  xSemaphoreGive(mux);
+  for (uint8_t i = 1; i < nTeamRows; i++) {  // by league, then letters
+    TeamRow k = teamRows[i];
+    int8_t j = i - 1;
+    while (j >= 0 && (teamRows[j].lg > k.lg || (teamRows[j].lg == k.lg && strcmp(teamRows[j].abbr, k.abbr) > 0))) { teamRows[j + 1] = teamRows[j]; j--; }
+    teamRows[j + 1] = k;
+  }
+}
+static void drawTeamRow(uint8_t slot) {
+  int16_t y = UI_S_Y0 + slot * 44;
+  gfx->fillRect(0, y, LCD_W, 44, C_BG);
+  uint8_t i = teamTop + slot;
+  if (i >= nTeamRows) return;
+  const TeamRow &r = teamRows[i];
+  bool fav = isFav(leagues[r.lg].id, r.abbr);
+  textAt(20, y + 12, 1, C_DIM, leagues[r.lg].label);
+  teamMark(90, y + 6, 32, leagues[r.lg].id, r.abbr, C_FG);
+  textAt(132, y + 10, 2, fav ? C_FG : C_MUTED, r.abbr);
+  textAt(210, y + 14, 1, C_MUTED, r.name);
+  starGlyph(LCD_W - 40, y + 22, 13, fav ? C_GOLD : C_RULE);
+  gfx->drawFastHLine(20, y + 43, LCD_W - 40, C_RULE);
+}
+static void drawTeams() {
+  pageHeader("TEAMS", "star the ones you follow");
+  for (uint8_t s = 0; s < TEAM_ROWS; s++) drawTeamRow(s);
+  drawHint(nTeamRows ? "tap a team        drag for more        < settings" : "no teams yet: the scores have not landed");
+}
+// Toggling a team turns the config's bare list into a full one in NVS first.
+static void toggleFav(const TeamRow &r) {
+  if (!favsFromNvs) {
+    char keep[MAX_FAVS][14];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < nTeamRows && n < MAX_FAVS; i++)
+      if (isFav(leagues[teamRows[i].lg].id, teamRows[i].abbr)) snprintf(keep[n++], 14, "%s_%s", leagues[teamRows[i].lg].id, teamRows[i].abbr);
+    memcpy(favs, keep, sizeof keep);
+    nFavs = n;
+    favsFromNvs = true;
+  }
+  char key[20];
+  snprintf(key, sizeof key, "%s_%s", leagues[r.lg].id, r.abbr);
+  for (uint8_t i = 0; i < nFavs; i++)
+    if (strcmp(favs[i], key) == 0) {  // off
+      for (uint8_t k = i + 1; k < nFavs; k++) strcpy(favs[k - 1], favs[k]);
+      nFavs--;
+      saveSettings();
+      return;
+    }
+  if (nFavs < MAX_FAVS) snprintf(favs[nFavs++], 14, "%s", key);
+  saveSettings();
+}
+static void refav() {  // the games carry a fav flag: recompute after a change
+  xSemaphoreTake(mux, portMAX_DELAY);
+  for (uint8_t i = 0; i < nGames; i++) games[i].fav = isFav(leagues[games[i].lg].id, games[i].away) || isFav(leagues[games[i].lg].id, games[i].home);
+  gamesVer++;
+  xSemaphoreGive(mux);
+}
+static void drawInfo() {
+  pageHeader("INFO");
+  char l[8][48];
+  uint8_t n = 0;
+  snprintf(l[n++], 48, "%u leagues in %u sports, %u games today", nLeagues, nSports, nGames);
+  snprintf(l[n++], 48, "%u favourite teams", nFavs);
+  snprintf(l[n++], 48, "refresh %lus with a game on, %lus otherwise", (unsigned long)(liveMs / 1000), (unsigned long)(idleMs / 1000));
+  snprintf(l[n++], 48, "wifi %.16s %ddBm", WiFi.SSID().c_str(), WiFi.RSSI());
+  snprintf(l[n++], 48, "heap %uk free, psram %uk free", ESP.getFreeHeap() / 1024, ESP.getFreePsram() / 1024);
+  snprintf(l[n++], 48, "up %luh %02lum", (unsigned long)(millis() / 3600000), (unsigned long)(millis() / 60000 % 60));
+  snprintf(l[n++], 48, "built " __DATE__ " " __TIME__);
+  for (uint8_t i = 0; i < n; i++) textAt(20, 60 + i * 26, 1, i == 0 ? C_FG : C_MUTED, l[i]);
+  drawHint("< settings");
 }
 static void openConfirm() {
   confirmFrom = view;
@@ -551,9 +702,12 @@ void setup() {
       for (uint8_t j = 0; j < nSports && !seen; j++) seen = strcmp(sports[j], leagues[i].sport) == 0;
       if (!seen) snprintf(sports[nSports++], sizeof sports[0], "%s", leagues[i].sport);
     }
-    for (JsonVariant v : cfgArr("teams")) {
+    for (JsonVariant v : cfgArr("teams")) {  // "TOR" (every league) or "nhl:TOR"
       const char *t = v.as<const char *>();
-      if (t && *t && nFavs < 12) snprintf(favs[nFavs++], 6, "%s", t);
+      if (!t || !*t || nFavs >= MAX_FAVS) continue;
+      snprintf(favs[nFavs], 14, "%s", t);
+      for (char *c = favs[nFavs]; *c; c++) if (*c == ':') *c = '_';
+      nFavs++;
     }
     liveMs = (uint32_t)cfgInt("refresh.liveSeconds", 60, 15, 3600) * 1000UL;
     idleMs = (uint32_t)cfgInt("refresh.idleSeconds", 600, 60, 86400) * 1000UL;
@@ -572,8 +726,19 @@ void setup() {
   tzset();
   prefs.begin("sports", true);
   sTheme = prefs.getUChar("bg", 0) % N_THEMES;
+  sClock = prefs.getUChar("clk", 0) % 2;
+  sRet = prefs.getUChar("ret", 1) % 3;
+  sSleep = prefs.getUChar("slp", 0) % 2;
+  if (prefs.isKey("favs")) {  // the Teams page's list beats the config's
+    char list[MAX_FAVS * 14];
+    prefs.getString("favs", list, sizeof list);
+    nFavs = 0;
+    favsFromNvs = true;
+    for (char *tok = strtok(list, ","); tok && nFavs < MAX_FAVS; tok = strtok(nullptr, ",")) snprintf(favs[nFavs++], 14, "%s", tok);
+  }
   prefs.end();
   applyTheme();
+  teamRows = (TeamRow *)heap_caps_calloc(MAX_GAMES * 2, sizeof(TeamRow), MALLOC_CAP_SPIRAM);
   gfx = boardDisplay();
   bool ok = gfx->begin();
   Serial.printf("board: expander %s, panel %s, psram %u free\n", xp ? "ok" : "NO ACK", ok ? "ok" : "FAILED", ESP.getFreePsram());
@@ -644,16 +809,17 @@ void loop() {
         if (r >= 0) {
           gameIdx = (uint8_t)r;
           view = View::Game;
+          pageOpenedAt = millis();
           drawGame(true);
         }
       }
     } else if (g == Gesture::SwipeLeft && nSports) {
-      sect = (sect + 1) % (nSports + 1);
+      sect = (sect + 1) % (nSports + 2);
       listTop = 0;
       shownVer = 0;
       drawList(true);
     } else if (g == Gesture::SwipeRight && nSports) {
-      sect = (sect + nSports) % (nSports + 1);
+      sect = (sect + nSports + 1) % (nSports + 2);
       listTop = 0;
       shownVer = 0;
       drawList(true);
@@ -684,26 +850,60 @@ void loop() {
       view = View::List;
       drawList(true);
     } else if (g == Gesture::TapUp) {
-      int8_t i = hitSettingRow(ty, 2);
+      int8_t i = hitSettingRow(ty, 8);
       if (i == 0) {
+        buildTeamRows();
+        teamTop = 0;
+        view = View::Teams;
+        drawTeams();
+      } else if (i == 1 || i == 2 || i == 3) {
+        openChoice((uint8_t)(i - 1));
+      } else if (i == 4) {
         view = View::Themes;
         drawThemesPage();
-      } else if (i == 1) {
+      } else if (i == 5) {
+        view = View::Info;
+        drawInfo();
+      } else if (i == 7) {
         openConfirm();
       }
     }
-  } else if (view == View::Themes) {
-    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) {
+  } else if (view == View::Teams) {
+    if (g == Gesture::Drag && ddy) {
+      static int16_t acc = 0;
+      acc += ddy;
+      while (acc <= -22 && teamTop + TEAM_ROWS < nTeamRows) { acc += 22; teamTop++; for (uint8_t s = 0; s < TEAM_ROWS; s++) drawTeamRow(s); }
+      while (acc >= 22 && teamTop > 0) { acc -= 22; teamTop--; for (uint8_t s = 0; s < TEAM_ROWS; s++) drawTeamRow(s); }
+      if (teamTop == 0 && acc > 0) acc = 0;
+      if (teamTop + TEAM_ROWS >= nTeamRows && acc < 0) acc = 0;
+    } else if (g == Gesture::SwipeLeft || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) {
+      refav();
       view = View::Settings;
       drawSettings();
-    } else if (g == Gesture::TapUp) {
-      int8_t i = hitTheme(tx, ty);
-      if (i >= 0 && i != sTheme) {
-        sTheme = (uint8_t)i;
-        applyTheme();
-        saveTheme();
-        drawThemesPage();
+    } else if (g == Gesture::TapUp && ty >= UI_S_Y0) {
+      uint8_t slot = (ty - UI_S_Y0) / 44;
+      if (slot < TEAM_ROWS && teamTop + slot < nTeamRows) {
+        toggleFav(teamRows[teamTop + slot]);
+        drawTeamRow(slot);
       }
+    }
+  } else if (view == View::Info) {
+    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || g == Gesture::TapUp) {
+      view = View::Settings;
+      drawSettings();
+    }
+  } else if (view == View::Choice) {
+    if (g == Gesture::TapUp || g == Gesture::Tap) {
+      int8_t i = hitChoice(tx, ty, chN);
+      if (i >= 0 && i != chSel) applyChoice((uint8_t)i);
+      if (i >= 0 || !inSheet(tx, ty)) {
+        sheetClose();
+        view = View::Settings;
+        drawSettings();
+      }
+    } else if (g == Gesture::SwipeDown || g == Gesture::SwipeLeft) {
+      sheetClose();
+      view = View::Settings;
     }
   } else if (view == View::Confirm) {
     if (g == Gesture::TapUp || g == Gesture::Tap) {
@@ -712,6 +912,22 @@ void loop() {
     } else if (g == Gesture::SwipeDown || g == Gesture::SwipeLeft) {
       closeConfirm();
     }
+  }
+  if (touchHeld) pageOpenedAt = millis();
+  if (view == View::Game && RET_MS[sRet] && millis() - pageOpenedAt > RET_MS[sRet]) {  // back to the scores by itself
+    view = View::List;
+    drawList(true);
+  }
+  // Night: the panel dark from 23:00 to 06:00 when Sleep says so; a touch lights it for a minute.
+  static bool dark = false;
+  static uint32_t litAt = 0;
+  struct tm t;
+  bool night = sSleep == 1 && getLocalTime(&t, 0) && (t.tm_hour >= 23 || t.tm_hour < 6);
+  if (touchHeld) litAt = millis();
+  bool wantDark = night && millis() - litAt > 60000;
+  if (wantDark != dark) {
+    dark = wantDark;
+    backlight(dark ? 0 : 255);
   }
   static uint32_t lastLog = 0;
   if (millis() - lastLog > 60000) {
