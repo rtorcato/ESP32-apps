@@ -17,11 +17,13 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <JPEGDEC.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
 #include <time.h>
+#include <new>
 
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 static const int16_t Y_ROW0 = UI_Y_ROW0, ROW_H = 44, Y_HINT = UI_Y_HINT, X_RIGHT = 788;
@@ -60,12 +62,54 @@ static const uint16_t SAMPLES = 180;
 static float rxHist[SAMPLES], txHist[SAMPLES];
 static uint16_t nSamples = 0;
 
+// ── the cameras (Protect, the same key) ──────────────────────────────────
+// /proxy/protect/integration/v1/cameras, and a JPEG snapshot each at
+// 640x360 (highQuality=false, ~20KB). Decoded by JPEGDEC into PSRAM: four
+// tiles at half size for the grid, one at full size for the single view.
+struct Camera { char id[32], name[24], model[24]; bool connected; uint32_t shotAt; };
+static const uint8_t MAX_CAM = 12;
+static Camera cam[MAX_CAM];
+static uint8_t nCam = 0, camPage = 0, camSel = 0;
+static uint32_t camAt = 0, camVer = 0;
+static const int16_t TILE_W = 320, TILE_H = 180, FULL_W = 640, FULL_H = 360;
+static uint16_t *tileImg[4], *fullImg = nullptr;  // PSRAM
+static bool tileOk[4], fullOk = false;
+static volatile bool wantFull = false;  // the single view is open: fetch that camera, full size
+static uint16_t *jpegDst = nullptr;
+static int16_t jpegW = 0, jpegH = 0;
+static int jpegDraw(JPEGDRAW *d) {
+  for (int y = 0; y < d->iHeight; y++) {
+    int dy = d->y + y;
+    if (dy >= jpegH) break;
+    int w = d->iWidth;
+    if (d->x + w > jpegW) w = jpegW - d->x;
+    if (w > 0) memcpy(jpegDst + dy * jpegW + d->x, d->pPixels + y * d->iWidth, w * 2);
+  }
+  return 1;
+}
+static bool decodeJpeg(uint8_t *data, int len, uint16_t *dst, int16_t w, int16_t h, int scale) {
+  static JPEGDEC *jpeg = nullptr;
+  if (!jpeg) {
+    void *m = heap_caps_malloc(sizeof(JPEGDEC), MALLOC_CAP_SPIRAM);
+    if (!m) return false;
+    jpeg = new (m) JPEGDEC();
+  }
+  if (!jpeg->openRAM(data, len, jpegDraw)) return false;
+  jpeg->setPixelType(RGB565_LITTLE_ENDIAN);
+  jpegDst = dst;
+  jpegW = w;
+  jpegH = h;
+  bool ok = jpeg->decode(0, 0, scale) == 1;
+  jpeg->close();
+  return ok;
+}
+
 // ── fetching (core 0 task) ───────────────────────────────────────────────
 static uint8_t *buf = nullptr;
 static const size_t CAP = 96 * 1024;  // 200 clients is ~60KB
-static int apiGet(NetworkClientSecure &client, const char *path, uint8_t *out, size_t cap) {
-  char url[200];
-  snprintf(url, sizeof url, "https://%s/proxy/network/integration/v1%s", host, path);
+static int apiGet(NetworkClientSecure &client, const char *path, uint8_t *out, size_t cap, const char *app = "network") {
+  char url[220];
+  snprintf(url, sizeof url, "https://%s/proxy/%s/integration/v1%s", host, app, path);
   HTTPClient http;
   http.setConnectTimeout(6000);
   http.setTimeout(6000);
@@ -97,8 +141,8 @@ static int apiGet(NetworkClientSecure &client, const char *path, uint8_t *out, s
   http.end();
   return (int)len;
 }
-static bool apiJson(NetworkClientSecure &client, const char *path, JsonDocument &doc, JsonDocument *filter = nullptr) {
-  int len = apiGet(client, path, buf, CAP - 1);
+static bool apiJson(NetworkClientSecure &client, const char *path, JsonDocument &doc, JsonDocument *filter = nullptr, const char *app = "network") {
+  int len = apiGet(client, path, buf, CAP - 1, app);
   if (len <= 0) return false;
   DeserializationError je = filter ? deserializeJson(doc, (const char *)buf, (size_t)len, DeserializationOption::Filter(*filter))
                                    : deserializeJson(doc, (const char *)buf, (size_t)len);
@@ -118,9 +162,9 @@ static time_t parseIso(const char *s) {  // "2026-09-18T14:05:00Z"
   unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return (time_t)(era * 146097 + (int32_t)doe - 719468) * 86400 + H * 3600 + M * 60 + S;
 }
-static bool isGatewayModel(const char *m) {
-  static const char *const gw[] = {"UDM", "UDR", "UDW", "UCG", "UXG", "USG", "UNVR", "EFG"};
-  for (const char *p : gw) if (strncmp(m, p, strlen(p)) == 0) return true;
+static bool isGatewayModel(const char *m) {  // "UniFi Dream Machine PRO SE" on the UDM SE; the short codes elsewhere
+  static const char *const gw[] = {"Dream Machine", "Dream Router", "Dream Wall", "Cloud Gateway", "UDM", "UDR", "UDW", "UCG", "UXG", "USG", "EFG"};
+  for (const char *p : gw) if (strstr(m, p)) return true;
   return false;
 }
 static bool fetchSite(NetworkClientSecure &client) {
@@ -235,12 +279,69 @@ static void fetchClients(NetworkClientSecure &client) {
   xSemaphoreGive(mux);
   Serial.printf("unifi: %u clients, %u wireless (heap %u)\n", n, wl, ESP.getFreeHeap());
 }
+static void fetchCameras(NetworkClientSecure &client) {
+  JsonDocument doc, filter;
+  JsonObject f = filter[0].to<JsonObject>();
+  for (const char *k : {"id", "name", "type", "state"}) f[k] = true;
+  if (!apiJson(client, "/cameras", doc, &filter, "protect")) { camAt = millis(); return; }
+  uint8_t n = 0;
+  xSemaphoreTake(mux, portMAX_DELAY);
+  for (JsonObject c : doc.as<JsonArray>()) {
+    if (n >= MAX_CAM) break;
+    Camera &g = cam[n];
+    char id[32];
+    snprintf(id, sizeof id, "%s", c["id"] | "");
+    if (!id[0]) continue;
+    if (strcmp(g.id, id) != 0) { memset(&g, 0, sizeof g); strcpy(g.id, id); }
+    snprintf(g.name, sizeof g.name, "%s", c["name"] | "");
+    snprintf(g.model, sizeof g.model, "%s", c["type"] | "");
+    g.connected = strcmp(c["state"] | "", "CONNECTED") == 0;
+    n++;
+  }
+  nCam = n;
+  camAt = millis();
+  camVer++;
+  xSemaphoreGive(mux);
+  Serial.printf("protect: %u cameras (heap %u)\n", n, ESP.getFreeHeap());
+}
+// One snapshot: the camera's tile (half size) or the single view (full).
+static void fetchSnapshot(NetworkClientSecure &client, uint8_t ci, bool full) {
+  if (ci >= nCam || !cam[ci].connected) return;
+  char path[80];
+  snprintf(path, sizeof path, "/cameras/%s/snapshot?highQuality=false", cam[ci].id);
+  int len = apiGet(client, path, buf, CAP, "protect");
+  if (len <= 0) return;
+  uint8_t slot = ci % 4;
+  if (full) {
+    if (!fullImg) fullImg = (uint16_t *)heap_caps_malloc((size_t)FULL_W * FULL_H * 2, MALLOC_CAP_SPIRAM);
+    if (fullImg && decodeJpeg(buf, len, fullImg, FULL_W, FULL_H, 0)) { fullOk = true; camVer++; }
+  } else {
+    if (!tileImg[slot]) tileImg[slot] = (uint16_t *)heap_caps_malloc((size_t)TILE_W * TILE_H * 2, MALLOC_CAP_SPIRAM);
+    if (tileImg[slot] && decodeJpeg(buf, len, tileImg[slot], TILE_W, TILE_H, JPEG_SCALE_HALF)) { tileOk[slot] = true; camVer++; }
+  }
+  cam[ci].shotAt = millis();
+  Serial.printf("snapshot %s: %d bytes, %s %s (heap %u)\n", cam[ci].name, len, full ? "full" : "tile", (full ? fullOk : tileOk[slot]) ? "ok" : "FAILED", ESP.getFreeHeap());
+}
+static volatile bool camsShowing = false;  // the grid is open: keep its four tiles fresh
 static void fetchTask(void *) {
   NetworkClientSecure client;
   client.setInsecure();  // the console's certificate is its own
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(500));
     if (WiFi.status() != WL_CONNECTED || !buf || !apiKey[0]) continue;
+    // Cameras first while they are on screen: one snapshot a pass, the stalest of the page
+    if (wantFull) { fetchSnapshot(client, camSel, true); vTaskDelay(pdMS_TO_TICKS(1500)); continue; }
+    if (camsShowing && nCam) {
+      int8_t pick = -1;
+      uint32_t oldest = 0xFFFFFFFF;
+      for (uint8_t k = 0; k < 4; k++) {
+        uint8_t ci = camPage * 4 + k;
+        if (ci >= nCam || !cam[ci].connected) continue;
+        if (cam[ci].shotAt < oldest) { oldest = cam[ci].shotAt; pick = ci; }
+      }
+      if (pick >= 0 && (cam[pick].shotAt == 0 || millis() - cam[pick].shotAt > 2000)) { fetchSnapshot(client, (uint8_t)pick, false); continue; }
+    }
+    if (camAt == 0 || millis() - camAt > 60000) { fetchCameras(client); continue; }
     if (!siteId[0]) { if (!fetchSite(client)) { vTaskDelay(pdMS_TO_TICKS(10000)); continue; } Serial.printf("unifi: site %s\n", siteName); }
     if (devAt == 0 || millis() - devAt > devicesMs) { fetchDevices(client); continue; }
     if (statsAt == 0 || millis() - statsAt > statsMs) { fetchStats(client); continue; }
@@ -249,14 +350,16 @@ static void fetchTask(void *) {
 }
 
 // ── pages ────────────────────────────────────────────────────────────────
-enum class View { Overview, Devices, Clients, Settings, Themes, Info, Choice, Confirm, Setup, Kb };
+enum class View { Overview, Devices, Clients, Cameras, Camera, Settings, Themes, Info, Choice, Confirm, Setup, Kb };
+static uint32_t shownCamVer = 0;
 static uint8_t kbField_ = 0;  // 0 the console, 1 the key
 static char editBuf[80];
 static View view = View::Overview, confirmFrom = View::Settings;
 static uint8_t sect = 0, sClock = 0, chN = 0, chSel = 0;
 static uint16_t listTop = 0;
-static const char *const TABS[] = {"OVERVIEW", "DEVICES", "CLIENTS"}, *const CLOCK_NAMES[] = {"12-hour", "24-hour"};
-static int16_t tabX[3], tabW[3];
+static const char *const TABS[] = {"OVERVIEW", "DEVICES", "CLIENTS", "CAMERAS"}, *const CLOCK_NAMES[] = {"12-hour", "24-hour"};
+static const uint8_t N_TABS = 4;
+static int16_t tabX[N_TABS], tabW[N_TABS];
 static char cHead[16], cRows[ROWS][96];
 static uint32_t shownVer = 0;
 static Preferences prefs;
@@ -307,7 +410,7 @@ static void fmtAgo(time_t since, char *out, size_t n) {
 static void drawHeader() {
   gfx->fillRect(0, 0, 640, Y_ROW0 - 1, C_BG);
   int16_t x = 12;
-  for (uint8_t i = 0; i < 3; i++) {
+  for (uint8_t i = 0; i < N_TABS; i++) {
     int16_t w = textWidth(1, TABS[i]) + 26;
     tabX[i] = x;
     tabW[i] = w;
@@ -321,7 +424,7 @@ static void drawHeader() {
   gfx->drawFastHLine(0, Y_ROW0 - 1, LCD_W, C_RULE);
 }
 static int8_t hitTab(int16_t x) {
-  for (uint8_t i = 0; i < 3; i++)
+  for (uint8_t i = 0; i < N_TABS; i++)
     if (x >= tabX[i] && x < tabX[i] + tabW[i]) return i;
   return -1;
 }
@@ -486,6 +589,71 @@ static void drawList(bool full) {
   if (listTop + ROWS > n) listTop = n > ROWS ? n - ROWS : 0;
   for (uint8_t s = 0; s < ROWS; s++) sect == 1 ? drawDevRow(s) : drawCliRow(s);
 }
+// The cameras: four tiles at half size, the name and state under each;
+// a tap opens one at 640x360, refreshed every couple of seconds.
+static void drawCamTile(uint8_t k, bool force) {
+  static char kTile[4][48];
+  uint8_t ci = camPage * 4 + k;
+  int16_t x = 60 + (k % 2) * 360, y = 52 + (k / 2) * 202;
+  char key[48] = "";
+  if (ci < nCam) snprintf(key, sizeof key, "%s|%d|%lu", cam[ci].name, cam[ci].connected, (unsigned long)(tileOk[k] ? cam[ci].shotAt : 0));
+  if (!force && strcmp(key, kTile[k]) == 0) return;
+  strcpy(kTile[k], key);
+  gfx->fillRect(x, y, TILE_W, TILE_H + 22, C_BG);
+  if (ci >= nCam) return;
+  if (tileOk[k] && tileImg[k] && cam[ci].connected) gfx->draw16bitRGBBitmap(x, y, tileImg[k], TILE_W, TILE_H);
+  else {
+    gfx->fillRoundRect(x, y, TILE_W, TILE_H, 8, towardsWhite(C_BG, 6));
+    const char *m = cam[ci].connected ? "loading..." : "offline";
+    textAt(x + (TILE_W - textWidth(2, m)) / 2, y + TILE_H / 2 - 12, 2, cam[ci].connected ? C_DIM : C_BAD, m);
+  }
+  gfx->fillCircle(x + 6, y + TILE_H + 12, 4, cam[ci].connected ? C_GOOD : C_BAD);
+  textAt(x + 16, y + TILE_H + 4, 1, C_MUTED, cam[ci].name);
+}
+static void drawCameras(bool full) {
+  if (full) {
+    gfx->fillScreen(C_BG);
+    drawHeader();
+    cHead[0] = '\0';
+    char h[40];
+    snprintf(h, sizeof h, "%s%s", "tap a camera for the full view", nCam > 4 ? "        ^ v  pages" : "");
+    drawHint(nCam ? h : "no cameras: is Protect on this console?");
+  }
+  drawClock();
+  for (uint8_t k = 0; k < 4; k++) drawCamTile(k, full);
+}
+static void drawCamera(bool full) {
+  static uint32_t kShot = 0;
+  if (camSel >= nCam) { view = View::Cameras; drawCameras(true); return; }
+  const Camera &c = cam[camSel];
+  if (full) {
+    pageHeader(c.name, c.model);
+    drawHint("< cameras        next >        < prev");
+    kShot = 0;
+  }
+  drawClock();
+  if (fullOk && fullImg && cam[camSel].shotAt != kShot) {
+    kShot = cam[camSel].shotAt;
+    gfx->draw16bitRGBBitmap((LCD_W - FULL_W) / 2, 56, fullImg, FULL_W, FULL_H);
+  } else if (!fullOk) {
+    fieldCentre(LCD_W / 2, 220, 20, 2, C_DIM, c.connected ? "loading..." : "offline");
+  }
+}
+static int8_t hitCamTile(int16_t tx, int16_t ty) {
+  for (uint8_t k = 0; k < 4; k++) {
+    int16_t x = 60 + (k % 2) * 360, y = 52 + (k / 2) * 202;
+    if (tx >= x && tx < x + TILE_W && ty >= y && ty < y + TILE_H && camPage * 4 + k < nCam) return k;
+  }
+  return -1;
+}
+static void openCamera(uint8_t ci) {
+  camSel = ci;
+  fullOk = false;
+  wantFull = true;
+  camsShowing = false;
+  view = View::Camera;
+  drawCamera(true);
+}
 static void drawSettings() {
   pageHeader("SETTINGS");
   settingRow(0, "Clock", CLOCK_NAMES[sClock]);
@@ -510,11 +678,16 @@ static void drawInfo() {
   drawHint("< settings");
 }
 static void drawCurrent(bool full) {
+  camsShowing = view == View::Cameras;
   if (view == View::Overview) drawOverview(full);
+  else if (view == View::Cameras) drawCameras(full);
   else drawList(full);
 }
+static View viewOf(uint8_t s) { return s == 0 ? View::Overview : s == 1 ? View::Devices : s == 2 ? View::Clients : View::Cameras; }
 static void openConfirm() {
   confirmFrom = view;
+  wantFull = false;
+  camsShowing = false;
   gfx->fillScreen(C_BG);
   drawHeader();
   view = View::Confirm;
@@ -616,9 +789,31 @@ void loop() {
   if (g == Gesture::LongPress && ty < Y_ROW0 && view != View::Confirm) headerHoldAt = millis();
   if (!touchHeld) headerHoldAt = 0;
   if (headerHoldAt && millis() - headerHoldAt > 1300) { headerHoldAt = 0; openConfirm(); g = Gesture::None; }
-  if (view == View::Overview || view == View::Devices || view == View::Clients) {
+  if (view == View::Camera) {
+    if (g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140) || (g == Gesture::TapUp && ty >= Y_ROW0)) {
+      wantFull = false;
+      view = View::Cameras;
+      drawCurrent(true);
+    } else if ((g == Gesture::SwipeLeft || g == Gesture::SwipeRight) && nCam) {
+      openCamera((camSel + (g == Gesture::SwipeLeft ? 1 : nCam - 1)) % nCam);
+    } else if (shownCamVer != camVer) {
+      shownCamVer = camVer;
+      drawCamera(false);
+    } else {
+      drawClock();
+    }
+  } else if (view == View::Overview || view == View::Devices || view == View::Clients || view == View::Cameras) {
     uint16_t n = sect == 1 ? nDev : nCli;
-    if (view != View::Overview && g == Gesture::Drag && ddy) {
+    if (view == View::Cameras && g == Gesture::TapUp && ty >= Y_ROW0) {
+      int8_t k = hitCamTile(tx, ty);
+      if (k >= 0) openCamera((uint8_t)(camPage * 4 + k));
+    } else if (view == View::Cameras && (g == Gesture::SwipeUp || g == Gesture::SwipeDown) && nCam > 4) {
+      uint8_t pages = (nCam + 3) / 4;
+      camPage = (camPage + (g == Gesture::SwipeUp ? 1 : pages - 1)) % pages;
+      memset(tileOk, 0, sizeof tileOk);
+      for (uint8_t i = 0; i < nCam; i++) cam[i].shotAt = 0;
+      drawCameras(true);
+    } else if (view != View::Overview && view != View::Cameras && g == Gesture::Drag && ddy) {
       static int16_t acc = 0;
       acc += ddy;
       while (acc <= -ROW_H / 2 && listTop + ROWS < n) { acc += ROW_H / 2; listTop++; drawList(false); }
@@ -629,15 +824,18 @@ void loop() {
       if (tx >= 660 && tx < 724) { view = View::Settings; drawSettings(); }
       else {
         int8_t t = hitTab(tx);
-        if (t >= 0 && t != sect) { sect = (uint8_t)t; listTop = 0; view = t == 0 ? View::Overview : t == 1 ? View::Devices : View::Clients; drawCurrent(true); }
+        if (t >= 0 && t != sect) { sect = (uint8_t)t; listTop = 0; view = viewOf(sect); drawCurrent(true); }
       }
     } else if (g == Gesture::SwipeLeft || g == Gesture::SwipeRight) {
-      sect = (sect + (g == Gesture::SwipeLeft ? 1 : 2)) % 3;
+      sect = (sect + (g == Gesture::SwipeLeft ? 1 : N_TABS - 1)) % N_TABS;
       listTop = 0;
-      view = sect == 0 ? View::Overview : sect == 1 ? View::Devices : View::Clients;
+      view = viewOf(sect);
       drawCurrent(true);
     }
-    if (view == View::Overview || view == View::Devices || view == View::Clients) {
+    if (view == View::Cameras) {
+      if (shownCamVer != camVer) { shownCamVer = camVer; drawCameras(false); }
+      else drawClock();
+    } else if (view == View::Overview || view == View::Devices || view == View::Clients) {
       if (shownVer != ver) { shownVer = ver; drawCurrent(false); }
       else drawClock();
     }
@@ -675,7 +873,7 @@ void loop() {
       }
     }
   } else if (view == View::Settings) {
-    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = sect == 0 ? View::Overview : sect == 1 ? View::Devices : View::Clients; drawCurrent(true); }
+    if (g == Gesture::SwipeLeft || g == Gesture::SwipeDown || (g == Gesture::TapUp && ty < Y_ROW0 && tx < 140)) { view = viewOf(sect); drawCurrent(true); }
     else if (g == Gesture::TapUp) {
       int8_t i = hitSettingRow(ty, 5);
       if (i == 0) { chN = 2; chSel = sClock; view = View::Choice; drawChoiceSheet("CLOCK", CLOCK_NAMES, chN, chSel); }
