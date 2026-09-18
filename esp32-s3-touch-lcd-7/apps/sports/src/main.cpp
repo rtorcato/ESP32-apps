@@ -249,19 +249,61 @@ static void takeGames() {
   for (uint8_t i = 0; i < n; i++)
     if (sect == 0 || strcmp(leagues[shown[i].lg].sport, sports[sect - 1]) == 0) order[nShown++] = i;
 }
+// A sport's glyph, centred at cx,cy with half-size r, in c on C_BG: a laced
+// football, a puck, a basketball with its seams, a baseball with stitches,
+// a soccer ball with a pentagon. Anything else gets a plain ball.
+static void sportIcon(const char *sport, int16_t cx, int16_t cy, int16_t r, uint16_t c) {
+  if (strcmp(sport, "football") == 0) {
+    gfx->fillEllipse(cx, cy, r + r / 4, r * 2 / 3, c);
+    gfx->drawFastHLine(cx - r / 2, cy, r, C_BG);
+    for (int8_t k = -1; k <= 1; k++) gfx->drawFastVLine(cx + k * (r / 3), cy - r / 5, r * 2 / 5 + 1, C_BG);
+  } else if (strcmp(sport, "hockey") == 0) {
+    int16_t ry = r / 2, d = r / 3;
+    gfx->fillEllipse(cx, cy + d, r, ry, c);
+    gfx->fillRect(cx - r, cy - d, 2 * r + 1, 2 * d, c);
+    gfx->fillEllipse(cx, cy - d, r, ry, c);
+    gfx->drawEllipse(cx, cy - d, r - 1, ry - 1, C_BG);
+  } else if (strcmp(sport, "basketball") == 0) {
+    gfx->fillCircle(cx, cy, r, c);
+    gfx->drawFastVLine(cx, cy - r, 2 * r + 1, C_BG);
+    gfx->drawFastHLine(cx - r, cy, 2 * r + 1, C_BG);
+    for (int16_t i = -r; i <= r; i++) {  // the two curved seams
+      int16_t y = (int16_t)lroundf(sqrtf(max(0.0f, (float)r * r * 1.9f - (float)(i + r * 1.35f) * (i + r * 1.35f))));
+      if (abs(i) < r && abs(y) < r) gfx->drawPixel(cx + i, cy + y, C_BG), gfx->drawPixel(cx + i, cy - y, C_BG);
+    }
+  } else if (strcmp(sport, "baseball") == 0) {
+    gfx->fillCircle(cx, cy, r, c);
+    for (int8_t side = -1; side <= 1; side += 2) {  // two stitch arcs: circles centred outside, kept inside the ball
+      float ox = cx + side * r * 1.6f, rr = r * 1.25f;
+      for (float a = 0; a < 6.2832f; a += 0.05f) {
+        int16_t x = (int16_t)lroundf(ox + rr * cosf(a)), y = (int16_t)lroundf(cy + rr * sinf(a));
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < (r - 1) * (r - 1)) gfx->drawPixel(x, y, C_BG);
+      }
+    }
+  } else if (strcmp(sport, "soccer") == 0) {
+    gfx->fillCircle(cx, cy, r, c);
+    int16_t px[5], py[5];
+    for (uint8_t k = 0; k < 5; k++) {
+      float a = -1.5708f + k * 1.2566f;
+      px[k] = cx + (int16_t)lroundf(r * 0.42f * cosf(a));
+      py[k] = cy + (int16_t)lroundf(r * 0.42f * sinf(a));
+      gfx->drawLine(px[k], py[k], cx + (int16_t)lroundf(r * cosf(a)), cy + (int16_t)lroundf(r * sinf(a)), C_BG);
+    }
+    for (uint8_t k = 1; k < 4; k++) gfx->fillTriangle(px[0], py[0], px[k], py[k], px[k + 1], py[k + 1], C_BG);
+  } else {
+    gfx->fillCircle(cx, cy, r, c);
+  }
+}
 static void drawTabs() {
   gfx->fillRect(0, 0, 560, Y_ROW0 - 1, C_BG);
   int16_t x = 12;
-  for (uint8_t i = 0; i <= nSports; i++) {
-    char up[12];
-    snprintf(up, sizeof up, "%s", i == 0 ? "ALL" : sports[i - 1]);
-    for (char *c = up; *c; c++) *c = toupper((unsigned char)*c);
-    const char *name = up;
-    int16_t w = textWidth(1, name) + 24;
+  for (uint8_t i = 0; i <= nSports; i++) {  // ALL as a word, then a glyph per sport, 52px each
+    bool on = i == sect;
+    int16_t w = i == 0 ? textWidth(1, "ALL") + 26 : 52;
     tabX[i] = x;
     tabW[i] = w;
-    bool on = i == sect;
-    textAt(x + 13, 12, 1, on ? C_FG : C_DIM, name);
+    if (i == 0) textAt(x + 13, 12, 1, on ? C_FG : C_DIM, "ALL");
+    else sportIcon(sports[i - 1], x + 26, 20, 12, on ? C_FG : C_DIM);
     if (on) gfx->fillRect(x + 9, 34, w - 18, 3, C_FG);
     x += w;
   }
@@ -412,21 +454,12 @@ static void drawSplash(const char *status) {
   gfx->fillScreen(C_BG);
   const char *name = "GAME DAY";
   textAt((LCD_W - textWidth(5, name)) / 2, 44, 5, C_FG, name);
-  int16_t x = 0, total = 0, wy = 44 + FACES[4].cap + 22;
-  const int16_t sep = 40;
-  for (uint8_t i = 0; i < nSports; i++) total += textWidth(2, sports[i]);
-  x = (LCD_W - total - sep * (nSports - 1)) / 2;
-  for (uint8_t i = 0; i < nSports; i++) {
-    char up[12];
-    snprintf(up, sizeof up, "%s", sports[i]);
-    for (char *c = up; *c; c++) *c = toupper((unsigned char)*c);
-    textAt(x, wy, 2, C_MUTED, up);
-    x += textWidth(2, sports[i]);
-    if (i + 1 < nSports) gfx->fillCircle(x + sep / 2, wy + GH(2) / 2 - 2, 3, C_GOLD);
-    x += sep;
-  }
+  // the sports as glyphs, 56px, 100px apart
+  int16_t wy = 44 + FACES[4].cap + 24, step = 100;
+  int16_t x = LCD_W / 2 - (nSports - 1) * step / 2;
+  for (uint8_t i = 0; i < nSports; i++, x += step) sportIcon(sports[i], x, wy + 28, 28, C_MUTED);
   // a scoreboard: a dark panel, HOME and AWAY, the digits in the accent, the clock in green
-  int16_t px = 120, py = wy + 60, pw = 560, ph = 170;
+  int16_t px = 120, py = wy + 76, pw = 560, ph = 170;
   gfx->fillRoundRect(px, py, pw, ph, 16, towardsWhite(C_BG, 6));
   gfx->drawRoundRect(px, py, pw, ph, 16, C_RULE);
   textAt(px + 40, py + 24, 2, C_MUTED, "HOME");
