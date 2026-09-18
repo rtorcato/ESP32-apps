@@ -18,11 +18,10 @@ needs the internet and a different key, and not the old cookie-and-CSRF
 controller API.) Read only: `/sites`, `/sites/{id}/devices`,
 `/sites/{id}/devices/{id}/statistics/latest`, `/sites/{id}/clients`.
 
-Make the key in **UniFi OS**, not the Network application: click the
-console's name at the top left to leave Network, open Settings, then
-Control Plane > Integrations > Create API Key (Network 10.6 moved it there;
-older versions had it under Network > Settings > Control Plane). It shows
-once. Then either type it on the board -- the app boots into a setup page
+Make the key in the Network application: the **plug icon at the bottom of
+the left rail** opens Integrations, where "Create New API Key" is (Network
+10.6; older builds had it under Settings > Control Plane > Integrations).
+Name it for the board; it shows once. Then either type it on the board -- the app boots into a setup page
 with an on-screen keyboard until it has a key, and Settings > Console opens
 that page again; the key goes to NVS -- or put it where the repo will not
 see it:

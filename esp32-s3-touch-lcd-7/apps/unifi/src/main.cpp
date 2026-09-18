@@ -272,8 +272,8 @@ static void saveSettings() {
 // Shown at boot until there is a key; Settings > Console opens it again.
 static void drawSetup() {
   pageHeader("SET UP", "the console's API key");
-  const char *steps[] = {"1. In UniFi OS (not the Network app) open Settings > Control Plane > Integrations.",
-                         "2. Create API Key, name it for this board, copy the key: it shows only once.",
+  const char *steps[] = {"1. In the Network app, the plug icon at the bottom of the left rail: Integrations.",
+                         "2. Create New API Key, name it for this board, copy the key: it shows only once.",
                          "3. Tap the key row below and type it in, then Connect."};
   for (uint8_t i = 0; i < 3; i++) textAt(20, 56 + i * 24, 1, i == 2 ? C_FG : C_MUTED, steps[i]);
   char masked[24] = "not set";
