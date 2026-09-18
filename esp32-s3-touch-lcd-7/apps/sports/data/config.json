@@ -1,0 +1,12 @@
+{
+  "leagues": [
+    { "id": "nfl", "sport": "football", "label": "NFL" },
+    { "id": "nhl", "sport": "hockey", "label": "NHL" },
+    { "id": "nba", "sport": "basketball", "label": "NBA" },
+    { "id": "mlb", "sport": "baseball", "label": "MLB" },
+    { "id": "usa.1", "sport": "soccer", "label": "MLS" }
+  ],
+  "teams": ["TOR", "BUF", "DET"],
+  "refresh": { "liveSeconds": 60, "idleSeconds": 600 },
+  "tz": "EST5EDT,M3.2.0/2,M11.1.0/2"
+}
