@@ -10,6 +10,7 @@
 #include <LittleFS.h>
 #include <sleep.h>
 #include <ui.h>
+#include <appstore.h>
 #include <update.h>
 #include <wifisetup.h>
 
@@ -99,12 +100,13 @@ static const AppEntry APPS[] = {
 };
 static const uint8_t N_APPS = sizeof APPS / sizeof APPS[0];
 
-enum class View : uint8_t { Picker, Detail, Settings, Themes, Sleep, Info, About, Setup };
+enum class View : uint8_t { Picker, Detail, Settings, Themes, Sleep, Info, About, Keyboard, Setup };
 static View view = View::Picker;
 static uint8_t sel = 0;  // which app the detail page is showing
 static char slotApp[24] = "";
 static bool slotFilled = false;
 static bool confirmOpen = false;
+static char urlBuf[200] = "";
 static uint16_t *preview = nullptr;  // PREVIEW_W x PREVIEW_H, in PSRAM
 static const int16_t PREVIEW_W = 400, PREVIEW_H = 240;
 
@@ -188,7 +190,9 @@ static int16_t btnX, btnY, btnW = 260, btnH = 52;
 // /preview/<id>.565, made by tools/make-previews.py. Absent is normal: two
 // apps have no preview.svg to render from, and a board that has never had
 // `push-config home` run has none at all.
+static bool previewOk = false;
 static bool loadPreview(const char *id) {
+  previewOk = false;
   if (!preview) preview = (uint16_t *)heap_caps_malloc((size_t)PREVIEW_W * PREVIEW_H * 2, MALLOC_CAP_SPIRAM);
   if (!preview) return false;
   char path[40];
@@ -196,10 +200,25 @@ static bool loadPreview(const char *id) {
   File f = LittleFS.open(path, "r");
   if (!f) return false;
   const size_t want = (size_t)PREVIEW_W * PREVIEW_H * 2;
-  bool ok = f.size() == want && f.read((uint8_t *)preview, want) == want;
+  previewOk = f.size() == want && f.read((uint8_t *)preview, want) == want;
   f.close();
-  return ok;
+  return previewOk;
 }
+
+// Drawn from appstore's callback, so the installer never has to know what
+// the screen looks like. Only the bar is repainted -- redrawing the page a
+// hundred times during a download would make the download the slow part.
+static void installProgress(uint8_t pct, const char *stage) {
+  const AppEntry &a = APPS[sel];
+  int16_t x = 24, y = UI_Y_HINT - 72, w = LCD_W / 2 - 48, h = 52;
+  gfx->fillRoundRect(x, y, w, h, 26, mix(C_BG, a.accent, 12));
+  gfx->fillRoundRect(x, y, (int16_t)((long)w * pct / 100), h, 26, a.accent);
+  char t[40];
+  snprintf(t, sizeof t, "%s  %u%%", stage, pct);
+  textAt(x + (w - textWidth(2, t)) / 2, y + (h - FACES[1].cap) / 2, 2, C_FG, t);
+}
+
+static int16_t btnYTop() { return UI_Y_HINT - 72; }
 
 static void drawDetail() {
   const AppEntry &a = APPS[sel];
@@ -213,7 +232,15 @@ static void drawDetail() {
   textAt(36, 10, 2, C_FG, a.name);
   gfx->drawFastHLine(0, UI_Y_ROW0 - 1, LCD_W, a.accent);
 
-  if (loadPreview(a.id)) {
+  // Not on the board? Ask the app source for it once. Costs a second the
+  // first time a detail page is opened and nothing thereafter.
+  if (!loadPreview(a.id) && appstore::haveManifest) {
+    const appstore::Entry *en = appstore::find(a.id);
+    char path[40];
+    snprintf(path, sizeof path, "/preview/%s.565", a.id);
+    if (en && appstore::fetchPreview(*en, path)) loadPreview(a.id);
+  }
+  if (previewOk) {
     gfx->draw16bitRGBBitmap(PV_X, PV_Y, preview, PREVIEW_W, PREVIEW_H);
     gfx->drawRect(PV_X - 1, PV_Y - 1, PREVIEW_W + 2, PREVIEW_H + 2, mix(C_RULE, a.accent, 40));
   } else {
@@ -225,17 +252,24 @@ static void drawDetail() {
     textAt(PV_X + (PREVIEW_W - textWidth(1, m2)) / 2, PV_Y + PREVIEW_H / 2 + 4, 1, C_DIM, m2);
   }
 
-  // The about text, wrapped by hand: the panel has no word wrap and the
-  // column is a fixed width, so the split is arithmetic, not a guess.
-  const int16_t tx = 24, tw = PV_X - 48;
+  // The about text. Wrapped by measuring, but DRAWN with field(), which
+  // truncates to a character budget -- so a line that measures wrong cannot
+  // paint over the preview beside it. It did: textWidth uses real
+  // proportional metrics and the earlier version only checked them at
+  // spaces, so a long line drew straight through the screenshot.
+  //
+  // The budget is deliberately pessimistic: GW(1) is the widest glyph, so
+  // the count is what fits in the worst case rather than the average.
+  const int16_t tx = 24, tw = PV_X - tx - 24;
+  const uint8_t budget = tw / GW(1);
   int16_t ty = PV_Y + 4;
   const char *p = a.about;
   char line[96];
-  while (*p && ty < UI_Y_HINT - 90) {
+  while (*p && ty < btnYTop() - 12) {
     uint16_t n = 0, lastSpace = 0;
     while (p[n] && n < sizeof line - 1) {
+      line[n] = '\0';
       if (p[n] == ' ') {
-        line[n] = '\0';
         if (textWidth(1, line) > tw) break;
         lastSpace = n;
       }
@@ -243,16 +277,18 @@ static void drawDetail() {
       n++;
     }
     line[n] = '\0';
-    if (p[n] && lastSpace) n = lastSpace;
+    if (p[n] && lastSpace) n = lastSpace;      // step back to the last space
+    else if (p[n] && !lastSpace) n = budget;   // one unbroken word: cut it, never loop forever
+    if (!n) break;                             // nothing consumed: stop rather than spin
     line[n] = '\0';
-    textAt(tx, ty, 1, C_MUTED, line);
+    field(tx, ty, budget, 1, C_MUTED, line);
     ty += 22;
     p += n;
     while (*p == ' ') p++;
   }
 
   btnX = tx;
-  btnY = UI_Y_HINT - 72;
+  btnY = btnYTop();
   bool ready = a.status == Status::Ready;
   const char *label = loaded ? "Run" : "Install";
   if (loaded) {
@@ -290,7 +326,8 @@ static void drawSettings() {
   settingRow(2, "Sleep", v);
   settingRow(3, "Wi-Fi", baseCfg.ssid[0] ? baseCfg.ssid : "not set up");
   settingRow(4, "Shut down", "");
-  settingRow(5, "About this device", "");
+  settingRow(5, "App source", appstore::manifestUrl[0] ? appstore::manifestUrl : "not set");
+  settingRow(6, "About this device", "");
   drawHint("< apps");
 }
 
@@ -389,8 +426,51 @@ static void draw() {
     case View::Sleep: drawSleepPage(); break;
     case View::Info: drawInfoPage(); break;
     case View::About: drawSplash(); break;
+    case View::Keyboard: kbDraw("where Install fetches apps from"); break;
     case View::Setup: wifisetup::draw("waiting for you"); break;
   }
+}
+
+// Tap Install -> it installs. No laptop, no pio, no cable. Everything that
+// can go wrong says so on the hint line in words, because the person reading
+// it is standing in front of a panel, not a terminal.
+static void doInstall() {
+  const AppEntry &a = APPS[sel];
+  if (WiFi.status() != WL_CONNECTED) {
+    drawHint("no network yet -- Settings > Wi-Fi", C_WARN);
+    return;
+  }
+  if (!appstore::manifestUrl[0]) {
+    drawHint("no app source set -- Settings > App source", C_WARN);
+    return;
+  }
+  installProgress(0, "looking");
+  if (!appstore::haveManifest && !appstore::fetchManifest()) {
+    drawDetail();
+    drawHint(appstore::err, C_BAD);
+    return;
+  }
+  const appstore::Entry *en = appstore::find(a.id);
+  if (!en) {
+    drawDetail();
+    char m[80];
+    snprintf(m, sizeof m, "%s is not in the app source", a.name);
+    drawHint(m, C_WARN);
+    return;
+  }
+  drawHint("installing replaces whatever app is loaded", C_MUTED);
+  if (!appstore::install(*en, installProgress)) {
+    slotFilled = baseSlotFilled();
+    baseSlotApp(slotApp, sizeof slotApp);
+    drawDetail();
+    drawHint(appstore::err, C_BAD);
+    return;
+  }
+  installProgress(100, "done");
+  drawHint("installed -- starting it now", C_GOOD);
+  delay(700);
+  baseHandoff();
+  bootIntoApp();
 }
 
 static bool hitBack(int16_t x, int16_t y, Gesture g) {
@@ -407,6 +487,7 @@ void setup() {
   sTheme = baseTheme(N_THEMES);
   applyTheme();
   baseSlotApp(slotApp, sizeof slotApp);
+  appstore::loadUrl();
 
   gfx = boardDisplay();
   bool panelOk = gfx->begin();
@@ -490,12 +571,7 @@ void loop() {
           baseHandoff();  // or the app bounces straight back here
           bootIntoApp();
         } else {
-          // Installing means getting the binary into ota_0, and Home cannot do
-          // that yet -- the LittleFS cache is the next piece. Say the command
-          // rather than pretending the button did something.
-          char m[96];
-          snprintf(m, sizeof m, "not on the board yet:  pio run -e %s -t upload", APPS[sel].id);
-          drawHint(m, C_WARN);
+          doInstall();
         }
       }
       break;
@@ -505,7 +581,7 @@ void loop() {
         view = View::Picker;
         draw();
       } else if (tap) {
-        switch (hitSettingRow(y, 6)) {
+        switch (hitSettingRow(y, 7)) {
           case 0: view = View::Themes; draw(); break;
           case 1:
             baseCfg.rotation = (baseCfg.rotation + 1) % 4;
@@ -519,7 +595,16 @@ void loop() {
             wifisetup::begin();
             break;
           case 4: confirmOpen = true; drawShutdownSheet(); break;
-          case 5: view = View::Info; draw(); break;
+          case 5:
+            // Typed on the panel with lib/ui's keyboard. A URL is the one
+            // thing that has to be settable without a rebuild: the whole
+            // point is that whoever is holding the board did not compile it.
+            snprintf(urlBuf, sizeof urlBuf, "%s", appstore::manifestUrl);
+            kbOpen("APP SOURCE", urlBuf, sizeof urlBuf);
+            view = View::Keyboard;
+            draw();
+            break;
+          case 6: view = View::Info; draw(); break;
           default: break;
         }
       }
@@ -537,6 +622,25 @@ void loop() {
           applyTheme();
           baseSave();
           draw();
+        }
+      }
+      break;
+
+    case View::Keyboard:
+      if (tap) {
+        switch (kbTap(x, y)) {
+          case 1: kbField(); break;  // text changed: repaint the field only
+          case 2:                    // Done
+            appstore::saveUrl(urlBuf);
+            appstore::haveManifest = false;  // re-read from wherever it now points
+            view = View::Settings;
+            draw();
+            break;
+          case 3:  // the back mark: leave the old URL alone
+            view = View::Settings;
+            draw();
+            break;
+          default: break;
         }
       }
       break;
