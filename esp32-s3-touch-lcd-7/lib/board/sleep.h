@@ -6,13 +6,22 @@
 //
 // The snapshot deserves a word, because it is the part that is not obvious.
 // RTC slow memory is a single fixed region at a fixed address: `RTC_DATA_ATTR`
-// in two different firmwares puts two different layouts in the same bytes.
-// That was harmless while a board ran one app forever. It stops being harmless
-// the moment apps can be swapped, because app B then reads app A's bytes
-// through B's struct and believes them. So the region is owned here, once, and
-// handed back only when the header says it belongs to this app and this
-// layout -- an app cannot get that wrong by forgetting to check, because there
-// is nothing for it to forget.
+// in two different firmwares puts two different layouts in the same bytes, so
+// the worry was that swapping apps would have app B read app A's bytes through
+// B's struct and believe them.
+//
+// MEASURED on the board, 2026-09-19 (apps/rtc-probe, since deleted): a boot
+// counter in .rtc.data read 2 after a deep sleep and 1 after esp_restart().
+// So .rtc.data survives deep sleep and IS reinitialised from the image on a
+// plain restart -- and an app swap is a restart. Cross-app aliasing cannot
+// happen.
+//
+// The header stays anyway, but be clear about which parts now earn their keep.
+// The app-id and version fields are belt-and-braces against a case the chip
+// already prevents. The CRC and the invalidate-in-rtcSnapshotBuffer() are the
+// parts that still do real work: they catch a crash or a brownout part way
+// through a write, which leaves a valid-looking header over a half-written
+// payload. That is cheap enough to keep and awful enough to debug.
 //
 // Nothing here dictates the boot sequence. ticker decides whether to go back
 // to sleep *before* it brings the panel up, which is the whole value of a
