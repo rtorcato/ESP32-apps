@@ -7,7 +7,26 @@ name: CI
 on:
   push:
     branches: [main]
+    # A README, a preview SVG or a reference screenshot cannot break a
+    # build, and a full run is ten minutes. Skipped only when *every*
+    # changed file matches: touch one .cpp alongside the docs and it runs.
+    # Safe to skip a required check here only because branch protection is
+    # unavailable on this plan -- on a protected branch a skipped required
+    # check blocks the merge forever.
+    paths-ignore:
+      - '**.md'
+      - '**.svg'
+      - '**.png'
+      - '**.jpg'
+      - 'LICENSE'
   pull_request:
+    # Restated: GitHub Actions has no YAML anchors.
+    paths-ignore:
+      - '**.md'
+      - '**.svg'
+      - '**.png'
+      - '**.jpg'
+      - 'LICENSE'
 
 # A force-push mid-build otherwise leaves the superseded run grinding through
 # a ten-minute toolchain download for a commit nobody will merge.
