@@ -63,6 +63,7 @@ Each app README has a `preview.svg` wireframe drawn at the panel's real 800×480
 
 | App | Idea |
 |---|---|
+| [launcher](apps/launcher/) | The base app: owns the board, the settings and the picker; one app loaded at a time |
 | [social](apps/social/) | Built as a demo, parked: a ticker of your own numbers |
 | [unifi](apps/unifi/) | **Built.** Network: the UniFi console's devices, clients and cameras |
 | [sports](apps/sports/) | **Built.** Game Day: scores across eleven leagues with logos |
