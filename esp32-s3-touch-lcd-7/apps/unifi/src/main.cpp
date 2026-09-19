@@ -11,6 +11,7 @@
 // Built on lib/ui; the Wi-Fi network is the ticker's (NVS "ticker").
 #include <appcfg.h>
 #include <board.h>
+#include <sleep.h>
 #include <helv.h>
 #include <netjoin.h>
 #include <ui.h>
@@ -21,7 +22,6 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#include <esp_sleep.h>
 #include <time.h>
 #include <new>
 
@@ -764,10 +764,7 @@ static void closeConfirm() {
 static void shutDown() {
   drawHint("shutting down. BOOT button turns it on", C_WARN);
   delay(600);
-  backlight(0);
-  WiFi.disconnect(true);
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
-  esp_deep_sleep_start();
+  goToSleep(0);  // secs 0: the BOOT button alone, never a brush of the panel
 }
 
 // ── wifi ─────────────────────────────────────────────────────────────────
