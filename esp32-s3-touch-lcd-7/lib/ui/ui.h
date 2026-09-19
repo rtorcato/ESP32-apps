@@ -258,6 +258,30 @@ inline void clockStr(const struct tm &t, bool h24, char *out, size_t n) {
 }
 
 // ── touch: tap, tap-up, long press, vertical drag, horizontal swipe ───────
+//
+// SCROLLING AND SELECTING -- read this before wiring up a list.
+//
+// Tap fires while the finger is STILL DOWN, TAP_MS (100ms) after it landed,
+// provided the axis has not locked. The axis needs AXIS_PX (24px) of travel
+// to lock. Put those together and a slow drag is a Tap: the finger rests for
+// 100ms before it has moved 24px, Tap fires, the page changes underneath,
+// and the drag then scrolls something nobody meant to open.
+//
+// So:
+//
+//   Scrollable view  ->  select on TapUp ONLY. Never Tap.
+//   Fixed view       ->  either; Tap feels quicker because it does not wait
+//                        for the lift.
+//
+// TapUp fires on release and only when the axis never locked, which is
+// exactly "a tap that was not the start of a scroll". That is the event you
+// want, and `tapUpQuick` tells you whether it was short enough to have been
+// a Tap as well.
+//
+// This has now been the same bug three times: the CYD ticker opened a stock
+// mid-swipe, the 7in ticker did it again, and Home's picker did it with the
+// app grid. It is not a tuning problem -- raising TAP_MS or AXIS_PX trades
+// one wrong behaviour for another. Pick the right event.
 enum class Gesture : uint8_t { None, Tap, TapUp, LongPress, Drag, SwipeRight, SwipeLeft, SwipeUp, SwipeDown };
 inline const uint32_t TAP_MS = 100, LONG_MS = 700;
 inline const int16_t AXIS_PX = 24, SWIPE_PX = 50;

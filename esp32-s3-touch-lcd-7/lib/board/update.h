@@ -81,6 +81,7 @@ inline void check() {
   client.setInsecure();  // ponytail: pin the CA before this ever drives a flash
   client.setTimeout(8000);
   HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);  // release assets are 302s
   if (!http.begin(client, MANIFEST_URL)) {
     state = State::Failed;
     snprintf(note, sizeof note, "bad manifest URL");
