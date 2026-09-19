@@ -63,7 +63,22 @@ Each app README has a `preview.svg` wireframe drawn at the panel's real 800×480
 
 | App | Idea |
 |---|---|
+| [social](apps/social/) | Built as a demo, parked: a ticker of your own numbers |
+| [unifi](apps/unifi/) | **Built.** Network: the UniFi console's devices, clients and cameras |
+| [sports](apps/sports/) | **Built.** Game Day: scores across eleven leagues with logos |
+| [ticker](apps/ticker/) | **Built.** Ticker Tape: stocks, indices, FX, coins, news, charts |
 | [wall-dashboard](apps/wall-dashboard/) | Calendar, weather, transit — the flagship use |
 | [ha-panel](apps/ha-panel/) | Full-size Home Assistant control surface |
 | [obd2-gauge](apps/obd2-gauge/) | Live car telemetry over the CAN header |
 | [modbus-readout](apps/modbus-readout/) | Poll RS485/Modbus sensors and chart them |
+| [weather](apps/weather/) | Now, the hours, the week from Open-Meteo, keyless |
+| [flights](apps/flights/) | Every aircraft overhead on a map of the sky, from OpenSky, keyless |
+| [transit](apps/transit/) | A departure board for the stops near the house, GTFS-realtime |
+| [space](apps/space/) | The ISS, its next pass, the picture of the day, this week's launches |
+| [earthquakes](apps/earthquakes/) | The last day of quakes on a map, from USGS, keyless |
+| [calendar](apps/calendar/) | Today and the week from any iCal URL, the next thing counting down |
+| [solar](apps/solar/) | The house's power flow and today's totals, one key |
+| [media](apps/media/) | Now playing with the artwork large: Plex, Jellyfin, Sonos |
+| [pihole](apps/pihole/) | Queries and blocks today, the top domains, a pause button |
+| [printer](apps/printer/) | The 3D printer's job, temperatures and camera frame |
+| [ci-status](apps/ci-status/) | Green and red tiles for workflow runs and uptime monitors |
