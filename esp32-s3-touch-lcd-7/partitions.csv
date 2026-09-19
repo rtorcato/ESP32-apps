@@ -1,12 +1,12 @@
-# One app resident at a time: the launcher stays in factory, whichever app is
-# loaded lives in ota_0. See apps/launcher/README.md for why.
+# One app resident at a time: Home stays in factory, whichever app is
+# loaded lives in ota_0. See apps/home/README.md for why.
 #
 # PlatformIO uploads to ota_0 when the table has one (platform builder/main.py,
 # "if partition[subtype] == ota_0: app_offset = next_offset"), so
 # `pio run -e ticker -t upload` lands in the app slot with no configuration.
-# The launcher is the exception and overrides it back -- scripts/launcher_offset.py.
+# Home is the exception and overrides it back -- scripts/home_offset.py.
 #
-#   factory   2MB      the launcher (1.3MB today)
+#   factory   2MB      Home (1.3MB today)
 #   ota_0     3MB      the loaded app (ticker, the largest, is 1.33MB)
 #   littlefs  10.9MB   logos, thumbnails, config
 #

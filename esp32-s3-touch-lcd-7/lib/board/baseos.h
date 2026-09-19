@@ -1,12 +1,12 @@
 // The base OS: what belongs to the board rather than to any one app.
 //
-// One app runs at a time. The launcher lives in the `factory` partition and
+// One app runs at a time. Home lives in the `factory` partition and
 // stays there; whichever app is loaded lives in `ota_0`. Switching is a boot
 // partition change and a restart -- about two seconds, no network, no copying.
-// apps/launcher/README.md has the reasoning and the partition table.
+// apps/home/README.md has the reasoning and the partition table.
 //
 // Nothing here is loaded at runtime. Apps share this code at LINK time, the
-// same as board.h and ui.h; the launcher only decides which firmware boots.
+// same as board.h and ui.h; Home only decides which firmware boots.
 //
 // What the base owns, and why it has to be the base that owns it: every
 // setting below outlives the app that was running when it was changed.
@@ -31,7 +31,7 @@
 // ui.h is worth doing, but nothing here should be what forces it.
 
 // ── the shared settings ──────────────────────────────────────────────────
-// NVS namespace "base". Apps read these and apply them; the launcher is where
+// NVS namespace "base". Apps read these and apply them; Home is where
 // they are edited. Deliberately NOT here: anything only one app can mean --
 // the ticker's refresh intervals, Game Day's favourite teams. Those stay in
 // the app's own namespace.
@@ -97,7 +97,7 @@ inline void baseSaveWifi(const char *ssid, const char *pass) {
 // carries a project_name, but under Arduino every build says
 // "arduino-lib-builder" -- checked, it is not usable. An app calling this in
 // setup() also means a slot flashed by hand over USB identifies itself, which
-// a launcher-side record would not.
+// a Home-side record would not.
 inline void baseClaimSlot(const char *app) {
   Preferences p;
   p.begin("base", false);
@@ -123,7 +123,7 @@ inline const esp_partition_t *find(esp_partition_subtype_t sub) {
 }
 }  // namespace baseosdetail
 
-inline bool runningInLauncher() {
+inline bool runningAsHome() {
   const esp_partition_t *r = esp_ota_get_running_partition();
   return r && r->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY;
 }
@@ -155,7 +155,7 @@ inline bool bootInto(esp_partition_subtype_t sub) {
 }
 
 inline bool bootIntoApp() { return bootInto(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
-inline bool bootIntoLauncher() { return bootInto(ESP_PARTITION_SUBTYPE_APP_FACTORY); }
+inline bool bootIntoHome() { return bootInto(ESP_PARTITION_SUBTYPE_APP_FACTORY); }
 
 // ── who gets the screen on boot ──────────────────────────────────────────
 // The board comes up in the base, not in whatever ran last. That is what you
@@ -163,7 +163,7 @@ inline bool bootIntoLauncher() { return bootInto(ESP_PARTITION_SUBTYPE_APP_FACTO
 //
 // Doing it needs care, because launching an app IS a restart. An app that
 // simply bounced to the base on every cold boot would bounce straight back
-// out of the launch that just started it, forever. So the launcher leaves a
+// out of the launch that just started it, forever. So Home leaves a
 // handoff flag in NVS and the app consumes it: flag present means "the base
 // sent me here on purpose", absent on a cold boot means the power was cut or
 // reset was pressed, and the base should have the screen.
@@ -201,19 +201,19 @@ inline bool baseTakeHandoff() {
 // BOOT has to be read here specifically. GPIO0 is also the panel's green bit
 // 0, so once the RGB scan-out is running it cannot be read as a button.
 inline void baseAppBoot(const char *app) {
-  if (runningInLauncher()) return;  // the launcher itself does none of this
+  if (runningAsHome()) return;  // Home itself does none of this
 
   if (bootPressed()) {  // the way out of an app that hangs or crash-loops
     Serial.println("BOOT held at power-on: back to the base");
     baseTakeHandoff();
-    bootIntoLauncher();
+    bootIntoHome();
     return;
   }
 
   bool handed = baseTakeHandoff();
   if (!handed && wokeCold()) {
     Serial.println("cold boot with no handoff: the base gets the screen");
-    bootIntoLauncher();
+    bootIntoHome();
     return;
   }
   baseClaimSlot(app);

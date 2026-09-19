@@ -1,4 +1,4 @@
-"""Upload the launcher to `factory`, not to `ota_0`.
+"""Upload Home to `factory`, not to `ota_0`.
 
 The platform's builder picks the upload offset from the partition table and
 prefers ota_0 when the table has one (builder/main.py, "if partition[subtype]
@@ -16,4 +16,4 @@ FACTORY_OFFSET = "0x10000"
 # subst, not get: the platform Replaces it into the env and get() reads None.
 was = env.subst("$ESP32_APP_OFFSET")
 env.Replace(ESP32_APP_OFFSET=FACTORY_OFFSET)
-print(f"launcher_offset: upload offset {was} -> {FACTORY_OFFSET} (factory)")
+print(f"home_offset: upload offset {was} -> {FACTORY_OFFSET} (factory)")

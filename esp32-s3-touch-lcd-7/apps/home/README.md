@@ -1,8 +1,15 @@
-# launcher — idea (2026-09-19)
+# Home — the base app
 
-The base app. It owns the board and the settings that are the board's, shows
-a picker, and loads one app at a time. Everything else here is an app it
-launches.
+**Status: built 2026-09-19.** Splash, app picker, shared settings and boot
+switching work. Wi-Fi setup has not moved here from the ticker yet, and the
+picker can only run what is already in the slot.
+
+It owns the board and the settings that are the board's, and loads one app at
+a time. Everything else on this board is an app it hands the screen to.
+
+Called Home rather than "launcher" because it is more than a launcher -- it
+holds the settings, the Wi-Fi and the shutdown -- and because it names the
+gesture: an app goes Home.
 
 ## Why one app at a time
 
@@ -20,23 +27,23 @@ without costing the others 128KB.
 
 So this is not iOS. There is no dynamic linker here, and nothing is loaded
 into a running program. Apps share code at *link* time through `lib/`, and
-the launcher swaps which firmware boots.
+Home swaps which firmware boots.
 
 ## Partitions
 
 ```
-nvs       data nvs       0x9000    0x5000     shared settings, launcher + app
+nvs       data nvs       0x9000    0x5000     shared settings, Home + app
 otadata   data ota       0xe000    0x2000
-factory   app  factory   0x10000   0x200000   2MB   launcher, always resident
+factory   app  factory   0x10000   0x200000   2MB   Home, always resident
 ota_0     app  ota_0     0x210000  0x300000   3MB   whichever app is loaded
 littlefs  data spiffs    0x510000  0xAE0000   11.1MB  logos, thumbnails, config
 coredump  data coredump  0xFF0000  0x10000
 ```
 
 Every env builds against this one CSV, so NVS and LittleFS line up between
-the launcher and whatever it launched. The same `.bin` boots from either app
+Home and whatever it launched. The same `.bin` boots from either app
 partition, so an app can still be flashed straight over USB during
-development and the launcher skipped entirely.
+development and Home skipped entirely.
 
 ## The two transitions
 
@@ -44,7 +51,7 @@ development and the launcher skipped entirely.
 `esp_ota_set_boot_partition(factory)` and restarts. ~2s, no network, six
 lines in `lib/board`.
 
-**Load a different app**, the rare one: the launcher copies `<app>.bin` into
+**Load a different app**, the rare one: Home copies `<app>.bin` into
 `ota_0`, sets the boot partition and reboots. From a LittleFS cache that is
 3–5s and works with the internet down; over the network it is ~1.2MB and
 about 30s.
@@ -55,7 +62,7 @@ occasionally.
 ## Shared settings
 
 NVS namespace `base`: ssid, pass, timezone, theme, brightness, rotation,
-sleep schedule. The launcher owns the setup flow and the on-screen keyboard;
+sleep schedule. Home owns the setup flow and the on-screen keyboard;
 apps read it.
 
 This replaces something that is currently a hack — `apps/sports` reads Wi-Fi
@@ -79,19 +86,19 @@ thumbnails come from each app's existing `preview.svg`, downscaled to
 
 ## Deliberately deferred
 
-- **Downloading apps from the repo.** The launcher code is the small part;
+- **Downloading apps from the repo.** Home code is the small part;
   the cost is a release pipeline — tagged releases, a CI build of N
   binaries, a manifest with hashes, CA pinning, version discipline. Cache in
   LittleFS first and let the network earn its keep on updates only.
-- **Launcher self-update.** You cannot rewrite `factory` while running from
-  it. Solvable — write the new launcher to `ota_0`, boot it, let it copy
+- **Home self-update.** You cannot rewrite `factory` while running from
+  it. Solvable — write the new Home to `ota_0`, boot it, let it copy
   itself into `factory`, boot back — but that is ~40 lines of fiddly for
   something that changes twice a year. USB until it annoys.
 - **Thumbnails.** A text grid is fine at four apps.
 
 ## Before any of it
 
-Verifying the download is not optional: the launcher would be fetching
+Verifying the download is not optional: Home would be fetching
 executable code over the network. Pin the root CA and check a sha256 from
 the manifest *before* `esp_ota_set_boot_partition`, not after.
 

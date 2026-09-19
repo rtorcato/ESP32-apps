@@ -1,4 +1,4 @@
-// launcher -- the base OS. Owns the board, the shared settings, and which app
+// Home -- the base OS. Owns the board, the shared settings, and which app
 // boots. See the README next to this file for the design.
 //
 // It lives in `factory` and stays there. Tapping an app sets the boot
@@ -131,9 +131,9 @@ void setup() {
   gfx->setTextWrap(false);
   slotFilled = baseSlotFilled();
 
-  Serial.printf("launcher: expander %s, panel %s, woke by %s\n", xp ? "ok" : "NO ACK", panelOk ? "ok" : "FAILED",
+  Serial.printf("Home: expander %s, panel %s, woke by %s\n", xp ? "ok" : "NO ACK", panelOk ? "ok" : "FAILED",
                 wakeCause() == Wake::Cold ? "power-on" : "a button or a timer");
-  Serial.printf("launcher: slot %s (%s), theme %s, psram %uk free\n", slotFilled ? "filled" : "EMPTY",
+  Serial.printf("Home: slot %s (%s), theme %s, psram %uk free\n", slotFilled ? "filled" : "EMPTY",
                 slotApp[0] ? slotApp : "unclaimed", THEMES[baseTheme(N_THEMES)].name, ESP.getFreePsram() / 1024);
 
   drawSplash();
@@ -194,7 +194,7 @@ void loop() {
             drawSettings();
             break;
           case 2: view = View::Sleep; draw(); break;
-          case 3: drawHint("Wi-Fi setup is not in the launcher yet", C_WARN); break;
+          case 3: drawHint("Wi-Fi setup is not in Home yet", C_WARN); break;
           case 4: confirmOpen = true; drawShutdownSheet(); break;
           default: break;
         }
