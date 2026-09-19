@@ -10,6 +10,7 @@
 // made in UniFi Network > Settings > Control Plane > Integrations.
 // Built on lib/ui; the Wi-Fi network is the ticker's (NVS "ticker").
 #include <appcfg.h>
+#include <baseos.h>
 #include <board.h>
 #include <sleep.h>
 #include <helv.h>
@@ -795,6 +796,10 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   bool xp = boardBegin();
+  // The base: BOOT held goes back to it, a cold boot with no handoff goes
+  // back to it, and otherwise we tell it the slot is ours. Must run before
+  // the panel -- GPIO0 is BOOT and also the panel green bit 0.
+  baseAppBoot("unifi");
   mux = xSemaphoreCreateMutex();
   buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // with the 20-line bounce buffers there is room for it inside
   cli = (NetClient *)heap_caps_calloc(MAX_CLI, sizeof(NetClient), MALLOC_CAP_SPIRAM);
@@ -809,10 +814,13 @@ void setup() {
     cfgRelease();
   }
   Serial.printf("network: console %s, key %s, stats %lus\n", host, apiKey[0] ? "set" : "MISSING", (unsigned long)(statsMs / 1000));
-  prefs.begin("ticker", true);
-  prefs.getString("ssid", wifiSsid, sizeof wifiSsid);
-  prefs.getString("pass", wifiPass, sizeof wifiPass);
-  prefs.end();
+  // Credentials belong to the board, not to this app: Home owns the setup
+  // portal and writes them to NVS "base". This used to read the TICKER's
+  // namespace and tell you to go and run the ticker first.
+  baseLoad();
+  snprintf(wifiSsid, sizeof wifiSsid, "%s", baseCfg.ssid);
+  snprintf(wifiPass, sizeof wifiPass, "%s", baseCfg.pass);
+  if (!wifiSsid[0]) Serial.println("no network: Home runs setup -- hold BOOT at power-on to get there");
   prefs.begin("unifi", true);
   sTheme = prefs.getUChar("bg", 0) % N_THEMES;
   sClock = prefs.getUChar("clk", 0) % 2;

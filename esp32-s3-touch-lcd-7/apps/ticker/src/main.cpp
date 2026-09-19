@@ -13,6 +13,7 @@
 // handshake never stalls touch or the clock. Fetches stay strictly sequential
 // -- each TLS session is ~40KB of a 320KB heap with no PSRAM behind it.
 #include <appcfg.h>
+#include <baseos.h>
 #include <board.h>
 #include <sleep.h>
 #include <helv.h>
@@ -1921,8 +1922,12 @@ static void loadSettings() {
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
   }
-  prefs.getString("ssid", wifiSsid, sizeof wifiSsid);
-  prefs.getString("pass", wifiPass, sizeof wifiPass);
+  // Credentials belong to the board, not to this app: Home owns the setup
+  // portal and writes them to NVS "base". The ticker's own portal below is
+  // dead weight now and comes out with the next commit.
+  baseLoad();
+  snprintf(wifiSsid, sizeof wifiSsid, "%s", baseCfg.ssid);
+  snprintf(wifiPass, sizeof wifiPass, "%s", baseCfg.pass);
   if (any) {  // (re-enter the block the settings print expects)
   }
   if (any) {
@@ -3600,6 +3605,10 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   bool xp = boardBegin();
+  // The base: BOOT held goes back to it, a cold boot with no handoff goes
+  // back to it, and otherwise we tell it the slot is ours. Must run before
+  // the panel -- GPIO0 is BOOT and also the panel green bit 0.
+  baseAppBoot("ticker");
   selfCheck();
 
   // What woke us. A timer wake inside the sleep window goes straight back to
