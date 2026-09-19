@@ -22,6 +22,26 @@ without the suffix is the 2.4GHz radio; that is the one to pick. The setup form
 and the panel both say so, because "my network is not in the list" is otherwise
 a dead end with no clue in it.
 
+## Why your phone will not autofill the password
+
+It is not the form. iOS and Android keep **Wi-Fi passwords in a different
+vault from website passwords**, and only the website vault is offered to a web
+form. The iOS Passwords app will show you a Wi-Fi entry, but it will not hand
+it to a page. Three other things stack on top of that, none of them fixable
+here: the origin is plain HTTP, it is a bare IP with no domain for a saved
+credential to match against, and a captive-portal page opens in a restricted
+web sheet rather than Safari.
+
+The form still carries `autocomplete=username` / `autocomplete=current-password`,
+because they cost nothing and make the fields behave correctly for anyone using
+a third-party manager that does offer to fill them.
+
+What does matter, and was a real bug: `autocapitalize=none` on the
+hidden-network box. iOS capitalises the first letter of a plain text input,
+which silently turns a lowercase SSID into one that does not exist.
+
+To get the password across: Settings › Wi-Fi › (i) › Password, then paste.
+
 ## Why one app at a time
 
 Storage was never the constraint. Measured on 2026-09-19: a whole app is

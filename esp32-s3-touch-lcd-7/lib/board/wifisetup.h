@@ -44,10 +44,20 @@ inline void page() {
     html += err;
     html += F("</p>");
   }
-  html += F("<form method=post action=/save><label>Wi-Fi network</label><select name=s>");
+  // autocomplete/autocapitalize are not decoration. iOS autocapitalises a
+  // plain text input, which silently turns a lowercase SSID into a wrong one,
+  // and without autocomplete hints it will not classify the fields at all.
+  // It still will not offer the Wi-Fi password: iOS keeps those in a separate
+  // vault from web logins and does not hand them to web forms. Nothing in the
+  // markup can change that -- see the README.
+  html += F("<form method=post action=/save><label for=s>Wi-Fi network</label><select name=s id=s>");
   html += ssids;
-  html += F("</select><label>or type its name</label><input name=o placeholder='hidden network'>"
-            "<label>password</label><input type=password name=p id=p>"
+  html += F("</select><label for=o>or type its name</label>"
+            "<input name=o id=o placeholder='hidden network' autocomplete=username "
+            "autocapitalize=none autocorrect=off spellcheck=false>"
+            "<label for=p>password</label>"
+            "<input type=password name=p id=p autocomplete=current-password "
+            "autocapitalize=none autocorrect=off spellcheck=false>"
             "<label style='display:flex;align-items:center;gap:8px;margin-top:10px'>"
             "<input type=checkbox style='width:auto' onchange=\"p.type=this.checked?'text':'password'\">show password</label>"
             "<button>save and restart</button></form>"
@@ -57,6 +67,11 @@ inline void page() {
             "hardware cannot see that band at all.<br>"
             "If your router shows one name ending in <b>-5G</b> or <b>_5G</b> and another without it, "
             "the one without is the 2.4GHz network. Pick that."
+            "</p>"
+            "<p style='color:#6b7280;font-size:12px;line-height:1.5'>"
+            "Your phone will not offer to fill the Wi-Fi password here. iOS and Android keep "
+            "Wi-Fi passwords separately from website passwords and do not pass them to web forms. "
+            "On iOS you can read it in Settings \u203a Wi-Fi \u203a (i) \u203a Password, then paste."
             "</p></body></html>");
   web->send(200, "text/html", html);
 }
