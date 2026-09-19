@@ -15,6 +15,7 @@
 #include <helv.h>
 #include <sleep.h>
 #include <ui.h>
+#include <wifisetup.h>
 
 // Every app the board knows about. Only one can be in the slot at a time, so
 // the rest are drawn dim -- the grid is what EXISTS, not what is runnable,
@@ -30,7 +31,7 @@ static const AppEntry APPS[] = {
 };
 static const uint8_t N_APPS = sizeof APPS / sizeof APPS[0];
 
-enum class View : uint8_t { Picker, Settings, Themes, Sleep };
+enum class View : uint8_t { Picker, Settings, Themes, Sleep, Setup };
 static View view = View::Picker;
 static char slotApp[24] = "";
 static bool slotFilled = false;
@@ -111,6 +112,7 @@ static void draw() {
     case View::Settings: drawSettings(); break;
     case View::Themes: drawThemesPage(); break;
     case View::Sleep: drawSleepPage(); break;
+    case View::Setup: wifisetup::draw("waiting for you"); break;
   }
 }
 
@@ -139,10 +141,24 @@ void setup() {
   drawSplash();
   backlight(255);
   delay(900);  // long enough to read, short enough not to be in the way
+
+  // A board with no network cannot do anything useful, so setup comes before
+  // the picker rather than hiding behind a settings row. This is the whole
+  // reason the portal had to leave the ticker: on a fresh board the ticker
+  // was the only way to get Wi-Fi onto it.
+  if (!baseCfg.ssid[0]) {
+    view = View::Setup;
+    wifisetup::begin();
+    return;
+  }
   draw();
 }
 
 void loop() {
+  if (view == View::Setup) {  // the portal owns the board until it restarts
+    wifisetup::tick();
+    return;
+  }
   int16_t x, y, dy;
   Gesture g = pollGesture(&x, &y, &dy);
   if (g == Gesture::None) return;
@@ -194,7 +210,10 @@ void loop() {
             drawSettings();
             break;
           case 2: view = View::Sleep; draw(); break;
-          case 3: drawHint("Wi-Fi setup is not in Home yet", C_WARN); break;
+          case 3:
+            view = View::Setup;
+            wifisetup::begin();
+            break;
           case 4: confirmOpen = true; drawShutdownSheet(); break;
           default: break;
         }

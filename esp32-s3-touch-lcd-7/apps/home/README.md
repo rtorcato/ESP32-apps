@@ -1,8 +1,8 @@
 # Home — the base app
 
-**Status: built 2026-09-19.** Splash, app picker, shared settings and boot
-switching work. Wi-Fi setup has not moved here from the ticker yet, and the
-picker can only run what is already in the slot.
+**Status: built 2026-09-19.** Splash, app picker, shared settings, Wi-Fi
+setup and boot switching work. The picker can only run what is already in the
+slot -- loading a different app is still a USB flash.
 
 It owns the board and the settings that are the board's, and loads one app at
 a time. Everything else on this board is an app it hands the screen to.

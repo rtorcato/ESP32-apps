@@ -1922,8 +1922,12 @@ static void loadSettings() {
     sect = prefs.getUChar("sect", 0) % 5;
     buildOrder();
   }
-  prefs.getString("ssid", wifiSsid, sizeof wifiSsid);
-  prefs.getString("pass", wifiPass, sizeof wifiPass);
+  // Credentials belong to the board, not to this app: Home owns the setup
+  // portal and writes them to NVS "base". The ticker's own portal below is
+  // dead weight now and comes out with the next commit.
+  baseLoad();
+  snprintf(wifiSsid, sizeof wifiSsid, "%s", baseCfg.ssid);
+  snprintf(wifiPass, sizeof wifiPass, "%s", baseCfg.pass);
   if (any) {  // (re-enter the block the settings print expects)
   }
   if (any) {

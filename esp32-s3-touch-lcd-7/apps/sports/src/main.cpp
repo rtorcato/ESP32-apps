@@ -699,12 +699,13 @@ void setup() {
   }
   Serial.printf("game day: %u leagues in %u sports, %u favourite teams, refresh %lus live / %lus idle\n", nLeagues, nSports, nFavs,
                 (unsigned long)(liveMs / 1000), (unsigned long)(idleMs / 1000));
-  Preferences prefs;  // the ticker's network: one setup on the board serves both apps
-  prefs.begin("ticker", true);
-  prefs.getString("ssid", wifiSsid, sizeof wifiSsid);
-  prefs.getString("pass", wifiPass, sizeof wifiPass);
-  prefs.end();
-  if (!wifiSsid[0]) Serial.println("no network in NVS: run the ticker once and set it up there");
+  // Credentials belong to the board, not to this app: Home owns the setup
+  // portal and writes them to NVS "base". This used to read the TICKER's
+  // namespace and tell you to go and run the ticker first.
+  baseLoad();
+  snprintf(wifiSsid, sizeof wifiSsid, "%s", baseCfg.ssid);
+  snprintf(wifiPass, sizeof wifiPass, "%s", baseCfg.pass);
+  if (!wifiSsid[0]) Serial.println("no network: Home runs setup -- hold BOOT at power-on to get there");
   setenv("TZ", tzString, 1);
   tzset();
   prefs.begin("sports", true);

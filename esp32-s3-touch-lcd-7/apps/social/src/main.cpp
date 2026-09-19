@@ -686,10 +686,13 @@ void setup() {
   for (uint8_t s = 0; s < N_SERVICES; s++) if (svcUsed[s]) tabSvc[nTabs++] = s;
   Serial.printf("social: %u accounts, refresh %lu min\n", nAcc, (unsigned long)(refreshMs / 60000));
   histLoad();
-  prefs.begin("ticker", true);
-  prefs.getString("ssid", wifiSsid, sizeof wifiSsid);
-  prefs.getString("pass", wifiPass, sizeof wifiPass);
-  prefs.end();
+  // Credentials belong to the board, not to this app: Home owns the setup
+  // portal and writes them to NVS "base". This used to read the TICKER's
+  // namespace and tell you to go and run the ticker first.
+  baseLoad();
+  snprintf(wifiSsid, sizeof wifiSsid, "%s", baseCfg.ssid);
+  snprintf(wifiPass, sizeof wifiPass, "%s", baseCfg.pass);
+  if (!wifiSsid[0]) Serial.println("no network: Home runs setup -- hold BOOT at power-on to get there");
   prefs.begin("social", true);
   sTheme = prefs.getUChar("bg", 0) % N_THEMES;
   sClock = prefs.getUChar("clk", 0) % 2;
