@@ -7,6 +7,7 @@
 // answer without a key: Bluesky, Mastodon, GitHub, npm, YouTube (views).
 // Built on lib/ui; the Wi-Fi network is the ticker's (NVS "ticker").
 #include <appcfg.h>
+#include <baseos.h>
 #include <board.h>
 #include <sleep.h>
 #include <helv.h>
@@ -649,6 +650,10 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   bool xp = boardBegin();
+  // The base: BOOT held goes back to it, a cold boot with no handoff goes
+  // back to it, and otherwise we tell it the slot is ours. Must run before
+  // the panel -- GPIO0 is BOOT and also the panel green bit 0.
+  baseAppBoot("social");
   mux = xSemaphoreCreateMutex();
   buf = (uint8_t *)heap_caps_malloc(CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);  // malloc over 16KB lands in PSRAM by itself
   acc = (Account *)heap_caps_calloc(MAX_ACC, sizeof(Account), MALLOC_CAP_SPIRAM);

@@ -13,6 +13,7 @@
 // handshake never stalls touch or the clock. Fetches stay strictly sequential
 // -- each TLS session is ~40KB of a 320KB heap with no PSRAM behind it.
 #include <appcfg.h>
+#include <baseos.h>
 #include <board.h>
 #include <sleep.h>
 #include <helv.h>
@@ -3600,6 +3601,10 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   bool xp = boardBegin();
+  // The base: BOOT held goes back to it, a cold boot with no handoff goes
+  // back to it, and otherwise we tell it the slot is ours. Must run before
+  // the panel -- GPIO0 is BOOT and also the panel green bit 0.
+  baseAppBoot("ticker");
   selfCheck();
 
   // What woke us. A timer wake inside the sleep window goes straight back to

@@ -8,6 +8,7 @@
 // from lib/ui. The Wi-Fi network is the one the ticker saved (NVS "ticker":
 // ssid/pass), so one setup serves both.
 #include <appcfg.h>
+#include <baseos.h>
 #include <board.h>
 #include <sleep.h>
 #include <helv.h>
@@ -662,6 +663,10 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   bool xp = boardBegin();
+  // The base: BOOT held goes back to it, a cold boot with no handoff goes
+  // back to it, and otherwise we tell it the slot is ours. Must run before
+  // the panel -- GPIO0 is BOOT and also the panel green bit 0.
+  baseAppBoot("sports");
   mux = xSemaphoreCreateMutex();
   buf = (uint8_t *)heap_caps_malloc(BUF_CAP, MALLOC_CAP_SPIRAM);
   games = (Game *)heap_caps_calloc(MAX_GAMES, sizeof(Game), MALLOC_CAP_SPIRAM);
