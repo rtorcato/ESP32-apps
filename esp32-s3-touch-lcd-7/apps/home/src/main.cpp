@@ -289,7 +289,7 @@ static void drawSettings() {
   settingRow(2, "Sleep", v);
   settingRow(3, "Wi-Fi", baseCfg.ssid[0] ? baseCfg.ssid : "not set up");
   settingRow(4, "Shut down", "");
-  settingRow(5, "About this board", "");
+  settingRow(5, "About this device", "");
   drawHint("< apps");
 }
 
@@ -304,7 +304,7 @@ static void drawSleepPage() {
   drawHint("tap From or To to step the hour        < settings");
 }
 
-// About the BOARD, which is what "Info" should always have meant. The old
+// About the DEVICE, which is what "Info" should always have meant. The old
 // version showed "slot: unknown app", which answered a question nobody asked
 // and phrased it as if something were wrong.
 //
@@ -313,7 +313,7 @@ static void drawSleepPage() {
 static int16_t splashBtnX, splashBtnY, splashBtnW = 200;
 
 static void drawInfoPage() {
-  pageHeader("ABOUT THIS BOARD");
+  pageHeader("ABOUT THIS DEVICE");
   char left[8][56], right[8][56];
   uint8_t nl = 0, nr = 0;
   uint64_t mac = ESP.getEfuseMac();
