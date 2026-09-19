@@ -10,6 +10,7 @@
 #include <LittleFS.h>
 #include <sleep.h>
 #include <ui.h>
+#include <update.h>
 #include <wifisetup.h>
 
 // Every app the board knows about. `accent` is the app's colour and the only
@@ -206,10 +207,13 @@ static void drawSleepPage() {
 // and phrased it as if something were wrong.
 static void drawInfoPage() {
   pageHeader("ABOUT THIS BOARD");
-  char l[13][56];
+  char l[17][56];  // exactly what is written below; -Wstringop-overflow guards the next one
   uint8_t n = 0;
   uint64_t mac = ESP.getEfuseMac();
   const esp_partition_t *run = esp_ota_get_running_partition();
+  snprintf(l[n++], 56, "Home %s   built %s", FW_VERSION, FW_BUILT);
+  snprintf(l[n++], 56, "updates: %s", update::stateWord());
+  l[n++][0] = '\0';
   snprintf(l[n++], 56, "Waveshare ESP32-S3-Touch-LCD-7");
   snprintf(l[n++], 56, "800x480 RGB panel, GT911 touch, CH422G expander");
   snprintf(l[n++], 56, "%s rev%d, %d MHz, %d cores", ESP.getChipModel(), ESP.getChipRevision(),
@@ -228,7 +232,20 @@ static void drawInfoPage() {
   snprintf(l[n++], 56, "app slot: %s", slotFilled ? (slotApp[0] ? slotApp : "an app that has not named itself") : "empty");
   snprintf(l[n++], 56, "built " __DATE__ " " __TIME__);
   for (uint8_t i = 0; i < n; i++) field(24, 56 + i * 24, (LCD_W - 48) / 8, 1, i < 2 ? C_FG : C_MUTED, l[i]);
-  drawHint("< settings");
+  btnW = 300;
+  btnX = 24;
+  btnY = UI_Y_HINT - 66;
+  if (update::state == update::State::Available) {
+    gfx->fillRoundRect(btnX, btnY, btnW, btnH, 26, C_GOLD);
+    const char *t = "Update Home";
+    textAt(btnX + (btnW - textWidth(2, t)) / 2, btnY + (btnH - FACES[1].cap) / 2, 2, RGB565_BLACK, t);
+    drawHint("tap to see what updating would involve        < settings");
+  } else {
+    drawHint("tap Check for updates, or swipe back        < settings");
+    gfx->drawRoundRect(btnX, btnY, btnW, btnH, 26, C_RULE);
+    const char *t = "Check for updates";
+    textAt(btnX + (btnW - textWidth(2, t)) / 2, btnY + (btnH - FACES[1].cap) / 2, 2, C_MUTED, t);
+  }
 }
 
 static void drawSplash() {
@@ -395,7 +412,20 @@ void loop() {
       break;
 
     case View::Info:
-      if (hitBack(x, y, g) || tap) {
+      if (tap && x >= btnX && x < btnX + btnW && y >= btnY && y < btnY + btnH) {
+        if (update::state == update::State::Available) {
+          // Deliberately does not do it. Home runs from `factory` and nothing
+          // can rewrite the partition it is running from -- the only route
+          // writes the new Home into ota_0, boots it, copies it into factory
+          // and boots back, wiping the installed app on the way. Say that,
+          // rather than starting it and finding out.
+          drawHint("updating Home would erase the app in the slot -- not wired up yet", C_WARN);
+        } else {
+          drawHint("checking...", C_MUTED);
+          update::check();
+          draw();
+        }
+      } else if (hitBack(x, y, g)) {
         view = View::Settings;
         draw();
       }
