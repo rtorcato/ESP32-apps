@@ -2265,7 +2265,7 @@ static void drawInfo(bool full) {
   last = millis();
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
-  char l[12][40];
+  char l[13][40];  // exactly the number written below; -Wstringop-overflow catches the next one added
   uint8_t n = 0;
   if (haveTime) {
     Session ses = sessionNow(t);
@@ -3123,7 +3123,7 @@ static void doNews(uint8_t idx) {
   newsAt = millis();
   memcpy(news, got, sizeof news);
   memset(newsImgOk, 0, sizeof newsImgOk);
-  newsImgVer++;
+  newsImgVer = newsImgVer + 1;
   xSemaphoreGive(mux);
   Serial.printf("news %s: %u headlines%s (heap %u)\n", r.label, n, ok ? "" : " FAILED", ESP.getFreeHeap());
   // The pictures, one at a time, only while the news page is the one open
@@ -3138,7 +3138,7 @@ static void doNews(uint8_t idx) {
     int l = fetchBytes(client, got[i].thumb, buf, CAP, "picture");
     if (l > 0 && decodeThumb(buf, l, newsImg[i])) {
       newsImgOk[i] = true;
-      newsImgVer++;
+      newsImgVer = newsImgVer + 1;
       pics++;
     }
   }
