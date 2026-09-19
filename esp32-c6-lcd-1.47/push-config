@@ -71,8 +71,35 @@ for j in apps/"$app"/data/*.json; do
   echo "push-config: $j is valid JSON"
 done
 
-echo "push-config: uploading apps/$app/data to the board..."
-"$PIO" run -e "$app" -t uploadfs
+# There is ONE LittleFS partition and uploadfs rewrites all of it, so pushing
+# one app's data erases every other app's. That was survivable while an app
+# was the only thing on the board. It stopped being survivable when the 7in
+# board gained Home, which is always resident and keeps its app previews on
+# that same filesystem: `push-config weather` silently wiped them.
+#
+# So the image is Home's data plus the target app's, staged together. The app
+# is copied second, so on a name clash the app wins -- which is the right way
+# round, since the app is the thing being pushed.
+STAGE=""
+if [ "$app" != "home" ] && [ -d apps/home/data ]; then
+  if [ -f apps/home/data/config.json ] && [ -f apps/"$app"/data/config.json ]; then
+    echo "push-config: WARNING -- Home and $app both have config.json; both want /config.json" >&2
+    echo "             and $app wins. Home needs its own path before it can carry one." >&2
+  fi
+  STAGE=$(mktemp -d)
+  trap 'rm -rf "$STAGE"' EXIT
+  cp -R apps/home/data/. "$STAGE"/ 2>/dev/null || true
+  cp -R apps/"$app"/data/. "$STAGE"/ 2>/dev/null || true
+  echo "push-config: uploading apps/$app/data + apps/home/data (Home is always resident)..."
+  PLATFORMIO_DATA_DIR="$STAGE" "$PIO" run -e "$app" -t uploadfs
+else
+  if [ "$app" = "home" ]; then
+    echo "push-config: NOTE -- this writes the whole filesystem, so the loaded app's" >&2
+    echo "             config and logos go with it. Re-push that app afterwards." >&2
+  fi
+  echo "push-config: uploading apps/$app/data to the board..."
+  "$PIO" run -e "$app" -t uploadfs
+fi
 echo
 echo "push-config: done. The board reboots on its own; watch it with:"
 echo "  $PIO device monitor -e $app"

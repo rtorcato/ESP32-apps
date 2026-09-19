@@ -1,0 +1,109 @@
+# Build every app and publish the binaries the board installs from.
+#
+# Home downloads apps over the air, so this is what makes the Install button
+# mean anything. It runs on a tag, produces one .bin per app plus a
+# manifest.json listing every one with its sha256, and attaches the lot to a
+# GitHub release.
+#
+# The board verifies that sha256 over the bytes it actually wrote before it
+# will boot the result, so the manifest is the trust anchor: it must be
+# fetched over TLS from somewhere only you can write to. The binaries
+# themselves need no such care -- a tampered one fails the hash.
+#
+# NOTE: release assets on a PRIVATE repo need a token to download, and a
+# token compiled into a board is a published token. Either this repo goes
+# public, or the manifest and binaries are copied to a public host and the
+# App source URL points there.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Cache PlatformIO
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('esp32-s3-touch-lcd-7/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # hello is a smoke test and home is the base itself -- neither is an
+      # app anyone installs from the picker.
+      - name: Build the installable apps
+        working-directory: esp32-s3-touch-lcd-7
+        run: pio run -e home -e ticker -e sports -e social -e unifi -e weather
+
+      # make-previews.py decodes the PNG itself, so this needs no ImageMagick
+      # and no macOS sips -- just the SVG renderer.
+      - name: Render the app previews
+        working-directory: esp32-s3-touch-lcd-7/apps/home
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq librsvg2-bin
+          python3 tools/make-previews.py
+
+      - name: Assemble the manifest
+        working-directory: esp32-s3-touch-lcd-7
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          tag = os.environ.get('GITHUB_REF_NAME', 'dev')
+          repo = os.environ['GITHUB_REPOSITORY']
+          base = f'https://github.com/{repo}/releases/download/{tag}'
+          out = pathlib.Path('../dist'); out.mkdir(exist_ok=True)
+          apps = []
+          for env in ('ticker', 'sports', 'social', 'unifi', 'weather'):
+              src = pathlib.Path(f'.pio/build/{env}/firmware.bin')
+              data = src.read_bytes()
+              (out / f'{env}.bin').write_bytes(data)
+              entry = {
+                  'id': env,
+                  'version': tag,
+                  'url': f'{base}/{env}.bin',
+                  'sha256': hashlib.sha256(data).hexdigest(),
+                  'size': len(data),
+              }
+              pv = pathlib.Path(f'apps/home/data/preview/{env}.565')
+              if pv.exists():
+                  (out / f'{env}.565').write_bytes(pv.read_bytes())
+                  entry['preview'] = f'{base}/{env}.565'
+              apps.append(entry)
+              print(f"  {env:8} {len(data):>8} bytes  {entry['sha256'][:12]}...")
+          home = pathlib.Path('.pio/build/home/firmware.bin').read_bytes()
+          (out / 'home.bin').write_bytes(home)
+          manifest = {
+              'home': {'version': tag, 'url': f'{base}/home.bin',
+                       'sha256': hashlib.sha256(home).hexdigest(), 'size': len(home)},
+              'apps': apps,
+          }
+          (out / 'manifest.json').write_text(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2)[:400])
+          PY
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            Apps for the Waveshare ESP32-S3-Touch-LCD-7.
+
+            `manifest.json` is what Home's **App source** setting points at.
+            Every binary carries a sha256 the board checks over the bytes it
+            wrote before it will boot the result.
+
+            If this repo is private these assets need a token to download —
+            copy them to a public host and point App source there instead.

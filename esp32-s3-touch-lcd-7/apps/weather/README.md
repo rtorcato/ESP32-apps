@@ -1,4 +1,12 @@
-# weather — idea (2026-09-19)
+# weather — Weather
+
+**Status: built 2026-09-19.** Three pages: Now, Hours, Week. The first app
+written on the base rather than retrofitted onto it -- network, theme,
+orientation and the sleep window all come from Home.
+
+Not built from the plan below: UV, air quality and pollen. Open-Meteo serves
+them from separate endpoints, and the Now page was already full.
+
 A weather board: now, the next hours, the week. Big and readable from
 across the room, the way the ticker is.
 

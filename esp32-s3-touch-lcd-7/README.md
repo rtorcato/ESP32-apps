@@ -72,7 +72,7 @@ Each app README has a `preview.svg` wireframe drawn at the panel's real 800×480
 | [ha-panel](apps/ha-panel/) | Full-size Home Assistant control surface |
 | [obd2-gauge](apps/obd2-gauge/) | Live car telemetry over the CAN header |
 | [modbus-readout](apps/modbus-readout/) | Poll RS485/Modbus sensors and chart them |
-| [weather](apps/weather/) | Now, the hours, the week from Open-Meteo, keyless |
+| [weather](apps/weather/) | **Built.** Weather: now, the next 24 hours, the week. Open-Meteo, keyless |
 | [flights](apps/flights/) | Every aircraft overhead on a map of the sky, from OpenSky, keyless |
 | [transit](apps/transit/) | A departure board for the stops near the house, GTFS-realtime |
 | [space](apps/space/) | The ISS, its next pass, the picture of the day, this week's launches |
