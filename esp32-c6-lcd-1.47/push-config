@@ -13,8 +13,21 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PIO="${PIO:-$HOME/.platformio-venv/bin/pio}"
-[ -x "$PIO" ] || PIO=pio
+# The venv has moved once already (~/.platformio-venv -> ~/.platformio/penv),
+# and the fallback hid it: a bare `pio` is only on PATH if a shell sourced a
+# profile, so this silently pointed at nothing for a while. Try both known
+# locations, then PATH, then say so rather than failing on line 62.
+PIO="${PIO:-}"
+if [ -z "$PIO" ]; then
+  for c in "$HOME/.platformio/penv/bin/pio" "$HOME/.platformio-venv/bin/pio"; do
+    [ -x "$c" ] && PIO="$c" && break
+  done
+fi
+[ -n "$PIO" ] || PIO=$(command -v pio) || {
+  echo "push-config: no pio found. Looked in ~/.platformio/penv/bin, ~/.platformio-venv/bin and \$PATH." >&2
+  echo "             Set PIO=/path/to/pio, or add the venv to PATH in ~/.zshenv." >&2
+  exit 1
+}
 
 list() {
   for d in apps/*/data; do
