@@ -48,11 +48,12 @@ static const AppEntry APPS[] = {
      "A ticker of your own figures rather than the market's -- followers, stars, downloads, subscribers "
      "-- from Bluesky, Mastodon, GitHub, npm and YouTube, all keyless. Keeps thirty days of history so "
      "the arrows mean something. Built as a demo and parked."},
-
-    {"weather", "Weather", "now, the hours, the week", rgb(90, 190, 255), Status::Idea,
+    {"weather", "Weather", "now, the hours, the week", rgb(90, 190, 255), Status::Ready,
      "Now, the next 24 hours and the week, big enough to read across the room. Temperature in the tall "
-     "digits, condition glyphs, wind, humidity, UV, air quality, sunrise and sunset. Open-Meteo, keyless, "
-     "one request every ten minutes. The easiest of the unbuilt ones."},
+     "digits, a drawn condition glyph, wind and gusts, humidity, sunrise and sunset. Hours is a strip of "
+     "24 with the chance of rain as a bar; Week puts every day on the week's own temperature scale. "
+     "Open-Meteo, keyless, one request every ten minutes."},
+
     {"flights", "Flights", "aircraft overhead", rgb(120, 200, 180), Status::Idea,
      "Every aircraft above the house on a map of the sky, from OpenSky. Keyless. Callsign, altitude, "
      "heading and climb, with the track of where each one has been while you watched."},
@@ -165,7 +166,7 @@ static void drawPicker() {
   char t[32];
   snprintf(t, sizeof t, "Apps");
   textAt(20, 10, 2, C_FG, t);
-  snprintf(t, sizeof t, "%u here, %u ready", N_APPS, 4u);
+  snprintf(t, sizeof t, "%u here, %u ready", N_APPS, 5u);
   textAt(20 + textWidth(2, "Apps") + 16, 14, 1, C_MUTED, t);
   settingsIcon(LCD_W - 52, C_MUTED);
   gfx->drawFastHLine(0, UI_Y_ROW0 - 1, LCD_W, C_RULE);

@@ -1,0 +1,8 @@
+{
+  "_": "Where the forecast is for. Coordinates rather than a place name: the Open-Meteo forecast endpoint wants numbers, and geocoding would be a second request to get wrong. Find yours by right-clicking a spot on any map.",
+  "place": "Toronto",
+  "latitude": 43.6532,
+  "longitude": -79.3832,
+  "_units": "metric true = Celsius and km/h; false = Fahrenheit and mph. Open-Meteo converts server-side, so this costs nothing here.",
+  "metric": true
+}

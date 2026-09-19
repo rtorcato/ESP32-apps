@@ -65,4 +65,4 @@ jobs:
       # `pio run` compiles firmware and never touches them.
       - name: Build every app
         working-directory: esp32-s3-touch-lcd-7
-        run: pio run -e hello -e ticker -e sports -e social -e unifi
+        run: pio run -e hello -e home -e ticker -e sports -e social -e unifi -e weather
