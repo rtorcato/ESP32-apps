@@ -51,7 +51,9 @@ void setup() {
 
   // Read BEFORE writing: this is the whole measurement.
   woke = wakeCause();
-  restored = rtcSnapshotLoad("rtc-probe", VERSION, &probe, sizeof probe);
+  const Probe *sp = (const Probe *)rtcSnapshotPeek("rtc-probe", VERSION, sizeof probe);
+  restored = sp != nullptr;
+  if (restored) probe = *sp;  // 68 bytes; copy out before the buffer is reused
 
   bool patternOk = restored;
   for (uint8_t i = 0; i < 64 && patternOk; i++) patternOk = probe.pattern[i] == (uint8_t)(i * 7 + 1);
@@ -63,7 +65,8 @@ void setup() {
   if (!restored) probe.boots = 0;
   probe.boots++;
   for (uint8_t i = 0; i < 64; i++) probe.pattern[i] = (uint8_t)(i * 7 + 1);
-  if (!rtcSnapshotSave("rtc-probe", VERSION, &probe, sizeof probe))
+  memcpy(rtcSnapshotBuffer(), &probe, sizeof probe);
+  if (!rtcSnapshotCommit("rtc-probe", VERSION, sizeof probe))
     Serial.println("rtc-probe: SAVE FAILED -- RTC_SNAPSHOT_BYTES too small");
 
   sleepSelfCheck();

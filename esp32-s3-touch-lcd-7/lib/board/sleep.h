@@ -100,11 +100,24 @@ inline Wake wakeCause() {
   return c == ESP_SLEEP_WAKEUP_TIMER ? Wake::Timer : Wake::Touch;
 }
 
-// Store `n` bytes for the next wake. Call it before goToSleep(), not from
-// inside: an app knows when its own state is quiet, and this header does not.
-inline bool rtcSnapshotSave(const char *appId, uint16_t version, const void *in, size_t n) {
+// The snapshot is built and read IN PLACE: the payload is the RTC region
+// itself, so a 3.4KB app snapshot costs no DRAM to stage. Staging through a
+// DRAM copy cost ticker 6.6KB, which is the opposite of the point.
+//
+//   memcpy(rtcSnapshotBuffer(), &mine, sizeof mine);   // or build it field by field
+//   rtcSnapshotCommit("ticker", 1, sizeof mine);
+//
+// rtcSnapshotBuffer() invalidates the header before handing the pointer out,
+// so a crash half way through writing leaves "no snapshot" rather than a
+// valid-looking header over a half-written payload.
+inline void *rtcSnapshotBuffer() {
+  sleepdetail::hdr.magic = 0;
+  return sleepdetail::payload;
+}
+
+// Seal what was written. Call it once the payload is complete.
+inline bool rtcSnapshotCommit(const char *appId, uint16_t version, size_t n) {
   if (n > RTC_SNAPSHOT_BYTES) return false;  // built with too small a region: say so, do not truncate
-  memcpy(sleepdetail::payload, in, n);
   sleepdetail::hdr.appId = sleepdetail::idHash(appId);
   sleepdetail::hdr.version = version;
   sleepdetail::hdr.len = (uint16_t)n;
@@ -113,19 +126,23 @@ inline bool rtcSnapshotSave(const char *appId, uint16_t version, const void *in,
   return true;
 }
 
-// True only if the region holds exactly this app's snapshot, at this layout
-// version, intact. Any doubt reads as "no snapshot" -- there is always a
-// fetch that can rebuild the state, and a wrong restore is worse than a slow
-// one.
-inline bool rtcSnapshotLoad(const char *appId, uint16_t version, void *out, size_t n) {
+// A pointer to the stored payload, or nullptr. Non-null only if the region
+// holds exactly this app's snapshot, at this layout version, intact. Any
+// doubt reads as "no snapshot" -- there is always a fetch that can rebuild
+// the state, and a wrong restore is worse than a slow one.
+inline const void *rtcSnapshotPeek(const char *appId, uint16_t version, size_t n) {
   const sleepdetail::Header &h = sleepdetail::hdr;
-  if (h.magic != sleepdetail::MAGIC) return false;
-  if (h.appId != sleepdetail::idHash(appId) || h.version != version || h.len != n) return false;
-  if (n > RTC_SNAPSHOT_BYTES) return false;
-  if (esp_rom_crc32_le(0, sleepdetail::payload, n) != h.crc) return false;
-  memcpy(out, sleepdetail::payload, n);
-  return true;
+  if (h.magic != sleepdetail::MAGIC) return nullptr;
+  if (h.appId != sleepdetail::idHash(appId) || h.version != version || h.len != n) return nullptr;
+  if (n > RTC_SNAPSHOT_BYTES) return nullptr;
+  if (esp_rom_crc32_le(0, sleepdetail::payload, n) != h.crc) return nullptr;
+  return sleepdetail::payload;
 }
+
+// Throw the snapshot away. For a device wipe: the settings that produced the
+// stored state are gone, so restoring it would show numbers for a watchlist
+// that no longer exists.
+inline void rtcSnapshotClear() { sleepdetail::hdr.magic = 0; }
 
 // ── going to sleep ───────────────────────────────────────────────────────
 // secs > 0: wakes on a touch or the timer, whichever comes first.
