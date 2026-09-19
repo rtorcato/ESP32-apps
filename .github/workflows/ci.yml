@@ -1,0 +1,49 @@
+# Compiles every app that has source. This is the required status check on
+# main: it is the thing that catches a lib/ change breaking an app that was
+# not the one being edited -- the whole reason the shared board/ui/appcfg
+# headers are worth having.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A force-push mid-build otherwise leaves the superseded run grinding through
+# a ten-minute toolchain download for a commit nobody will merge.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job id is the status-check context name. Keep it `build`.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The xtensa toolchain and the platform zip run to ~1GB and never change
+      # between runs. Without this, every build re-downloads them.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('esp32-s3-touch-lcd-7/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # Wi-Fi credentials live in NVS on this board, so there is no gitignored
+      # secrets.h to supply: the tree compiles exactly as cloned. The logo
+      # directories are gitignored too, but they are filesystem-image data --
+      # `pio run` compiles firmware and never touches them.
+      - name: Build every app
+        working-directory: esp32-s3-touch-lcd-7
+        run: pio run -e hello -e ticker -e sports -e social -e unifi

@@ -1,0 +1,14 @@
+# Only one ecosystem applies here. The firmware is PlatformIO C++ and its
+# dependencies are pinned in each board's platformio.ini `lib_deps`, which
+# Dependabot cannot read -- those get bumped by hand. There is no package.json
+# or requirements.txt anywhere in the tree, so GitHub Actions is the whole
+# surface Dependabot can actually see.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
