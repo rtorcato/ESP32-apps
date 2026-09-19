@@ -42,6 +42,22 @@ which silently turns a lowercase SSID into one that does not exist.
 
 To get the password across: Settings › Wi-Fi › (i) › Password, then paste.
 
+## One filesystem, many apps
+
+There is a single LittleFS partition and `uploadfs` rewrites all of it, so
+pushing one app's data erases every other app's. That was harmless while an
+app was the only thing on the board. It is not harmless now: Home is always
+resident and keeps its previews there, so `push-config weather` wiped them.
+
+`push-config` therefore stages Home's `data/` together with the target app's
+and uploads the pair. The app is copied second, so on a name clash the app
+wins.
+
+The limit worth knowing: both would want `/config.json`, so **Home cannot
+carry a config file** until it reads from its own path. It has none today and
+`push-config` warns if that changes. Pushing Home on its own still erases the
+loaded app's config, and says so.
+
 ## Why one app at a time
 
 Storage was never the constraint. Measured on 2026-09-19: a whole app is
