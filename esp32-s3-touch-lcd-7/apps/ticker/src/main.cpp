@@ -14,6 +14,7 @@
 // -- each TLS session is ~40KB of a 320KB heap with no PSRAM behind it.
 #include <appcfg.h>
 #include <board.h>
+#include <sleep.h>
 #include <helv.h>
 #include <netjoin.h>
 
@@ -674,8 +675,6 @@ static bool holidayFrom(const struct tm &t) {
 }
 static Session sessionNow(const struct tm &t) { return holiday ? Session::Closed : session(t); }
 static bool marketOpen(const struct tm &t) { return sessionNow(t) == Session::Regular; }
-// Inside the sleep window, which may wrap midnight (23 -> 7). Pure.
-static bool inNight(uint8_t h, uint8_t from, uint8_t to) { return from <= to ? (h >= from && h < to) : (h >= from || h < to); }
 static const char *sessionWord(Session s) {
   switch (s) {
     case Session::Pre: return "pre-market";
@@ -877,12 +876,19 @@ struct RtcRow {
   uint8_t n;
   bool valid;
 };
-static const uint32_t RTC_MAGIC = 0x7469636B;  // "tick"
-RTC_DATA_ATTR static uint32_t rtcMagic = 0, rtcLabelHash = 0;
-RTC_DATA_ATTR static time_t rtcLastOk = 0;
-RTC_DATA_ATTR static int32_t rtcPos = 0;
-RTC_DATA_ATTR static bool rtcShutdown = false;  // the last sleep was a shutdown: the BOOT button is the only way back
-RTC_DATA_ATTR static RtcRow rtcRows[MAX_SYMBOLS];
+// What survives the sleep. sleep.h owns the RTC region and tags it with the
+// app id, so this struct only has to be ticker's own business; bump SNAP_VER
+// when its layout changes and an old snapshot is discarded rather than
+// misread. labelHash stays ours: "is this my data" is sleep.h's question,
+// "is the watchlist still the same" is this app's.
+struct TickerSnap {
+  uint32_t labelHash;
+  time_t lastOk;
+  int32_t pos;
+  RtcRow rows[MAX_SYMBOLS];
+};
+static const uint16_t SNAP_VER = 1;
+static_assert(sizeof(TickerSnap) <= RTC_SNAPSHOT_BYTES, "raise RTC_SNAPSHOT_BYTES in platformio.ini");
 static int32_t pos;  // defined with the list below; the snapshot needs it here
 
 static uint32_t labelHash() {
@@ -892,9 +898,11 @@ static uint32_t labelHash() {
   return h;
 }
 static void snapshotToRtc() {
+  TickerSnap &s = *(TickerSnap *)rtcSnapshotBuffer();  // built in place: no DRAM copy
+  memset(&s, 0, sizeof s);
   for (uint8_t i = 0; i < nRows; i++) {
     const Row &r = rows[i];  // the fetch task is not running any more
-    RtcRow &o = rtcRows[i];
+    RtcRow &o = s.rows[i];
     o.price = r.price;
     o.pct = r.pct;
     o.prev = r.prev;
@@ -903,17 +911,20 @@ static void snapshotToRtc() {
     o.n = r.n < 16 ? r.n : 16;
     for (uint8_t j = 0; j < o.n; j++) o.close[j] = r.close[r.n < 16 ? j : (uint32_t)j * (r.n - 1) / 15];
   }
-  rtcLabelHash = labelHash();
-  rtcLastOk = lastOk ? time(nullptr) - (millis() - lastOk) / 1000 : 0;
-  rtcPos = pos;
-  rtcMagic = RTC_MAGIC;
+  s.labelHash = labelHash();
+  s.lastOk = lastOk ? time(nullptr) - (millis() - lastOk) / 1000 : 0;
+  s.pos = pos;
+  if (!rtcSnapshotCommit("ticker", SNAP_VER, sizeof s)) Serial.println("snapshot: RTC region too small");
 }
 // True if the snapshot matched this watchlist and the rows were restored.
 static bool restoreFromRtc() {
-  if (rtcMagic != RTC_MAGIC || rtcLabelHash != labelHash()) return false;
+  const TickerSnap *sp = (const TickerSnap *)rtcSnapshotPeek("ticker", SNAP_VER, sizeof(TickerSnap));
+  if (!sp) return false;
+  const TickerSnap &s = *sp;  // read straight out of RTC memory; no DRAM copy
+  if (s.labelHash != labelHash()) return false;  // the watchlist changed under us
   for (uint8_t i = 0; i < nRows; i++) {
     Row &r = rows[i];
-    const RtcRow &o = rtcRows[i];
+    const RtcRow &o = s.rows[i];
     if (!r.cur[0]) strcpy(r.cur, "USD");  // the quote's currency is not in the snapshot; the next fetch sets it
     r.price = o.price;
     r.pct = o.pct;
@@ -923,9 +934,9 @@ static bool restoreFromRtc() {
     r.n = o.n;
     memcpy(r.close, o.close, o.n * sizeof(float));
   }
-  pos = rtcPos;
-  if (rtcLastOk) {
-    time_t age = time(nullptr) - rtcLastOk;
+  pos = s.pos;
+  if (s.lastOk) {
+    time_t age = time(nullptr) - s.lastOk;
     lastOk = age > 0 && (uint32_t)age * 1000 < millis() ? millis() - age * 1000 : 1;
   }
   return true;
@@ -938,12 +949,12 @@ static bool sleepDue(const struct tm &t) {
 // weekday's pre-market. Capped at six hours so a long weekend still gets a
 // look at the clock now and then.
 static uint32_t secondsUntilWake(const struct tm &t) {
+  if (sSleep == 1) return secondsUntilHour(t, sleepTo);  // the night window is board policy
+  // The rest is the market's, not the board's: skip to the next weekday's
+  // pre-market open.
   int32_t now = t.tm_hour * 60 + t.tm_min;
   int32_t mins;
-  if (sSleep == 1) {
-    mins = (sleepTo * 60 - now + 1440) % 1440;
-    if (mins == 0) mins = 1440;
-  } else {
+  {
     int wday = t.tm_wday, days = 0;
     if (!(wday >= 1 && wday <= 5 && now < mktPreMin)) {
       do {
@@ -954,35 +965,13 @@ static uint32_t secondsUntilWake(const struct tm &t) {
     mins = days * 1440 + mktPreMin - now;
   }
   uint32_t secs = (uint32_t)mins * 60 - t.tm_sec + 5;
-  return secs > 6UL * 3600 ? 6UL * 3600 : secs;
+  return secs > SLEEP_CAP_S ? SLEEP_CAP_S : secs;
 }
-// A sleep wakes on a touch (and the timer); a shutdown (secs == 0) wakes on
-// the BOOT button alone -- "off" has to mean off, and a screen that comes
-// back when brushed is not off. GPIO0 is RTC-capable, so ext0 can watch it.
-static void goToSleep(uint32_t secs) {
-  Serial.printf(secs ? "deep sleep for up to %lus, or a touch\n" : "shutdown: deep sleep until the BOOT button\n", (unsigned long)secs);
-  rtcShutdown = secs == 0;
+// Snapshot first, then hand over: sleep.h does not know when this app's
+// state is quiet, and the fetch task has to be stopped before rows[] is read.
+static void sleepNow(uint32_t secs) {
   snapshotToRtc();
-  backlight(0);  // a bare RGB panel has no sleep command; dark is dark, and deep sleep stops the scan-out
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  // The finger that tapped "shut down" is still on the panel, and a finger
-  // on the panel is the wake signal: wait for it to lift and the pen line
-  // to settle, or the chip wakes before it has slept.
-  uint32_t t0 = millis();
-  int16_t tx, ty;
-  while (touchRead(&tx, &ty) && millis() - t0 < 10000) delay(20);
-  delay(400);
-  if (secs) {
-      // The GT911 pulses INT high on every report, finger or lift, and keeps
-    // running through the chip's deep sleep: a level-high wake on it.
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 1);
-    esp_sleep_enable_timer_wakeup((uint64_t)secs * 1000000ULL);
-  } else {
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);  // the BOOT button, low while pressed
-  }
-  Serial.flush();
-  esp_deep_sleep_start();
+  goToSleep(secs);  // sleep.h's
 }
 
 // ── the list: a scrolling ring, scrolled at scan-out ─────────────────────
@@ -1901,7 +1890,7 @@ static void clearDevice() {
   prefs.begin("ticker", false);
   prefs.clear();
   prefs.end();
-  rtcMagic = 0;
+  rtcSnapshotClear();
   delay(300);
   ESP.restart();
 }
@@ -3463,8 +3452,7 @@ static void selfCheck() {
   t.tm_hour = 16; t.tm_min = 0;                 assert(!marketOpen(t) && session(t) == Session::Post);
   t.tm_hour = 20;                               assert(session(t) == Session::Closed);
   t.tm_hour = 12; t.tm_wday = 6;                assert(session(t) == Session::Closed);
-  assert(inNight(23, 23, 7) && inNight(3, 23, 7) && !inNight(7, 23, 7) && !inNight(12, 23, 7));
-  assert(inNight(1, 0, 6) && !inNight(6, 0, 6) && !inNight(5, 23, 23));
+  sleepSelfCheck();  // inNight and the night branch of the wake timer live in sleep.h
   {  // wake timer: night ends at 07:00; closed ends at the next weekday's 04:00; six-hour cap
     struct tm w = {};
     w.tm_wday = 3; w.tm_hour = 23; w.tm_min = 30;
@@ -3614,17 +3602,16 @@ void setup() {
   bool xp = boardBegin();
   selfCheck();
 
-  // What woke us. A timer wake inside the sleep window goes straight back
-  // to sleep without touching the panel or the radio.
-  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-  bool fromSleep = cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_TIMER;
-  if (fromSleep && rtcShutdown) {  // the BOOT button after a shutdown: a fresh start, splash and all
-    Serial.println("powered on by the BOOT button");
-    rtcShutdown = false;
-    fromSleep = false;
-  } else if (fromSleep) {
-    Serial.printf("woke by %s\n", cause == ESP_SLEEP_WAKEUP_EXT0 ? "touch" : "timer");
-  }
+  // What woke us. A timer wake inside the sleep window goes straight back to
+  // sleep without touching the panel or the radio. Wake::Shutdown -- the BOOT
+  // button after a shutdown -- is deliberately NOT "from sleep": off has to
+  // mean off, so it is a fresh start, splash and all.
+  Wake woke = wakeCause();
+  bool fromSleep = woke == Wake::Touch || woke == Wake::Timer;
+  Serial.printf("woke by %s\n", woke == Wake::Cold      ? "power-on"
+                                : woke == Wake::Shutdown ? "the BOOT button after a shutdown"
+                                : woke == Wake::Touch    ? "touch"
+                                                         : "timer");
 
   mux = xSemaphoreCreateMutex();
   series = (Series *)heap_caps_calloc(N_RANGES, sizeof(Series), MALLOC_CAP_SPIRAM);
@@ -3642,7 +3629,7 @@ void setup() {
   tzset();
   struct tm t;
   bool haveTime = getLocalTime(&t, 0);
-  if (wifiSsid[0] && cause == ESP_SLEEP_WAKEUP_TIMER && haveTime && sleepDue(t)) goToSleep(secondsUntilWake(t));
+  if (wifiSsid[0] && woke == Wake::Timer && haveTime && sleepDue(t)) sleepNow(secondsUntilWake(t));
   awakeUntil = millis() + 60000;
 
   panelBegin(xp);  // the Orientation setting applies here; loadSettings ran above
@@ -4028,11 +4015,11 @@ void loop() {
   Session ses = haveTime ? sessionNow(t) : Session::Regular;
 
   // Sleep: once the chosen condition holds and nobody has touched the panel
-  // for a minute, the chip deep-sleeps (see goToSleep). Not from a
+  // for a minute, the chip deep-sleeps (see sleepNow). Not from a
   // calibration or a fail panel: those need the screen.
   if (touchHeld) awakeUntil = millis() + 60000;
   if (state == State::Running && haveTime && millis() > awakeUntil && sleepDue(t))
-    goToSleep(secondsUntilWake(t));
+    sleepNow(secondsUntilWake(t));
 
   netTick();
   bool anyValid = false;
@@ -4320,7 +4307,7 @@ void loop() {
         } else {
           drawHint("shutting down. BOOT button turns it on", C_WARN);
           delay(600);
-          goToSleep(0);  // no timer: a touch is the only way back
+          sleepNow(0);  // no timer: the BOOT button is the only way back
         }
       } else {  // Cancel, or anywhere off the sheet
         closeConfirm();
