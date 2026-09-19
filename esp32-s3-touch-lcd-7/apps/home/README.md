@@ -11,6 +11,17 @@ Called Home rather than "launcher" because it is more than a launcher -- it
 holds the settings, the Wi-Fi and the shutdown -- and because it names the
 gesture: an app goes Home.
 
+## 2.4GHz only
+
+The ESP32-S3's radio is Wi-Fi 4 — 802.11 b/g/n, all of which are 2.4GHz. There
+is no 5GHz hardware on the chip, so a 5GHz network cannot appear in the setup
+scan, and typing its name into the hidden-network box does not help either.
+
+Routers commonly publish the same network twice, `Name` and `Name-5G`. The one
+without the suffix is the 2.4GHz radio; that is the one to pick. The setup form
+and the panel both say so, because "my network is not in the list" is otherwise
+a dead end with no clue in it.
+
 ## Why one app at a time
 
 Storage was never the constraint. Measured on 2026-09-19: a whole app is

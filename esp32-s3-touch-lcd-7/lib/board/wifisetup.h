@@ -50,7 +50,14 @@ inline void page() {
             "<label>password</label><input type=password name=p id=p>"
             "<label style='display:flex;align-items:center;gap:8px;margin-top:10px'>"
             "<input type=checkbox style='width:auto' onchange=\"p.type=this.checked?'text':'password'\">show password</label>"
-            "<button>save and restart</button></form></body></html>");
+            "<button>save and restart</button></form>"
+            "<p style='color:#9aa4ae;font-size:13px;line-height:1.5;margin-top:20px'>"
+            "This board's radio is <b>2.4GHz only</b> (Wi-Fi 4, 802.11 b/g/n). A 5GHz network "
+            "cannot appear in the list, and typing its name above will not help either \u2014 the "
+            "hardware cannot see that band at all.<br>"
+            "If your router shows one name ending in <b>-5G</b> or <b>_5G</b> and another without it, "
+            "the one without is the 2.4GHz network. Pick that."
+            "</p></body></html>");
   web->send(200, "text/html", html);
 }
 
@@ -112,7 +119,8 @@ inline void draw(const char *status) {
   textAt(56, 274, 1, C_MUTED, "pick your network, type its password, save. The board restarts and joins.");
 
   gfx->drawFastHLine(20, 330, LCD_W - 40, C_RULE);
-  textAt(20, 346, 1, C_DIM, "nothing leaves this board: the password is kept in its own flash, and only there.");
+  textAt(20, 346, 1, C_WARN, "2.4GHz networks only -- this radio cannot see 5GHz. A name ending -5G will not be listed.");
+  textAt(20, 370, 1, C_DIM, "nothing leaves this board: the password is kept in its own flash, and only there.");
   drawHint(status);
 }
 
@@ -142,8 +150,8 @@ inline void begin() {
     web->send(302, "text/plain", "");
   });
   web->begin();
-  Serial.printf("setup: AP %s, password %s, form at http://%s (%d networks heard)\n", apName, pin,
-                WiFi.softAPIP().toString().c_str(), n);
+  Serial.printf("setup: AP %s, password %s, form at http://%s (%d networks heard -- 2.4GHz only, this radio has no 5GHz)\n",
+                apName, pin, WiFi.softAPIP().toString().c_str(), n);
   draw(baseCfg.ssid[0] ? "tap to keep the old network" : "waiting for you");
 }
 
