@@ -171,7 +171,9 @@ static void drawDetail() {
 
 // ── settings ─────────────────────────────────────────────────────────────
 // Words, not numbers. "0" told you nothing about which way up the panel was.
-static const char *const ROT_NAMES[] = {"Landscape", "Portrait", "Landscape, upside down", "Portrait, upside down"};
+// 180 rather than "upside down": it is the rotation in degrees, it matches
+// what the other two are implicitly saying, and it fits the row.
+static const char *const ROT_NAMES[] = {"Landscape", "Portrait", "Landscape 180", "Portrait 180"};
 static const char *const SLEEP_NAMES[] = {"never", "night"};
 
 static void drawSettings() {
