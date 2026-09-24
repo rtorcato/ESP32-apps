@@ -35,8 +35,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Job id is the status-check context name. Keep it `build`.
+  # One job per board so a failure names the board, and so four toolchains
+  # build in parallel instead of fifteen envs in series.
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - esp32-s3-touch-lcd-7
+          - esp32-c6-lcd-1.47
+          - esp32-2432s028r-cyd
+          - elecrow-rotary-2.1
+    name: build (${{ matrix.board }})
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -45,24 +55,31 @@ jobs:
         with:
           python-version: '3.12'
 
-      # The xtensa toolchain and the platform zip run to ~1GB and never change
-      # between runs. Without this, every build re-downloads them.
+      # The xtensa/riscv toolchains and the platform zip run to ~1GB and never
+      # change between runs. Keyed per board: they do not all use the same one.
       - name: Cache PlatformIO
         uses: actions/cache@v6
         with:
           path: |
             ~/.platformio
             ~/.cache/pip
-          key: pio-${{ runner.os }}-${{ hashFiles('esp32-s3-touch-lcd-7/platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          key: pio-${{ runner.os }}-${{ matrix.board }}-${{ hashFiles(format('{0}/platformio.ini', matrix.board)) }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.board }}-
+            pio-${{ runner.os }}-
 
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
-      # Wi-Fi credentials live in NVS on this board, so there is no gitignored
-      # secrets.h to supply: the tree compiles exactly as cloned. The logo
-      # directories are gitignored too, but they are filesystem-image data --
-      # `pio run` compiles firmware and never touches them.
-      - name: Build every app
-        working-directory: esp32-s3-touch-lcd-7
-        run: pio run -e hello -e home -e ticker -e sports -e social -e unifi -e weather
+      # secrets.h is gitignored, and the C6, CYD and rotary apps include it --
+      # so a clean checkout of those three does not compile at all. The other
+      # two symlink to the C6's copy, so one placeholder covers all three.
+      # These are the example's fake credentials: CI proves the code builds,
+      # it does not join anything.
+      - name: Placeholder credentials
+        run: cp esp32-c6-lcd-1.47/lib/board/secrets.h.example esp32-c6-lcd-1.47/lib/board/secrets.h
+
+      # Every env in the board's platformio.ini, so a new app is covered the
+      # moment it has one -- no list here to forget to update.
+      - name: Build every app on this board
+        run: pio run -d ${{ matrix.board }}
