@@ -7,6 +7,30 @@ Read this before writing a new app in [`apps/`](apps/). The reference
 implementation for nearly all of it is
 [`apps/desk-clock/src/main.cpp`](apps/desk-clock/src/main.cpp).
 
+## Scrolling and selecting — the bug that keeps coming back
+
+**In a scrollable view, select on `TapUp`. Never on `Tap`.**
+
+`Gesture::Tap` fires while the finger is still down, `TAP_MS` (100 ms) after
+it lands, provided the axis has not locked — and locking needs `AXIS_PX`
+(24 px) of travel. A slow drag therefore rests for 100 ms before it has moved
+far enough to count as a scroll, `Tap` fires, the page changes underneath,
+and the drag scrolls whatever replaced it.
+
+`TapUp` fires on release and only when the axis never locked, which is
+precisely "a tap that was not the beginning of a scroll".
+
+| View | Select on |
+|---|---|
+| scrolls (a list, a grid, a chart) | `TapUp` only |
+| fixed (settings rows, a sheet, buttons) | either; `Tap` feels quicker |
+
+Shipped three times now: the CYD ticker opened a stock mid-swipe, the 7in
+ticker repeated it, and Home's app grid did it again. It is not a tuning
+problem — raising `TAP_MS` or `AXIS_PX` only trades one wrong behaviour for
+another. Pick the right event. The long version is above `enum class Gesture`
+in `lib/ui/ui.h`.
+
 ## The short version
 
 - [ ] `#include <ui.h>` — schemes, 4 rotations, gestures, backlight, blanking

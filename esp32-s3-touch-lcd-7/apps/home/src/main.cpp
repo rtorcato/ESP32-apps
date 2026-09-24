@@ -100,8 +100,9 @@ static const AppEntry APPS[] = {
 };
 static const uint8_t N_APPS = sizeof APPS / sizeof APPS[0];
 
-enum class View : uint8_t { Picker, Detail, Settings, Themes, Sleep, Info, About, Keyboard, Setup };
-static View view = View::Picker;
+enum class View : uint8_t { Splash, Legal, Picker, Detail, Settings, Themes, Sleep, Info, About, Keyboard, Setup };
+static View view = View::Splash;
+static bool legalTicked = false;
 static uint8_t sel = 0;  // which app the detail page is showing
 static char slotApp[24] = "";
 static bool slotFilled = false;
@@ -415,10 +416,75 @@ static void drawSplash() {
   textAt((LCD_W - textWidth(2, sub)) / 2, cy + 44, 2, C_MUTED, sub);
   snprintf(sub, sizeof sub, "Home %s", FW_VERSION);
   textAt((LCD_W - textWidth(1, sub)) / 2, cy + 80, 1, C_DIM, sub);
+  // A Continue button rather than a timer. The old splash cleared itself
+  // after 900ms, which is long enough to notice and not long enough to read
+  // -- and it is also where the version is, which is the one thing someone
+  // might actually be trying to read off it.
+  if (view == View::Splash) {
+    splashBtnW = 240;
+    splashBtnX = (LCD_W - splashBtnW) / 2;
+    splashBtnY = LCD_H - 96;
+    gfx->fillRoundRect(splashBtnX, splashBtnY, splashBtnW, 52, 26, C_GOLD);
+    const char *t = "Continue";
+    textAt(splashBtnX + (splashBtnW - textWidth(2, t)) / 2, splashBtnY + (52 - FACES[1].cap) / 2, 2, RGB565_BLACK, t);
+  }
+}
+
+// The terms. Deliberately short and in plain words: a wall of legalese on a
+// touch panel is not read, and an unread agreement is worth nothing to
+// either side. Bump LEGAL_VERSION in baseos.h if this changes materially.
+static const char *const LEGAL[] = {
+    "This is a hobbyist device. It is provided as-is, with no warranty of",
+    "any kind, and no guarantee that it works or keeps working.",
+    "",
+    "Everything it shows comes from third-party services over the internet.",
+    "That data may be wrong, stale, delayed, or simply missing, and those",
+    "services can change or disappear without notice.",
+    "",
+    "Nothing here is advice. Prices are delayed and are not a basis for",
+    "trading. Forecasts are not a basis for any decision about safety.",
+    "Do not rely on this device for anything that matters.",
+    "",
+    "Your Wi-Fi password and any API keys are kept in this board's own",
+    "flash and are sent nowhere else. Anyone holding the board can read",
+    "them out of it, so use credentials you are willing to rotate.",
+};
+static const uint8_t N_LEGAL = sizeof LEGAL / sizeof LEGAL[0];
+static int16_t tickX, tickY, tickS = 34;
+
+static void drawLegal() {
+  pageHeader("BEFORE YOU START");
+  for (uint8_t i = 0; i < N_LEGAL; i++) field(28, 54 + i * 21, (LCD_W - 56) / 8, 1, C_MUTED, LEGAL[i]);
+
+  tickX = 28;
+  tickY = UI_Y_HINT - 78;
+  gfx->drawRoundRect(tickX, tickY, tickS, tickS, 6, legalTicked ? C_GOOD : C_RULE);
+  if (legalTicked) {
+    gfx->fillRoundRect(tickX, tickY, tickS, tickS, 6, C_GOOD);
+    checkMark(tickX + tickS - 6, tickY + tickS / 2, RGB565_BLACK);
+  }
+  textAt(tickX + tickS + 14, tickY + (tickS - FACES[1].cap) / 2, 2, C_FG, "I have read and accept this");
+
+  // The button is dead until the box is ticked, and looks it. A greyed
+  // control that still works is worse than either state on its own.
+  btnW = 240;
+  btnX = LCD_W - btnW - 28;
+  btnY = tickY - 9;
+  btnH = 52;
+  if (legalTicked) {
+    gfx->fillRoundRect(btnX, btnY, btnW, btnH, 26, C_GOLD);
+    textAt(btnX + (btnW - textWidth(2, "Continue")) / 2, btnY + (btnH - FACES[1].cap) / 2, 2, RGB565_BLACK, "Continue");
+  } else {
+    gfx->drawRoundRect(btnX, btnY, btnW, btnH, 26, C_RULE);
+    textAt(btnX + (btnW - textWidth(2, "Continue")) / 2, btnY + (btnH - FACES[1].cap) / 2, 2, C_DIM, "Continue");
+  }
+  drawHint("tap the box, then Continue");
 }
 
 static void draw() {
   switch (view) {
+    case View::Splash: drawSplash(); break;
+    case View::Legal: drawLegal(); break;
     case View::Picker: drawPicker(); break;
     case View::Detail: drawDetail(); break;
     case View::Settings: drawSettings(); break;
@@ -500,10 +566,21 @@ void setup() {
                 panelOk ? "ok" : "FAILED", slotFilled ? "filled" : "EMPTY", slotApp[0] ? slotApp : "unclaimed",
                 THEMES[baseTheme(N_THEMES)].name);
 
-  drawSplash();
+  view = View::Splash;
+  draw();
   backlight(255);
-  delay(900);
+}
 
+// What follows the splash. Kept in one place because the order matters and
+// is easy to get wrong spread across taps: terms first, since nothing should
+// happen before someone has seen them, then Wi-Fi if there is none, then the
+// picker.
+static void afterSplash() {
+  if (!legalAccepted()) {
+    view = View::Legal;
+    draw();
+    return;
+  }
   // A board with no network cannot do anything useful, so setup comes before
   // the picker rather than hiding behind a settings row.
   if (!baseCfg.ssid[0]) {
@@ -511,6 +588,7 @@ void setup() {
     wifisetup::begin();
     return;
   }
+  view = View::Picker;
   draw();
 }
 
@@ -522,7 +600,11 @@ void loop() {
   int16_t x, y, dy;
   Gesture g = pollGesture(&x, &y, &dy);
   if (g == Gesture::None) return;
-  bool tap = g == Gesture::Tap || g == Gesture::TapUp;
+  // TapUp only, never Tap. The picker scrolls, and Tap fires 100ms after
+  // touch-down while the finger is still there -- so a slow drag opened an
+  // app before it had moved far enough to count as a scroll. See the note
+  // above Gesture in ui.h; this is the third time the same bug has shipped.
+  bool tap = g == Gesture::TapUp;
 
   if (confirmOpen) {  // the shutdown sheet owns every touch while it is up
     if (tap) {
@@ -535,6 +617,27 @@ void loop() {
   }
 
   switch (view) {
+    case View::Splash:
+      if (tap && x >= splashBtnX && x < splashBtnX + splashBtnW && y >= splashBtnY && y < splashBtnY + 52)
+        afterSplash();
+      break;
+
+    case View::Legal:
+      if (tap && x >= tickX - 8 && x < tickX + tickS + 340 && y >= tickY - 10 && y < tickY + tickS + 10) {
+        legalTicked = !legalTicked;  // the label is part of the target, as a checkbox should be
+        drawLegal();
+      } else if (tap && legalTicked && x >= btnX && x < btnX + btnW && y >= btnY && y < btnY + btnH) {
+        legalAccept();
+        if (!baseCfg.ssid[0]) {
+          view = View::Setup;
+          wifisetup::begin();
+        } else {
+          view = View::Picker;
+          draw();
+        }
+      }
+      break;
+
     case View::Picker:
       if (g == Gesture::Drag) {
         int16_t was = scrollY;
