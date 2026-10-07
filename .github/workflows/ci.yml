@@ -19,6 +19,7 @@ on:
       - '**.png'
       - '**.jpg'
       - 'LICENSE'
+      - 'store/**'
   pull_request:
     # Restated: GitHub Actions has no YAML anchors.
     paths-ignore:
@@ -27,6 +28,7 @@ on:
       - '**.png'
       - '**.jpg'
       - 'LICENSE'
+      - 'store/**'
 
 # A force-push mid-build otherwise leaves the superseded run grinding through
 # a ten-minute toolchain download for a commit nobody will merge.

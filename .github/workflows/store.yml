@@ -1,0 +1,36 @@
+# Typecheck, lint, format-check and build the store/dashboard web app.
+# Firmware CI (ci.yml) skips store/, so this is the only check it gets.
+name: Store
+
+on:
+  push:
+    branches: [main]
+    paths: ['store/**', '.github/workflows/store.yml']
+  pull_request:
+    paths: ['store/**', '.github/workflows/store.yml']
+
+concurrency:
+  group: store-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  store:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: store
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: store/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm check
+      - run: pnpm build
