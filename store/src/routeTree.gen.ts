@@ -11,6 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as AppsIndexRouteImport } from './routes/apps.index'
+import { Route as AppsAppRouteImport } from './routes/apps.$app'
+import { Route as BoardsBoardRouteImport } from './routes/boards.$board'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +25,59 @@ const DashboardRoute = DashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppsIndexRoute = AppsIndexRouteImport.update({
+  id: '/apps/',
+  path: '/apps/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppsAppRoute = AppsAppRouteImport.update({
+  id: '/apps/$app',
+  path: '/apps/$app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BoardsBoardRoute = BoardsBoardRouteImport.update({
+  id: '/boards/$board',
+  path: '/boards/$board',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/apps/$app': typeof AppsAppRoute
+  '/boards/$board': typeof BoardsBoardRoute
+  '/apps/': typeof AppsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/apps/$app': typeof AppsAppRoute
+  '/boards/$board': typeof BoardsBoardRoute
+  '/apps': typeof AppsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/apps/$app': typeof AppsAppRoute
+  '/boards/$board': typeof BoardsBoardRoute
+  '/apps/': typeof AppsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard'
+  fullPaths: '/' | '/dashboard' | '/apps/$app' | '/boards/$board' | '/apps/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard'
-  id: '__root__' | '/' | '/dashboard'
+  to: '/' | '/dashboard' | '/apps/$app' | '/boards/$board' | '/apps'
+  id:
+    '__root__' | '/' | '/dashboard' | '/apps/$app' | '/boards/$board' | '/apps/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
+  AppsAppRoute: typeof AppsAppRoute
+  BoardsBoardRoute: typeof BoardsBoardRoute
+  AppsIndexRoute: typeof AppsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +96,36 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/apps/': {
+      id: '/apps/'
+      path: '/apps'
+      fullPath: '/apps/'
+      preLoaderRoute: typeof AppsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apps/$app': {
+      id: '/apps/$app'
+      path: '/apps/$app'
+      fullPath: '/apps/$app'
+      preLoaderRoute: typeof AppsAppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/boards/$board': {
+      id: '/boards/$board'
+      path: '/boards/$board'
+      fullPath: '/boards/$board'
+      preLoaderRoute: typeof BoardsBoardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
+  AppsAppRoute: AppsAppRoute,
+  BoardsBoardRoute: BoardsBoardRoute,
+  AppsIndexRoute: AppsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
