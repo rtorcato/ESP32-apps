@@ -2,6 +2,7 @@ import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 import { TanStackDevtools } from "@tanstack/react-devtools"
 
+import { Shell } from "@/components/store"
 import appCss from "../styles.css?url"
 
 export const Route = createRootRoute({
@@ -15,7 +16,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "TanStack Start Starter",
+        title: "Flashcart",
       },
     ],
     links: [
@@ -26,10 +27,12 @@ export const Route = createRootRoute({
     ],
   }),
   notFoundComponent: () => (
-    <main className="container mx-auto p-4 pt-16">
-      <h1>404</h1>
-      <p>The requested page could not be found.</p>
-    </main>
+    <>
+      <h1 className="font-heading text-3xl font-bold">404</h1>
+      <p className="mt-2 text-muted-foreground">
+        The requested page could not be found.
+      </p>
+    </>
   ),
   shellComponent: RootDocument,
 })
@@ -41,7 +44,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
+        <Shell>{children}</Shell>
         <TanStackDevtools
           config={{
             position: "bottom-right",
