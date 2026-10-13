@@ -92,6 +92,29 @@ inline void baseSaveWifi(const char *ssid, const char *pass) {
   snprintf(baseCfg.pass, sizeof baseCfg.pass, "%s", pass);
 }
 
+// ── the terms, accepted once ─────────────────────────────────────────────
+// Stored as the VERSION accepted, not a boolean. A yes/no cannot tell the
+// difference between "agreed to these terms" and "agreed to some older
+// terms", so changing the text materially means bumping LEGAL_VERSION and
+// everyone is asked again -- which is the only thing that makes recording
+// the answer worth anything.
+inline const uint8_t LEGAL_VERSION = 1;
+
+inline bool legalAccepted() {
+  Preferences p;
+  p.begin("base", true);
+  uint8_t v = p.getUChar("legal", 0);
+  p.end();
+  return v >= LEGAL_VERSION;
+}
+
+inline void legalAccept() {
+  Preferences p;
+  p.begin("base", false);
+  p.putUChar("legal", LEGAL_VERSION);
+  p.end();
+}
+
 // ── which app is in the slot ─────────────────────────────────────────────
 // The app tells us, because nothing else can. An ESP-IDF app descriptor
 // carries a project_name, but under Arduino every build says

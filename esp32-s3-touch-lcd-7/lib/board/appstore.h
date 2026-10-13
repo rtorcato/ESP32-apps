@@ -54,22 +54,35 @@ inline uint8_t nEntries = 0;
 inline char err[72] = "";
 inline bool haveManifest = false;
 
+// GitHub serves every release asset as a 302 to objects.githubusercontent.com,
+// and HTTPClient disables redirects by default -- without this, every download
+// fails with "returned 302". STRICT rather than FORCE: follow 301/302/307 on a
+// GET, which is all this needs, and do not re-POST anything anywhere.
+//
+// The redirect lands on a different host, which is fine: the cert bundle
+// verifies whatever it lands on, and the sha256 is checked over the bytes
+// regardless of where they came from.
 inline void tlsVerified(NetworkClientSecure &c) {
   c.setCACertBundle(rootca_crt_bundle_start, rootca_crt_bundle_end - rootca_crt_bundle_start);
   c.setTimeout(12000);
 }
 
-// Where the manifest lives. Empty by default because it genuinely has
-// nowhere to be yet: ESP32-apps is a private repo, so a device cannot read
-// its releases, and a token compiled into flash is the thing SECURITY.md
-// exists to forbid. Settable from NVS so it can be pointed at a host
-// without a rebuild.
-inline char manifestUrl[200] = "";
+// Where the manifest lives. The repo is public as of 2026-09-19, so its
+// releases are readable without a token and this can have a default that
+// works on a board nobody has configured.
+//
+// /releases/latest/download/ rather than a pinned tag: GitHub redirects it
+// to whatever the newest release is, so a board set up today still finds
+// next year's apps without anyone retyping a URL.
+#define APPSTORE_DEFAULT "https://github.com/rtorcato/ESP32-apps/releases/latest/download/manifest.json"
+inline char manifestUrl[200] = APPSTORE_DEFAULT;
 
 inline void loadUrl() {
   Preferences p;
   p.begin("base", true);
-  p.getString("store", manifestUrl, sizeof manifestUrl);
+  // A stored value wins, including an empty one -- someone who cleared the
+  // field meant to clear it, not to be given the default back.
+  if (p.isKey("store")) p.getString("store", manifestUrl, sizeof manifestUrl);
   p.end();
 }
 inline void saveUrl(const char *u) {
@@ -103,6 +116,7 @@ inline bool fetchManifest() {
   HTTPClient http;
   http.setConnectTimeout(10000);
   http.useHTTP10(true);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!http.begin(client, manifestUrl)) {
     snprintf(err, sizeof err, "bad app source URL");
     return false;
@@ -155,6 +169,7 @@ inline bool fetchPreview(const Entry &en, const char *path) {
   HTTPClient http;
   http.setConnectTimeout(8000);
   http.useHTTP10(true);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!(https ? http.begin(tls, en.preview) : http.begin(plain, en.preview))) return false;
   if (http.GET() != 200) {
     http.end();
@@ -206,6 +221,7 @@ inline bool install(const Entry &en, Progress report) {
   http.setConnectTimeout(10000);
   http.setTimeout(15000);
   http.useHTTP10(true);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   bool ok = https ? http.begin(tls, en.url) : http.begin(plain, en.url);
   if (!ok) {
     snprintf(err, sizeof err, "bad download URL");
