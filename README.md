@@ -83,3 +83,10 @@ script, use pyserial directly — it ships in the venv:
 Each app is a PlatformIO *environment* inside its device's `platformio.ini`, so
 `src_dir = apps` plus a per-env `build_src_filter` compiles exactly one app.
 Shared board code lives in `lib/board/` and is picked up automatically.
+
+## References
+
+- [ESPVault](https://github.com/thelastoutpostworkshop/ESPVault) by thelastoutpostworkshop
+  — a local desktop inventory for ESP32 makers: track boards, hardware details,
+  projects, firmware notes and recovery info without a cloud service.
+  [Source video](https://www.youtube.com/watch?v=YwYP-eET9Oo).
